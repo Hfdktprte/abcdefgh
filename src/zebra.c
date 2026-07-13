@@ -786,9 +786,30 @@ void FAST zebra_highlight_raw_advanced(struct raw_highlight_info * raw_highlight
    }
 }
 
+static int raw_zebra_color_at(int x, int y, int white, int underexposed)
+{
+    if (x < raw_info.active_area.x1 || x > raw_info.active_area.x2) return 0;
+    if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) return 0;
+
+    int r = raw_red_pixel_dark(x, y);
+    int g = raw_green_pixel_dark(x, y);
+    int b = raw_blue_pixel_dark(x, y);
+    int u = raw_green_pixel_bright(x, y);
+
+    return zebra_rgb_solid_color(u <= underexposed, r > white, g > white, b > white);
+}
+
 static void FAST draw_zebras_raw_lv()
 {
-    if (!raw_update_params()) return;
+    static int raw_zebra_aux = INT_MIN;
+    if (should_run_polling_action(1000, &raw_zebra_aux) || !raw_info.black_level)
+    {
+        if (!raw_update_params()) return;
+    }
+    else if (raw_info.bits_per_pixel != 14)
+    {
+        return;
+    }
 
     uint8_t * const bvram = bmp_vram_real();
     if (!bvram) return;
@@ -803,49 +824,37 @@ static void FAST draw_zebras_raw_lv()
     for(int i = os.y0 + off; i < os.y_max - off; i += 2 )
     {
         int y = BM2RAW_Y(i);
-        if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) continue;
+        int y2 = BM2RAW_Y(i + 1);
 
-        #ifdef FEATURE_ANAMORPHIC_PREVIEW
-        int draw_i = anamorphic_squeeze_bmp_y(i);
-        #else
-        int draw_i = i;
-        #endif
+        uint32_t * const b_row = (uint32_t*)( bvram        + BM_R(i)   );
+        uint32_t * const m_row = (uint32_t*)( bvram_mirror + BM_R(i)   );
 
-        for (int j = os.x0; j < os.x_max; j += 2)
+        uint32_t* bp;
+        uint32_t* mp;
+
+        for (int j = os.x0; j < os.x_max; j += 4)
         {
             int x = BM2RAW_X(j);
-            if (x < raw_info.active_area.x1 || x > raw_info.active_area.x2) continue;
 
-            /* for dual ISO: use dark lines for overexposure and bright lines for underexposure */
-            int r = raw_red_pixel_dark(x, y);
-            int g = raw_green_pixel_dark(x, y);
-            int b = raw_blue_pixel_dark(x, y);
-            int u = raw_green_pixel_bright(x, y);
-
-            int c = zebra_rgb_solid_color(u <= underexposed, r > white, g > white, b > white);
-            if (!c) continue;
-
-            uint8_t* bp = (uint8_t*) &bvram[BM(j, draw_i)];
-            uint8_t* mp = (uint8_t*) &bvram_mirror[BM(j, draw_i)];
+            bp = b_row + (j >> 2);
+            mp = m_row + (j >> 2);
 
             #define BP (*bp)
             #define MP (*mp)
-            if (BP != 0 && BP != MP) continue;
-            if ((MP & 0x80)) continue;
+            #define BN (*(bp + BMPPITCH/4))
+            #define MN (*(mp + BMPPITCH/4))
 
-            BP = MP = c;
+            if (BP != 0 && BP != MP) { little_cleanup(bp, mp); continue; }
+            if (BN != 0 && BN != MN) { little_cleanup(bp + (BMPPITCH >> 2), mp + (BMPPITCH >> 2)); continue; }
+            if ((MP & 0x80808080) || (MN & 0x80808080)) continue;
 
-            if (j + 1 < os.x_max)
-            {
-                uint8_t* bp2 = (uint8_t*) &bvram[BM(j + 1, draw_i)];
-                uint8_t* mp2 = (uint8_t*) &bvram_mirror[BM(j + 1, draw_i)];
-                if ((*bp2) == 0 || (*bp2) == (*mp2))
-                    if (!((*mp2) & 0x80))
-                        (*bp2) = (*mp2) = c;
-            }
+            BP = MP = raw_zebra_color_at(x, y, white, underexposed);
+            BN = MN = raw_zebra_color_at(x, y2, white, underexposed);
 
-            #undef BP
+            #undef MN
+            #undef BN
             #undef MP
+            #undef BP
         }
     }
 }

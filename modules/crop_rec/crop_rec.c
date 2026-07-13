@@ -6820,16 +6820,11 @@ static unsigned int raw_info_update_cbr(unsigned int unused)
             calc_skip_offsets(&skip_left, &skip_right, &skip_top, &skip_bottom);
             raw_set_geometry(raw_info.width, raw_info.height, skip_left, skip_right, skip_top, skip_bottom);
 
-            /* crop modes use non-square pixel aspect (e.g. 1x3); remap after binning is set */
-            {
-                int preview_w = raw_info.width - skip_left - skip_right - 28;
-                int preview_h = raw_info.height - skip_top - skip_bottom - 16;
-                raw_set_preview_rect(skip_left + 14, skip_top + 8, preview_w, preview_h, 1);
-                raw_force_aspect_ratio(
-                    raw_capture_info.binning_x + raw_capture_info.skipping_x,
-                    raw_capture_info.binning_y + raw_capture_info.skipping_y
-                );
-            }
+            /* crop modes use non-square pixel aspect (e.g. 1x3) */
+            raw_set_preview_rect(skip_left + 14, skip_top + 8,
+                raw_info.width - skip_left - skip_right - 28,
+                raw_info.height - skip_top - skip_bottom - 16,
+                1);
         }
     }
     return 0;

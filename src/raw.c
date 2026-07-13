@@ -26,6 +26,8 @@
 #include "lens.h"
 #include "module.h"
 #include "menu.h"
+
+extern WEAK_FUNC(ret_0) int crop_rec_is_enabled();
 #include "edmac-memcpy.h"
 #include "imgconv.h"
 #include "console.h"
@@ -1014,7 +1016,7 @@ int raw_update_params_work()
         raw_capture_info.skipping_x = raw_capture_info.skipping_y = 0;
         raw_capture_info.offset_x   = raw_capture_info.offset_y   = lv ? SHRT_MIN : 0;
     }
-    else
+    else if (!crop_rec_is_enabled())
     {
         raw_capture_info.binning_x  = 3; raw_capture_info.skipping_x = 0;
 #ifdef CONFIG_5D3
@@ -1225,6 +1227,9 @@ static int raw_update_params_once()
     take_semaphore(raw_sem, 0);
     ans = raw_update_params_work();
     if (ans) module_exec_cbr(CBR_RAW_INFO_UPDATE);
+#ifdef CONFIG_RAW_LIVEVIEW
+    if (ans && lv) raw_force_aspect_ratio(0, 0);
+#endif
     give_semaphore(raw_sem);
     return ans;
 }
@@ -1364,7 +1369,7 @@ raw_set_geometry(int width, int height, int skip_left, int skip_right, int skip_
     }
 #endif
 
-    raw_set_preview_rect(preview_skip_left, preview_skip_top, preview_width, preview_height, 0);
+    raw_set_preview_rect(preview_skip_left, preview_skip_top, preview_width, preview_height, lv);
 
     dbg_printf("lv2raw sx:%d sy:%d tx:%d ty:%d\n", lv2raw.sx, lv2raw.sy, lv2raw.tx, lv2raw.ty);
     dbg_printf("raw2lv test: (%d,%d) - (%d,%d)\n", RAW2LV_X(raw_info.active_area.x1), RAW2LV_Y(raw_info.active_area.y1), RAW2LV_X(raw_info.active_area.x2), RAW2LV_Y(raw_info.active_area.y2));

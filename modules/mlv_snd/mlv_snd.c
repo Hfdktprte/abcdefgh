@@ -706,6 +706,16 @@ static unsigned int mlv_snd_init()
     mlv_snd_buffers_done = (struct msg_queue *) msg_queue_create("mlv_snd_buffers_done", MLV_SND_BLOCKS_PER_SLOT * MLV_SND_SLOTS);
 
     /* will the same menu work in both submenus? probably not */
+    if (is_camera("EOSM", "2.0.2"))
+    {
+        mlv_snd_vsync_delay = 1;
+        for (struct menu_entry * e = mlv_snd_menu[0].children; !MENU_IS_EOL(e); e++)
+        {
+            if (streq(e->name, "Audio delay") || streq(e->name, "Trace output"))
+                e->shidden = 1;
+        }
+    }
+
     if (menu_get_value_from_script("Movie", "RAW video") != INT_MIN)
     {
         menu_add("Movie", mlv_snd_menu, COUNT(mlv_snd_menu));

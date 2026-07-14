@@ -151,6 +151,12 @@ void raw_set_preview_rect(int x, int y, int w, int h, int obey_info_bars);
 /* call this after you have altered the preview settings, and you want to restore the original ones */
 void raw_set_dirty(void);
 
+/* true when idle refresh already populated geometry and black level */
+int raw_params_ready_for_rec(void);
+
+/* single-shot raw_update_params (no frame retries) */
+int raw_update_params_now(void);
+
 /* for x5 crop mode: get the offset (in pixels) between raw and yuv frames. Return: 1=OK, 0=failed. */
 int focus_box_get_raw_crop_offset(int* delta_x, int* delta_y); /* this is in shoot.c */
 

@@ -7,6 +7,7 @@
 #include <patch.h>
 #include <console.h>
 #include <config.h>
+#include <menu.h>
 
 /* camera-specific parameters */
 static uint32_t GPIO = 0;
@@ -624,6 +625,15 @@ static unsigned int sd_uhs_init()
         static const char sd_choices_help2_others[] = "\n"" \n"" \n""(H): Hyprid clock speed. Will use 240MHz for Write, 192MHz for Read.\n";
         sd_uhs_menu[0].choices = sd_choices_others;
         sd_uhs_menu[0].help2   = sd_choices_help2_others;
+    }
+
+    if (is_camera("EOSM", "2.0.2"))
+    {
+        for (struct menu_entry * e = sd_uhs_menu[0].children; !MENU_IS_EOL(e); e++)
+        {
+            if (streq(e->name, "Show CID info"))
+                e->shidden = 1;
+        }
     }
     
     menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));

@@ -1993,6 +1993,7 @@ static MENU_UPDATE_FUNC(warn_display)
 
 static struct menu_entry key_menus[] = {
     #if defined(FEATURE_LV_FOCUS_BOX_FAST) || defined(FEATURE_LV_FOCUS_BOX_SNAP) || defined(FEATURE_LV_FOCUS_BOX_AUTOHIDE)
+    #ifndef CONFIG_SLIM_MENUS
     {
         .name = "Focus box settings", 
         .select = menu_open_submenu,
@@ -2044,6 +2045,7 @@ static struct menu_entry key_menus[] = {
             MENU_EOL,
         }
     },
+    #endif /* CONFIG_SLIM_MENUS */
     #endif
     #ifdef FEATURE_ARROW_SHORTCUTS
     {
@@ -2095,7 +2097,7 @@ static struct menu_entry key_menus[] = {
     },
     #endif
 
-    #if defined(FEATURE_LCD_SENSOR_SHORTCUTS) || defined(FEATURE_STICKY_DOF) || defined(FEATURE_STICKY_HALFSHUTTER) || defined(FEATURE_SWAP_MENU_ERASE) || defined(FEATURE_SWAP_INFO_PLAY) || defined(FEATURE_DIGITAL_ZOOM_SHORTCUT)
+    #if (defined(FEATURE_LCD_SENSOR_SHORTCUTS) || defined(FEATURE_STICKY_DOF) || defined(FEATURE_STICKY_HALFSHUTTER) || defined(FEATURE_SWAP_MENU_ERASE) || defined(FEATURE_SWAP_INFO_PLAY) || defined(FEATURE_DIGITAL_ZOOM_SHORTCUT)) && !defined(CONFIG_SLIM_MENUS)
     {
         .name       = "Misc key settings",
         .select = menu_open_submenu,
@@ -2159,7 +2161,7 @@ static struct menu_entry key_menus[] = {
 };
 
 static struct menu_entry tweak_menus[] = {
-    #ifdef FEATURE_WARNINGS_FOR_BAD_SETTINGS
+    #if defined(FEATURE_WARNINGS_FOR_BAD_SETTINGS) && !defined(CONFIG_SLIM_MENUS)
     {
         .name = "Warning for bad settings",
         .select     = menu_open_submenu,
@@ -3453,7 +3455,7 @@ static struct menu_entry display_menus[] = {
                 .depends_on = DEP_LIVEVIEW,
             },
             #endif
-            #ifdef FEATURE_LV_BRIGHTNESS_CONTRAST
+            #if defined(FEATURE_LV_BRIGHTNESS_CONTRAST) && !defined(CONFIG_SLIM_MENUS)
             {
                 .name = "LV brightness", 
                 .priv = &preview_brightness, 
@@ -3478,7 +3480,7 @@ static struct menu_entry display_menus[] = {
                 .icon_type = IT_PERCENT_OFF,
             },
             #endif
-            #ifdef FEATURE_LV_SATURATION
+            #if defined(FEATURE_LV_SATURATION) && !defined(CONFIG_SLIM_MENUS)
             {
                 .name = "LV saturation",
                 .priv     = &preview_saturation,
@@ -3509,7 +3511,7 @@ static struct menu_entry display_menus[] = {
                 }*/
             },
             #endif
-            #ifdef FEATURE_LV_DISPLAY_GAIN
+            #if defined(FEATURE_LV_DISPLAY_GAIN) && !defined(CONFIG_SLIM_MENUS)
             {
                 .name = "LV display gain",
                 .priv = &display_gain_menu_index,
@@ -3546,7 +3548,7 @@ static struct menu_entry display_menus[] = {
         */
     },
     #endif
-    #ifdef FEATURE_DEFISHING_PREVIEW
+    #if defined(FEATURE_DEFISHING_PREVIEW) && !defined(CONFIG_SLIM_MENUS)
         #ifndef CONFIG_DISPLAY_FILTERS
         #error This requires CONFIG_DISPLAY_FILTERS.
         #endif
@@ -3575,7 +3577,7 @@ static struct menu_entry display_menus[] = {
         
     },
     #endif
-    #ifdef FEATURE_ANAMORPHIC_PREVIEW
+    #if defined(FEATURE_ANAMORPHIC_PREVIEW) && !defined(CONFIG_SLIM_MENUS)
         #ifndef CONFIG_DISPLAY_FILTERS
         #error This requires CONFIG_DISPLAY_FILTERS.
         #endif
@@ -3689,6 +3691,7 @@ static struct menu_entry display_menus[] = {
                 },
             #endif
             #ifdef FEATURE_LV_CRAZY_COLORS
+            #ifndef CONFIG_SLIM_MENUS
             {
                 .name = "LV crazy colors",
                 .priv     = &preview_crazy,
@@ -3703,6 +3706,7 @@ static struct menu_entry display_menus[] = {
                          "Swap U-V: reverses red and blue components\n"
                          "Extreme Chroma: highly saturated image showing WB direction\n",
             },
+            #endif /* CONFIG_SLIM_MENUS */
             #endif
             #ifdef FEATURE_DISPLAY_SHAKE
                 #ifndef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY

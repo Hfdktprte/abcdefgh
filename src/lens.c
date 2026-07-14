@@ -2066,7 +2066,9 @@ lens_init( void* unused )
 {
     focus_done_sem = create_named_semaphore( "focus_sem", 1 );
 #ifndef CONFIG_5DC
+#ifndef CONFIG_SLIM_MENUS
     menu_add("Movie Tweaks", lens_menus, COUNT(lens_menus));
+#endif
 #endif
 }
 

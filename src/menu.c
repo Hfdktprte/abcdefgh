@@ -428,8 +428,11 @@ static struct menu_entry mod_menu_placeholders[] = {
 
 void customize_menu_init()
 {
+#ifndef CONFIG_SLIM_MENUS
     menu_add("Prefs", customize_menu, COUNT(customize_menu));
+#endif
 
+#ifndef CONFIG_SLIM_MENUS
     // this is added at the end, after all the others
     my_menu = menu_find_by_name( MY_MENU_NAME, ICON_ML_MYMENU  );
     menu_add(MY_MENU_NAME, my_menu_placeholders, COUNT(my_menu_placeholders));
@@ -438,6 +441,7 @@ void customize_menu_init()
     mod_menu = menu_find_by_name(MOD_MENU_NAME, ICON_ML_MODIFIED);
     menu_add(MOD_MENU_NAME, mod_menu_placeholders, COUNT(mod_menu_placeholders));
     mod_menu->no_name_lookup = 1;
+#endif
 }
 
 static struct menu * menus;
@@ -1438,6 +1442,28 @@ void menu_add(
     int                 count
 )
 {
+#ifdef CONFIG_SLIM_MENUS
+    if (streq(name, "File Manager"))
+        return;
+    if (streq(name, "Debug"))
+    {
+        /* Slim Debug tab: bench module only */
+        int allowed = 0;
+        for (int i = 0; i < count; i++)
+        {
+            if (MENU_IS_EOL(&new_entry[i]))
+                break;
+            if (streq(new_entry[i].name, "Benchmarks"))
+            {
+                allowed = 1;
+                break;
+            }
+        }
+        if (!allowed)
+            return;
+    }
+#endif
+
     take_semaphore( menu_sem, 0 );
 
     menu_add_internal(name, new_entry, count);
@@ -2715,7 +2741,7 @@ entry_print(
         y_font_offset = (h - (int)fontspec_font(fnt)->height) / 2;
 
         /* in My Menu and Recent menu, we will include the submenu name in the original entry */
-        if (my_menu->selected)// || mru_menu->selected)
+        if (my_menu && my_menu->selected)// || mru_menu->selected)
         {
             /* how much space we have to print our stuff? (we got some extra because of the smaller font) */
             int max_len = w;
@@ -2872,7 +2898,7 @@ skip_name:
             submenu_key_hint(720-35, y + y_icon_offset, 40, COLOR_BLACK, ICON_ML_FORWARD);
     }
 
-    if (my_menu->selected && streq(my_menu->name, "Recent") && !junkie_mode)
+    if (my_menu && my_menu->selected && streq(my_menu->name, "Recent") && !junkie_mode)
     {
         /* debug info: show usage counters as small bars */
         int bar_color = entry->selected ? COLOR_LIGHT_BLUE : COLOR_GRAY(5);
@@ -3060,7 +3086,7 @@ menu_entry_process(
     info.x = x;
     info.y = y;
     info.x_val = x + 20 * ABS(menu->split_pos);
-    info.can_custom_draw = menu != my_menu && menu != mod_menu && !menu_lv_transparent_mode;
+    info.can_custom_draw = (!my_menu || menu != my_menu) && (!mod_menu || menu != mod_menu) && !menu_lv_transparent_mode;
     
     // display icon (only the first icon is drawn)
     icon_drawn = 0;
@@ -3313,6 +3339,10 @@ static void junkie_menu_rebuild(int min_items, int * count_max, int * count_my, 
 static int
 my_menu_rebuild()
 {
+#ifdef CONFIG_SLIM_MENUS
+    my_menu_dirty = 0;
+    return 0;
+#else
     my_menu_dirty = 0;
     int ok = dyn_menu_rebuild(my_menu, my_menu_select_func, my_menu_placeholders, COUNT(my_menu_placeholders), DYN_MENU_EXPAND_ALL_SUBMENUS);
 
@@ -3363,10 +3393,15 @@ my_menu_rebuild()
 
     my_menu->name = MY_MENU_NAME;
     return ok;
+#endif
 }
 
 static int mod_menu_rebuild()
 {
+#ifdef CONFIG_SLIM_MENUS
+    mod_menu_dirty = 0;
+    return 0;
+#else
     if (customize_mode)
     {
         /* clear this menu during customizations */
@@ -3391,6 +3426,7 @@ static int mod_menu_rebuild()
         select_menu_by_name(MOD_MENU_NAME, mod_menu_selected_entry->name);
     }
     return ok;
+#endif
 }
 
 static void
@@ -4300,7 +4336,7 @@ menu_entry_customize_toggle(
         return;
     }
 
-    if (menu == my_menu) // special case
+    if (my_menu && menu == my_menu) // special case
     {
         // lookup the corresponding entry in normal menus, and toggle that one instead
         struct menu_entry * orig_entry = entry_by_name;
@@ -5362,24 +5398,30 @@ menu_init( void )
     menu_find_by_name( "Expo",      ICON_ML_EXPO    );
     menu_find_by_name( "Overlay",   ICON_ML_OVERLAY );
     menu_find_by_name( "Movie",     ICON_ML_MOVIE   );
+#ifndef CONFIG_SLIM_MENUS
     menu_find_by_name( "Shoot",     ICON_ML_SHOOT   );
     menu_find_by_name( "Focus",     ICON_ML_FOCUS   );
+#endif
     menu_find_by_name( "Display",   ICON_ML_DISPLAY );
     menu_find_by_name( "Prefs",     ICON_ML_PREFS   );
     menu_find_by_name( "Scripts",   ICON_ML_SCRIPT  );
     menu_find_by_name( "Games",     ICON_ML_GAMES  );
     menu_find_by_name( "Modules",   ICON_ML_MODULES );
     menu_find_by_name( "Debug",     ICON_ML_DEBUG   );
+#ifndef CONFIG_SLIM_MENUS
     menu_find_by_name( "Help",      ICON_ML_INFO    );
+#endif
 
     struct menu * m = menu_find_by_name( "Modules", 0 );
     ASSERT(m);
     m->split_pos = -11;
     m->no_name_lookup = 1;
 
+#ifndef CONFIG_SLIM_MENUS
     m = menu_find_by_name( "Help", 0 );
     ASSERT(m);
     m->no_name_lookup = 1;
+#endif
 }
 
 /*
@@ -6308,11 +6350,13 @@ int handle_quick_access_menu_items(struct event * event)
         #else
         else if (CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE)
         #endif
+        #ifndef CONFIG_SLIM_MENUS
         {
             select_menu("Focus", 0);
             give_semaphore( gui_sem ); 
             return 0;
         }
+        #endif
     }
 #endif
     return 1;

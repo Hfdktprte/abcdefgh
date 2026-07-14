@@ -193,16 +193,9 @@ static void _module_load_all(uint32_t list_only)
     struct fio_file file;
     uint32_t update_properties = 0;
 
-    if(module_console_enabled)
-    {
-        console_show();
-    }
-    else
-    {
-        console_hide();
-    }
+    console_hide();
 
-#ifdef CONFIG_TCC_UNLOAD
+    #ifdef CONFIG_TCC_UNLOAD
     if (module_code)
 #else
     if (module_state)
@@ -560,6 +553,7 @@ static void _module_load_all(uint32_t list_only)
 
     
     printf("Modules loaded\n");
+    console_hide();
 }
 
 static void _module_unload_all(void)

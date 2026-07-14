@@ -40,7 +40,7 @@ void console_show()
 void console_hide()
 {
     console_visible = 0;
-    msleep(100);
+    msleep(20);
     redraw();
 }
 
@@ -288,6 +288,7 @@ void console_draw_from_menu()
 static void
 console_task( void* unused )
 {
+    extern int ml_started;
     console_init();
     #ifdef CONSOLE_DEBUG
     console_show();
@@ -295,6 +296,12 @@ console_task( void* unused )
     int dirty = 0;
     TASK_LOOP
     {
+        if (!ml_started)
+        {
+            msleep(100);
+            continue;
+        }
+
         // show the console only when there are no Canon dialogs on the screen
         if (console_visible && (display_idle() || is_pure_play_photo_or_movie_mode()))
         {

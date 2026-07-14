@@ -607,7 +607,9 @@ static void bitrate_init()
 {
     lvinfo_add_item(info_item);
     menu_add( "Movie", mov_menus, COUNT(mov_menus) );
+#ifndef CONFIG_SLIM_MENUS
     menu_add( "Movie Tweaks", mov_tweak_menus, COUNT(mov_tweak_menus) );
+#endif
     #ifdef FEATURE_NITRATE_WAV_RECORD
     menu_add( "Audio", wav_menus, COUNT(wav_menus) );
     #endif

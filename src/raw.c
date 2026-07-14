@@ -67,6 +67,23 @@ void raw_set_dirty(void)
     dirty = 1;
 }
 
+int raw_params_ready_for_rec(void)
+{
+    if (raw_info.width <= 0
+        || raw_info.height <= 0
+        || raw_info.bits_per_pixel != 14
+        || dirty
+        || get_ms_clock() < next_retry_lv)
+        return 0;
+
+#ifdef CONFIG_EOSM
+    /* geometry from idle refresh is enough; skip slow black-level rescan at record start */
+    return 1;
+#else
+    return raw_info.black_level != 0;
+#endif
+}
+
 /* flags for mlv_lite to free buffers and reallocate when needed */
 int allocating_new_buffer_is_needed = 0;
 int mlv_lite_reallocate_please = 0;
@@ -1227,9 +1244,6 @@ static int raw_update_params_once()
     take_semaphore(raw_sem, 0);
     ans = raw_update_params_work();
     if (ans) module_exec_cbr(CBR_RAW_INFO_UPDATE);
-#ifdef CONFIG_RAW_LIVEVIEW
-    if (ans && lv) raw_force_aspect_ratio(0, 0);
-#endif
     give_semaphore(raw_sem);
     return ans;
 }
@@ -1239,7 +1253,7 @@ int raw_update_params()
     int ans = raw_update_params_once();
     
     /* in LiveView, retry 3 times (there may be transient bad frames, resolution changes and so on) */
-    int retries = 3;
+    int retries = gui_menu_shown() ? 0 : 3;
 
     for (int tries = 0; tries < retries && lv && !ans && raw_lv_is_enabled(); tries++)
     {
@@ -1261,6 +1275,16 @@ int raw_update_params()
         /* hack: this will disable all overlays at bit depths other than 14 */
         return 0;
     }
+
+    return ans;
+}
+
+int raw_update_params_now(void)
+{
+    int ans = raw_update_params_once();
+
+    if (raw_info.bits_per_pixel != 14)
+        return 0;
 
     return ans;
 }
@@ -1369,7 +1393,7 @@ raw_set_geometry(int width, int height, int skip_left, int skip_right, int skip_
     }
 #endif
 
-    raw_set_preview_rect(preview_skip_left, preview_skip_top, preview_width, preview_height, lv);
+    raw_set_preview_rect(preview_skip_left, preview_skip_top, preview_width, preview_height, 0);
 
     dbg_printf("lv2raw sx:%d sy:%d tx:%d ty:%d\n", lv2raw.sx, lv2raw.sy, lv2raw.tx, lv2raw.ty);
     dbg_printf("raw2lv test: (%d,%d) - (%d,%d)\n", RAW2LV_X(raw_info.active_area.x1), RAW2LV_Y(raw_info.active_area.y1), RAW2LV_X(raw_info.active_area.x2), RAW2LV_Y(raw_info.active_area.y2));

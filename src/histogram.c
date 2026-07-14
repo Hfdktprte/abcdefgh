@@ -134,16 +134,13 @@ void FAST hist_build_raw()
 #endif
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
-    static int gap_fill_aux = 0;
-    if (should_run_polling_action(300, &gap_fill_aux))
-    {
 #ifdef CONFIG_SLIM_MENUS
     for (int i = 0; i < 5000; i++)
     {
         int ev0 = r2ev[i];
         int evplus = r2ev[i+1];
         int evminus = r2ev[i-1];
-        if (evplus - evminus > 2)
+        if (evplus - evminus > 2) /* will there be a gap? fill it */
         {
             int num_bins = evplus - evminus - 1;
             int delta = histogram.hist_g[ev0] / num_bins;
@@ -162,7 +159,7 @@ void FAST hist_build_raw()
         int ev0 = r2ev[i];
         int evplus = r2ev[i+1];
         int evminus = r2ev[i-1];
-        if (evplus - evminus > 2)
+        if (evplus - evminus > 2) /* will there be a gap? fill it */
         {
             int num_bins = evplus - evminus - 1;
             int delta_r = histogram.hist_r[ev0] / num_bins;
@@ -180,7 +177,6 @@ void FAST hist_build_raw()
         }
     }
 #endif
-    }
 
     for (int i = 0; i < HIST_WIDTH; i++)
     {

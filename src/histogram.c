@@ -43,26 +43,35 @@ struct Histogram histogram;
 
 static void histobar_refresh();
 
+static int r2ev_white_level = -1;
+static char r2ev[16384];
+
+static void hist_build_r2ev_cache()
+{
+    if (r2ev_white_level == raw_info.white_level) return;
+    r2ev_white_level = raw_info.white_level;
+    for (int i = 0; i < 16384; i++)
+        r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
+}
+
 void FAST hist_build_raw()
 {
-    if (!raw_update_params()) return;
+    static int raw_hist_aux = INT_MIN;
+    if (should_run_polling_action(1000, &raw_hist_aux) || !raw_info.black_level)
+    {
+        if (!raw_update_params()) return;
+    }
+    else if (raw_info.bits_per_pixel != 14)
+    {
+        return;
+    }
 
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;
 
     int step = lv ? 4 : 2;
 
-    /* mapping from 14-bit RAW to EV on the 12-bit histogram:
-     * above raw_info.white_level: last bin (HIST_WIDTH-1)
-     * 12 stops below that: first bin (0)
-     * raw_to_ev returns 0 at white level or above,
-     * and negative floating point values below */
-    char r2ev[16384];
-    for (int i = 0; i < 16384; i++)
-    {
-        r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
-        qprintf("[HIST] RAW %d => %d (white=%d)\n", i, r2ev[i], raw_info.white_level);
-    }
+    hist_build_r2ev_cache();
 
     for (int i = os.y0; i < os.y_max; i += step)
     {
@@ -93,6 +102,9 @@ void FAST hist_build_raw()
     }
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
+    static int gap_fill_aux = 0;
+    if (should_run_polling_action(300, &gap_fill_aux))
+    {
     for (int i = 0; i < 5000; i++)
     {
         int ev0 = r2ev[i];
@@ -115,7 +127,8 @@ void FAST hist_build_raw()
             }
         }
     }
-    
+    }
+
     for (int i = 0; i < HIST_WIDTH; i++)
     {
         histogram.max = MAX(histogram.max, histogram.hist_r[i]);

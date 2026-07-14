@@ -4134,7 +4134,7 @@ livev_hipriority_task( void* unused )
                 BMP_LOCK(
                     if (lv)
                         draw_zebra_and_focus(
-                            k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
+                            k % ((focus_peaking ? 5 : 2) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
                             k % 2 == 1  /* should redraw focus peaking? */
                         ); 
                 )
@@ -4195,7 +4195,7 @@ livev_hipriority_task( void* unused )
 
 static void loprio_sleep()
 {
-    msleep(200);
+    msleep(100);
     while (is_mvr_buffer_almost_full()) msleep(100);
 }
 
@@ -4238,8 +4238,6 @@ livev_lopriority_task( void* unused )
             }
             continue;
         }
-
-        loprio_sleep();
 
         if (!gui_menu_shown())
         {

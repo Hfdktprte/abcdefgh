@@ -355,6 +355,10 @@ static GUARDED_BY(GuiMainTask)  int frame_offset_delta_y = 0;
 
 static volatile int raw_recording_state = RAW_IDLE;
 
+#ifdef CONFIG_EOSM
+static int eosm_slot_rewarm_pending = 0;
+#endif
+
 #define RAW_IS_IDLE      (raw_recording_state == RAW_IDLE)
 #define RAW_IS_PREPARING (raw_recording_state == RAW_PREPARING)
 #define RAW_IS_RECORDING (raw_recording_state == RAW_RECORDING || \
@@ -1635,9 +1639,6 @@ void mlv_rec_warm_buffers()
     if (!shoot_mem_suite && !srm_mem_suite)
         return;
 
-    if (!raw_update_params_now())
-        raw_update_params();
-
     update_resolution_params();
     setup_buffers();
 }
@@ -2226,6 +2227,16 @@ unsigned int raw_rec_polling_cbr(unsigned int unused)
         give_semaphore(settings_sem);
         gui_uilock(UILOCK_NONE);
     }
+
+#ifdef CONFIG_EOSM
+    if (eosm_slot_rewarm_pending && RAW_IS_IDLE && !gui_menu_shown())
+    {
+        take_semaphore(settings_sem, 0);
+        mlv_rec_warm_buffers();
+        eosm_slot_rewarm_pending = 0;
+        give_semaphore(settings_sem);
+    }
+#endif
 
     /* update settings when changing video modes (outside menu) */
     if (RAW_IS_IDLE && !gui_menu_shown())
@@ -3643,14 +3654,19 @@ void raw_video_rec_task(uint32_t thread)
         powersave_prohibit();
 
 #ifdef CONFIG_EOSM
-        int params_ready = raw_params_ready_for_rec();
-        if (params_ready)
-            wait_lv_frames(0);
-        else
-            wait_lv_frames(1);
-        if (!params_ready)
+        if (!raw_params_ready_for_rec())
+        {
             raw_set_dirty();
-        if (!(params_ready ? raw_update_params_now() : raw_update_params()))
+            if (!raw_update_params_now())
+            {
+                wait_lv_frames(1);
+                if (!raw_update_params())
+                {
+                    NotifyBox(5000, "Raw detect error");
+                    goto cleanup;
+                }
+            }
+        }
 #else
         /* wait for two frames to be sure everything is refreshed */
         wait_lv_frames(2);
@@ -3658,29 +3674,33 @@ void raw_video_rec_task(uint32_t thread)
         /* detect raw parameters (geometry, black level etc) */
         raw_set_dirty();
         if (!raw_update_params())
-#endif
         {
             NotifyBox(5000, "Raw detect error");
             goto cleanup;
         }
+#endif
 
         take_semaphore(settings_sem, 0);
 #ifdef CONFIG_EOSM
         if (!shoot_mem_suite)
             realloc_buffers();
         else
-#endif
         {
             update_resolution_params();
-#ifdef CONFIG_EOSM
             if (setup_buffers() < 2)
                 mlv_rec_warm_buffers();
-#else
-            setup_buffers();
-#endif
         }
+        if (BPP != 14 || raw_info.bits_per_pixel != 14)
+            setup_bit_depth();
+#else
+        update_resolution_params();
+        setup_buffers();
         setup_bit_depth();
+#endif
         give_semaphore(settings_sem);
+
+        hack_liveview(0);
+        liveview_hacked = 1;
 
         /* create output file */
         raw_movie_filename = get_next_raw_movie_file_name();
@@ -3702,9 +3722,6 @@ void raw_video_rec_task(uint32_t thread)
             NotifyBox(5000, "Card Full");
             goto cleanup;
         }
-        
-        hack_liveview(0);
-        liveview_hacked = 1;
 
         /* try a sync beep (not very precise, but better than nothing) */
         if(sync_beep)
@@ -4012,7 +4029,7 @@ abort_and_check_early_stop:
 
     /* wait until the other tasks calm down */
 #ifdef CONFIG_EOSM
-    wait_lv_frames(1);
+    wait_lv_frames(0);
 #else
     wait_lv_frames(2);
 #endif
@@ -4134,18 +4151,33 @@ cleanup:
     
     if (thread == 0) /* Only do this part of cleanup on main thread */
     {
+#ifdef CONFIG_EOSM
+        hist_invalidate_r2ev_cache();
+        preview_dirty = 0;
+        raw_set_dirty();
+        if (!raw_update_params_now())
+        {
+            wait_lv_frames(1);
+            raw_update_params();
+        }
+#endif
+
         take_semaphore(settings_sem, 0);
 #ifdef CONFIG_EOSM
         if (!use_h264_proxy())
         {
-            /* keep Canon memory suites allocated for sub-second record restart */
+            /* keep Canon memory suites allocated for fast record restart */
             reset_buffer_slots();
-            mlv_rec_warm_buffers();
+            eosm_slot_rewarm_pending = 1;
         }
         else
-#endif
             free_buffers();
+        if (raw_info.bits_per_pixel != 14)
+            restore_bit_depth();
+#else
+        free_buffers();
         restore_bit_depth();
+#endif
         give_semaphore(settings_sem);
 
         /* everything saved, we can unlock the buttons */
@@ -4191,13 +4223,6 @@ cleanup:
         }
 
         raw_recording_state = RAW_IDLE;
-
-#ifdef CONFIG_EOSM
-        raw_invalidate_lv_calibration();
-        hist_invalidate_r2ev_cache();
-        wait_lv_frames(2);
-        raw_update_params();
-#endif
 
 #ifndef CONFIG_EOSM
         redraw();
@@ -4716,9 +4741,12 @@ unsigned int raw_rec_update_preview(unsigned int ctx)
         int enabled = raw_rec_should_preview();
         if (!enabled && preview_dirty)
         {
-            /* cleanup the mess, if any */
+#ifdef CONFIG_EOSM
+            preview_dirty = 0;
+#else
             raw_invalidate_lv_calibration();
             preview_dirty = 0;
+#endif
         }
         return enabled;
     }

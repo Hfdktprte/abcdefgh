@@ -2366,8 +2366,24 @@ void hack_liveview(int unhack)
         }
         else if (canon_gui_was_enabled)
         {
-            canon_gui_enable_front_buffer(0);
-            canon_gui_was_enabled = 0;
+#ifdef CONFIG_EOSM
+            /* In crop 5x, the idle steady state keeps the Canon front buffer
+             * disabled (kill-flicker), so ML/crop_rec keep showing the cropped
+             * preview. Re-enabling it here forces a Canon LiveView re-init that
+             * momentarily resets the sensor geometry to full/uncropped before
+             * crop_rec re-forces the crop -> the visible zoom-out/zoom-in flash
+             * on stop. Leave it disabled and let the crop_rec/powersave loop
+             * manage it, so the preview stays cropped. */
+            if (crop_rec_is_enabled() && lv_dispsize == 5)
+            {
+                canon_gui_was_enabled = 0;
+            }
+            else
+#endif
+            {
+                canon_gui_enable_front_buffer(0);
+                canon_gui_was_enabled = 0;
+            }
         }
 
         /* disable auto exposure and auto white balance */

@@ -624,6 +624,8 @@ hist_build()
 
 #define ZEBRA_COLOR_WORD_SOLID(x) ( (x) | (x)<<8 | (x)<<16 | (x)<<24 )
 
+static int raw_zebra_color_at(int x, int y, int white, int underexposed);
+
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT("raw.zebra", raw_zebra_enable, 1);
 #else

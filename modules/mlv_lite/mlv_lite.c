@@ -357,6 +357,10 @@ static volatile int raw_recording_state = RAW_IDLE;
 
 #ifdef CONFIG_EOSM
 static int eosm_slot_rewarm_pending = 0;
+/* until this time (ms clock) the kill-flicker/powersave loop must keep the
+ * Canon front buffer state stable after stopping a crop recording, so it does
+ * not flash the front buffer on + redraw and wipe the ML overlays. */
+int eosm_stop_hold_until = 0;
 #endif
 
 #define RAW_IS_IDLE      (raw_recording_state == RAW_IDLE)
@@ -4168,6 +4172,12 @@ cleanup:
     if (thread == 0) /* Only do this part of cleanup on main thread */
     {
 #ifdef CONFIG_EOSM
+        /* crop LV: hold the kill-flicker steady state through the settle window,
+         * so the powersave loop doesn't flash the Canon front buffer on/off and
+         * wipe/rebuild the ML overlays right after we return to LiveView */
+        if (crop_rec_is_enabled() && lv_dispsize == 5)
+            eosm_stop_hold_until = get_ms_clock() + 1200;
+
         hist_invalidate_r2ev_cache();
         preview_dirty = 0;
         raw_set_dirty();

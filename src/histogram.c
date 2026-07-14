@@ -342,7 +342,7 @@ void hist_draw_image(
     bmp_draw_rect(60, x_origin-1, y_origin-1, HIST_WIDTH+2, hist_height+2);
 
     #ifdef FEATURE_RAW_HISTOGRAM
-    if (histogram.is_raw)
+    if (histogram.is_raw && hist_meter)
     {
         char msg[10];
         switch (hist_meter)
@@ -375,10 +375,11 @@ void hist_draw_image(
             }
 
             default:
-                snprintf(msg, sizeof(msg), "RAW");
+                msg[0] = 0;
                 break;
         }
-        bmp_printf(SHADOW_FONT(FONT_MED), x_origin+4, y_origin, msg);
+        if (msg[0])
+            bmp_printf(SHADOW_FONT(FONT_MED), x_origin+4, y_origin, msg);
     }
     #endif
 }

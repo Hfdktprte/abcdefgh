@@ -545,18 +545,10 @@ hist_build()
     #endif
     
     #ifdef FEATURE_RAW_HISTOGRAM
-#ifdef CONFIG_SLIM_MENUS
-    if (RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()
-        && raw_info.black_level && raw_info.bits_per_pixel == 14)
-    {
-        hist_build_raw();
-    }
-#else
     if (RAW_HISTOGRAM_ENABLED && can_use_raw_overlays())
     {
         hist_build_raw();
     }
-#endif
     #endif
     
     histogram.is_rgb =
@@ -4344,11 +4336,7 @@ static void loprio_sleep()
 static void
 livev_lopriority_task( void* unused )
 {
-#ifdef CONFIG_SLIM_MENUS
-    msleep(100);
-#else
     msleep(500);
-#endif
     TASK_LOOP
     {
         #ifdef FEATURE_CROPMARKS
@@ -4375,14 +4363,6 @@ livev_lopriority_task( void* unused )
         loprio_sleep();
         if (!zebra_should_run())
         {
-#ifdef CONFIG_SLIM_MENUS
-            if (hist_draw && liveview_display_idle() && get_global_draw()
-                && !is_zoom_mode_so_no_zebras() && !gui_menu_shown())
-            {
-                draw_histogram_and_waveform(0);
-            }
-            else
-#endif
             if (WAVEFORM_FULLSCREEN && liveview_display_idle() && get_global_draw() && !is_zoom_mode_so_no_zebras() && !gui_menu_shown())
             {
                 if (get_halfshutter_pressed()) clrscr();
@@ -4390,6 +4370,8 @@ livev_lopriority_task( void* unused )
             }
             continue;
         }
+
+        loprio_sleep();
 
         if (!gui_menu_shown())
         {

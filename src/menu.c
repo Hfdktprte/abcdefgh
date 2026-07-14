@@ -4437,6 +4437,13 @@ void menu_entry_select(
         bool promotable_to_pickbox = HAS_SINGLE_ITEM_SUBMENU(entry) && SHOULD_USE_EDIT_MODE(entry->children);
 
         if (menu_lv_transparent_mode) { menu_lv_transparent_mode = 0; }
+#ifdef CONFIG_SLIM_MENUS
+        else if (IS_BOOL(entry) && !entry->children)
+        {
+            /* flat ON/OFF overlay toggles: ignore Q and touch */
+            entry_used = 1;
+        }
+#endif
         else if (edit_mode)
         {
             edit_mode = 0;
@@ -5086,6 +5093,13 @@ int handle_ml_menu_touch(struct event * event)
     int button_code = event->param;
     switch (button_code) {
         case BGMT_TOUCH_1_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+        {
+            struct menu_entry * entry = get_selected_menu_entry(0);
+            if (entry && IS_BOOL(entry) && !entry->children)
+                return 0;
+        }
+#endif
             fake_simple_button(BGMT_Q);
             return 0;
         case BGMT_TOUCH_2_FINGER:

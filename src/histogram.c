@@ -87,9 +87,6 @@ void FAST hist_build_raw()
         return;
     }
 
-    if (!raw_overlay_calibration_ready())
-        return;
-
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;
 

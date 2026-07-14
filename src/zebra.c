@@ -622,6 +622,8 @@ hist_build()
 
 #ifdef FEATURE_RAW_ZEBRAS
 
+#define ZEBRA_COLOR_WORD_SOLID(x) ( (x) | (x)<<8 | (x)<<16 | (x)<<24 )
+
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT("raw.zebra", raw_zebra_enable, 1);
 #else
@@ -652,6 +654,9 @@ static void FAST draw_zebras_raw()
         {
             int x = BM2RAW_X(j);
 
+#ifdef CONFIG_SLIM_MENUS
+            int c = raw_zebra_color_at(x, y, white, underexposed);
+#else
             /* for dual ISO: show solid zebras if both sub-images are overexposed */
             /* show semitransparent zebras if only one is overexposed */
             /* impact on normal ISOs should be minimal */
@@ -668,7 +673,7 @@ static void FAST draw_zebras_raw()
             {
                 uint32_t* lv = get_yuv422_vram()->vram;
                 int R = r > raw_info.black_level+16 ? (int)(log2f((r - raw_info.black_level) / 16.0f) * 255 / 10) : 1;
-                int G = g > raw_info.black_level+16 ? (int)(log2f((g - raw_info.black_level) / 32.0f) * 255 / 10) : 1;
+                int G = g > raw_info.black_level+16 ? (int)(log2f((g - raw_info.black_level) / 16.0f) * 255 / 10) : 1;
                 int B = b > raw_info.black_level+16 ? (int)(log2f((b - raw_info.black_level) / 16.0f) * 255 / 10) : 1;
                 int Y =  (0.257 * R) + (0.504 * G) + (0.098 * B);
                 int U = -(0.148 * R) - (0.291 * G) + (0.439 * B);
@@ -679,6 +684,7 @@ static void FAST draw_zebras_raw()
             #endif
             
             int c = zebra_rgb_solid_color(u <= underexposed, r > white, g > white, b > white);
+#endif
             if (c)
             {
                 uint8_t* bp = (uint8_t*) &bvram[BM(j,i)];
@@ -815,12 +821,28 @@ static int raw_zebra_color_at(int x, int y, int white, int underexposed)
     if (x < raw_info.active_area.x1 || x > raw_info.active_area.x2) return 0;
     if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) return 0;
 
+#ifdef CONFIG_SLIM_MENUS
+    /* clip-any: one solid color when max(R,G,B) exceeds white (fewer reads, no per-channel palette) */
+    int r = raw_red_pixel_dark(x, y);
+    int g = raw_green_pixel_dark(x, y);
+    int b = raw_blue_pixel_dark(x, y);
+    if (MAX(MAX(r, g), b) > white)
+        return ZEBRA_COLOR_WORD_SOLID(COLOR_RED);
+    if (underexposed)
+    {
+        int u = raw_green_pixel_bright(x, y);
+        if (u <= underexposed)
+            return ZEBRA_COLOR_WORD_SOLID(79);
+    }
+    return 0;
+#else
     int r = raw_red_pixel_dark(x, y);
     int g = raw_green_pixel_dark(x, y);
     int b = raw_blue_pixel_dark(x, y);
     int u = raw_green_pixel_bright(x, y);
 
     return zebra_rgb_solid_color(u <= underexposed, r > white, g > white, b > white);
+#endif
 }
 
 static void FAST draw_zebras_raw_lv()
@@ -930,7 +952,9 @@ int get_under_and_over_exposure(int thr_lo, int thr_hi, int* under, int* over)
 }
 
 #ifdef FEATURE_ZEBRA
+#ifndef ZEBRA_COLOR_WORD_SOLID
 #define ZEBRA_COLOR_WORD_SOLID(x) ( (x) | (x)<<8 | (x)<<16 | (x)<<24 )
+#endif
 static int zebra_rgb_color(int underexposed, int clipR, int clipG, int clipB, int y)
 {
     if (underexposed) return zebra_color_word_row(79, y);
@@ -1966,7 +1990,7 @@ static MENU_UPDATE_FUNC(zebra_draw_display)
     if (z)
     {
 #ifdef CONFIG_SLIM_MENUS
-        MENU_SET_VALUE("RAW");
+        MENU_SET_VALUE("RAW clip");
 #else
         MENU_SET_VALUE(
             "%s, ",
@@ -2741,7 +2765,7 @@ struct menu_entry zebra_menus[] = {
         .priv       = &zebra_draw,
         .max = 1,
         .icon_type = IT_BOOL,
-        .help = "RAW zebra stripes on overexposed highlights.",
+        .help = "RAW clip-any zebras: solid red when any channel clips.",
         .help2 = "Toggle ON/OFF with SET. Uses sensor RAW data in LiveView.",
         .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },

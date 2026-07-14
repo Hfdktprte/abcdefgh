@@ -110,7 +110,7 @@ void FAST hist_build_raw()
     hist_build_r2ev_cache();
 
 #ifdef CONFIG_SLIM_MENUS
-    /* slim: green-channel luma scan — same stride as dannephoto, fewer reads */
+    /* slim: green for luma curve; all channels for clip indicators */
     for (int i = os.y0; i < os.y_max; i += step)
     {
         int y = BM2RAW_Y(i);
@@ -121,12 +121,15 @@ void FAST hist_build_raw()
             int x = BM2RAW_X(j);
             if (x < raw_info.active_area.x1+8 || x > raw_info.active_area.x2-8) continue;
 
+            int r = raw_red_pixel_dark(x, y);
             int g = raw_green_pixel_dark(x, y);
-            if (g == 0) continue;
+            int b = raw_blue_pixel_dark(x, y);
+            if (r == 0 || g == 0 || b == 0) continue;
 
-            int ig = r2ev[g];
-            histogram.hist_g[ig]++;
-            histogram.hist[ig]++;
+            histogram.hist_r[r2ev[r]]++;
+            histogram.hist_g[r2ev[g]]++;
+            histogram.hist_b[r2ev[b]]++;
+            histogram.hist[r2ev[g]]++;
             histogram.total_px++;
         }
     }
@@ -305,6 +308,25 @@ static int hist_dot_label(int over, int hist_total_px)
     return 100 * over / hist_total_px;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+#define HIST_CLIP_DOT_RADIUS 3
+static int hist_clip_dot_radius(int over, int hist_total_px)
+{
+    (void)over;
+    (void)hist_total_px;
+    return HIST_CLIP_DOT_RADIUS;
+}
+static int hist_clip_dot_label(int over, int hist_total_px)
+{
+    (void)over;
+    (void)hist_total_px;
+    return 0;
+}
+#else
+#define hist_clip_dot_radius hist_dot_radius
+#define hist_clip_dot_label hist_dot_label
+#endif
+
 static int (*auto_ettr_export_correction)(int* out) = MODULE_FUNCTION(auto_ettr_export_correction);
 
 /** Draw the histogram image into the bitmap framebuffer.
@@ -391,14 +413,14 @@ void hist_draw_image(
                 unsigned int over_g = histogram.hist_g[i];
                 unsigned int over_b = histogram.hist_b[i];
 
-                if (over_r > thr) hist_dot(x_origin + HIST_WIDTH/2 - 25, yw, COLOR_RED,        bg, hist_dot_radius(over_r, histogram.total_px), hist_dot_label(over_r, histogram.total_px));
-                if (over_g > thr) hist_dot(x_origin + HIST_WIDTH/2     , yw, COLOR_GREEN1,     bg, hist_dot_radius(over_g, histogram.total_px), hist_dot_label(over_g, histogram.total_px));
-                if (over_b > thr) hist_dot(x_origin + HIST_WIDTH/2 + 25, yw, COLOR_LIGHT_BLUE, bg, hist_dot_radius(over_b, histogram.total_px), hist_dot_label(over_b, histogram.total_px));
+                if (over_r > thr) hist_dot(x_origin + HIST_WIDTH/2 - 25, yw, COLOR_RED,        bg, hist_clip_dot_radius(over_r, histogram.total_px), hist_clip_dot_label(over_r, histogram.total_px));
+                if (over_g > thr) hist_dot(x_origin + HIST_WIDTH/2     , yw, COLOR_GREEN1,     bg, hist_clip_dot_radius(over_g, histogram.total_px), hist_clip_dot_label(over_g, histogram.total_px));
+                if (over_b > thr) hist_dot(x_origin + HIST_WIDTH/2 + 25, yw, COLOR_LIGHT_BLUE, bg, hist_clip_dot_radius(over_b, histogram.total_px), hist_clip_dot_label(over_b, histogram.total_px));
             }
             else
             {
                 unsigned int over = histogram.hist[i] + histogram.hist[i-1];
-                if (over > thr) hist_dot(x_origin + HIST_WIDTH/2, yw, COLOR_RED, bg, hist_dot_radius(over, histogram.total_px), hist_dot_label(over, histogram.total_px));
+                if (over > thr) hist_dot(x_origin + HIST_WIDTH/2, yw, COLOR_RED, bg, hist_clip_dot_radius(over, histogram.total_px), hist_clip_dot_label(over, histogram.total_px));
             }
         }
 #endif

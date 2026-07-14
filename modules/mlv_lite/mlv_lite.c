@@ -1595,16 +1595,14 @@ int add_mem_suite(struct memSuite * mem_suite, int chunk_index, int max_frame_si
 }
 
 static REQUIRES(settings_sem)
-void free_buffers()
+void reset_buffer_slots()
 {
-    /* invalidate current buffers */
+    /* drop slot layout but keep Canon memory suites for a fast record restart */
     configured_max_frame_size = 0;
     configured_fullres_buf_size = 0;
     configured_pre_recording_settings = 0;
     total_slot_count = 0;
     valid_slot_count = 0;
-
-    /* this buffer is allocated from one of the suites -> nothing to do */
     fullsize_buffers[0] = 0;
 
     if (fullsize_buffers[1] && raw_info.buffer)
@@ -1612,6 +1610,12 @@ void free_buffers()
         ASSERT(fullsize_buffers[1] == UNCACHEABLE(raw_info.buffer));
     }
     fullsize_buffers[1] = 0;
+}
+
+static REQUIRES(settings_sem)
+void free_buffers()
+{
+    reset_buffer_slots();
 
     if (shoot_mem_suite)
     {
@@ -1623,6 +1627,19 @@ void free_buffers()
         srm_free_suite(srm_mem_suite);
         srm_mem_suite = 0;
     }
+}
+
+static REQUIRES(settings_sem)
+void mlv_rec_warm_buffers()
+{
+    if (!shoot_mem_suite && !srm_mem_suite)
+        return;
+
+    if (!raw_update_params_now())
+        raw_update_params();
+
+    update_resolution_params();
+    setup_buffers();
 }
 
 static REQUIRES(settings_sem)
@@ -1641,6 +1658,8 @@ void realloc_buffers()
 
     printf("Shoot memory: %s\n", shoot_mem_suite ? format_memory_size(shoot_mem_suite->size) : "N/A");
     printf("SRM memory: %s\n", srm_mem_suite ? format_memory_size(srm_mem_suite->size) : "N/A");
+
+    mlv_rec_warm_buffers();
 }
 
 /* skip double buffering for Full-Res preset, this gain an extra slot, didn't notice side effects */
@@ -2068,7 +2087,7 @@ void show_recording_status()
     }
 
     /* Determine if we should redraw */
-    if (!RAW_IS_IDLE && liveview_display_idle())
+    if (RAW_IS_RECORDING && liveview_display_idle())
     {
         switch (indicator_display)
         {
@@ -2197,7 +2216,7 @@ unsigned int raw_rec_polling_cbr(unsigned int unused)
 
     /* reallocate buffers if needed (only if not recording) */
     /* reallocate buffers only after raw.c finish allocating its buffer */
-    if (realloc && (RAW_IS_IDLE || RAW_IS_PREPARING) && gui_state == GUISTATE_IDLE
+    if (realloc && RAW_IS_IDLE && gui_state == GUISTATE_IDLE
         && !allocating_new_buffer_is_needed && !mlv_lite_reallocate_please)
     {
         gui_uilock(UILOCK_EVERYTHING);
@@ -3646,8 +3665,20 @@ void raw_video_rec_task(uint32_t thread)
         }
 
         take_semaphore(settings_sem, 0);
-        update_resolution_params();
-        setup_buffers();
+#ifdef CONFIG_EOSM
+        if (!shoot_mem_suite)
+            realloc_buffers();
+        else
+#endif
+        {
+            update_resolution_params();
+#ifdef CONFIG_EOSM
+            if (setup_buffers() < 2)
+                mlv_rec_warm_buffers();
+#else
+            setup_buffers();
+#endif
+        }
         setup_bit_depth();
         give_semaphore(settings_sem);
 
@@ -4104,7 +4135,16 @@ cleanup:
     if (thread == 0) /* Only do this part of cleanup on main thread */
     {
         take_semaphore(settings_sem, 0);
-        free_buffers();
+#ifdef CONFIG_EOSM
+        if (!use_h264_proxy())
+        {
+            /* keep Canon memory suites allocated for sub-second record restart */
+            reset_buffer_slots();
+            mlv_rec_warm_buffers();
+        }
+        else
+#endif
+            free_buffers();
         restore_bit_depth();
         give_semaphore(settings_sem);
 

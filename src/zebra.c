@@ -4284,7 +4284,13 @@ livev_hipriority_task( void* unused )
                         && RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()
                         && raw_overlay_calibration_ready())
                     {
-                        hist_build_raw();
+                        static int slim_hist_aux = 0;
+                        static int slim_hist_ready = 0;
+                        if (should_run_polling_action(100, &slim_hist_aux) || !slim_hist_ready)
+                        {
+                            hist_build_raw();
+                            slim_hist_ready = 1;
+                        }
                         if (histogram.max == 0) histogram.max = 1;
                         if (get_screen_layout() == SCREENLAYOUT_3_2)
                             hist_draw_image(os.x_max - HIST_WIDTH - 2,

@@ -4555,6 +4555,7 @@ static struct menu_entry expo_menus[] = {
 
 static struct menu_entry expo_menus2[] = {
 #ifdef FEATURE_EXPO_ISO
+#ifndef CONFIG_SLIM_MENUS
 {
     .name = "ISO Expo",
     .update    = iso_display,
@@ -4598,6 +4599,7 @@ static struct menu_entry expo_menus2[] = {
         MENU_EOL
     },
 },
+#endif
 #endif
 #ifdef FEATURE_EXPO_SHUTTER
 {

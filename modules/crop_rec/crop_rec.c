@@ -523,7 +523,11 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 }
             }
             
+#ifdef CONFIG_SLIM_MENUS
+            if (tapdisp == 4 && key == MODULE_KEY_TOUCH_1_FINGER)
+#else
             if (tapdisp == 5 && key == MODULE_KEY_TOUCH_1_FINGER)
+#endif
             {
                 SetGUIRequestMode(0);
                 extern int falsecolor_draw;
@@ -567,7 +571,11 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 gui_open_menu();
                 submenu = 1;
             }
-            if ((key == MODULE_KEY_PRESS_SET && SET_button == 8) || (key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 4) || (key == MODULE_KEY_INFO && INFO_button == 8))
+            if ((key == MODULE_KEY_PRESS_SET && SET_button == 8) || (key == MODULE_KEY_INFO && INFO_button == 8)
+#ifndef CONFIG_SLIM_MENUS
+                 || (key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 4)
+#endif
+            )
             {
                 msleep(100);
                 if(lv_disp_mode != 0){
@@ -5793,23 +5801,38 @@ static struct menu_entry customize_buttons_menu[] =
             },
             {
                .name     = "SET Button",
+#ifdef CONFIG_SLIM_MENUS
+               .max      = 7,
+               .choices  = CHOICES("OFF", "Zoom x10", "ISO", "Aperture +", "Dual ISO", "False color", "Aperture Expo", "Shutter Expo"),
+#else
                .max      = 8,
                .choices  = CHOICES("OFF", "Zoom x10", "ISO", "Aperture +", "Dual ISO", "False color", "Aperture Expo", "Shutter Expo", "ISO Expo"),
+#endif
                .priv     = &SET_button,
                .help     = "Assign SET button to a task.",
             },
             {
                 .name     = "INFO Button",
+#ifdef CONFIG_SLIM_MENUS
+                .max      = 7,
+                .choices  = CHOICES("OFF", "Zoom x10", "ISO", "Aperture -", "Dual ISO", "False color", "Shutter Expo", "Aperture Expo"),
+#else
                 .max      = 8,
                 .choices  = CHOICES("OFF", "Zoom x10", "ISO", "Aperture -", "Dual ISO", "False color", "Shutter Expo", "Aperture Expo", "ISO Expo"),
+#endif
                 .priv     = &INFO_button,
                 .help     = "Assign INFO button to a task.",
             },
             {
                 .name   = "Tap display",
                 .priv   = &tapdisp,
+#ifdef CONFIG_SLIM_MENUS
+                .max    = 4,
+                .choices = CHOICES("OFF", "Preset list", "Shutter Expo", "Aperture Expo", "False color"),
+#else
                 .max    = 5,
                 .choices = CHOICES("OFF", "Preset list", "Shutter Expo", "Aperture Expo", "ISO Expo", "False color"),
+#endif
                 .help     = "Assign Tap display to a task.",
             },
             {
@@ -6477,7 +6500,11 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     }
                 }
                 
+#ifdef CONFIG_SLIM_MENUS
+                if (tapdisp == 4 && key == MODULE_KEY_TOUCH_1_FINGER)
+#else
                 if (tapdisp == 5 && key == MODULE_KEY_TOUCH_1_FINGER)
+#endif
                 {
                     SetGUIRequestMode(0);
                     msleep(100);
@@ -6523,6 +6550,19 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     msleep(10);
                     submenu = 1;
                 }
+#ifdef CONFIG_SLIM_MENUS
+                if ((SET_button == 8 && key == MODULE_KEY_PRESS_SET) || (INFO_button == 8 && key == MODULE_KEY_INFO))
+                {
+                    msleep(100);
+                    if(lv_disp_mode != 0){
+                        return 1;
+                    }
+                    select_menu_by_name("Expo", "ISO");
+                    gui_open_menu();
+                    msleep(10);
+                    submenu = 1;
+                }
+#else
                 if ((tapdisp == 4 && key == MODULE_KEY_TOUCH_1_FINGER) || (SET_button == 8 && key == MODULE_KEY_PRESS_SET) || (INFO_button == 8 && key == MODULE_KEY_INFO))
                 {
                     msleep(100);
@@ -6535,6 +6575,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     msleep(10);
                     submenu = 1;
                 }
+#endif
                 if (tapdisp == 1 && key == MODULE_KEY_TOUCH_1_FINGER)
                 {
                     msleep(100);

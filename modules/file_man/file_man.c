@@ -1259,7 +1259,8 @@ static unsigned int fileman_init()
     mfile_root = malloc(sizeof(FILES_LIST));
     memset(mfile_root,0,sizeof(FILES_LIST));
     mfile_root->next = NULL;
-    InitRootDir();
+    if (!is_camera("EOSM", "2.0.2"))
+        InitRootDir();
     
     return 0;
 }

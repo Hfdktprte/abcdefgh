@@ -35,5 +35,15 @@
 #define FEATURE_LV_FOCUS_BOX_SNAP
 #undef FEATURE_ARROW_SHORTCUTS
 #undef FEATURE_MAGIC_ZOOM_FULL_SCREEN // https://bitbucket.org/hudson/magic-lantern/issue/2272/full-screen-magic-zoom-is-garbled-on-700d
+#undef FEATURE_ZEBRA_FAST
+#undef FEATURE_FALSE_COLOR
+#undef FEATURE_WAVEFORM
+#undef FEATURE_VECTORSCOPE
+#undef FEATURE_REC_NOTIFY
 
 #define FEATURE_EYEFI_TRICKS
+
+/* Slim UI: crop_rec RAW workflow only */
+#define CONFIG_SLIM_MENUS
+#undef FEATURE_EXPO_LOCK
+#undef FEATURE_EXPO_PRESET

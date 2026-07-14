@@ -189,7 +189,13 @@ static CONFIG_INT("raw.preview_toggle", preview_toggle, 0);
 
 static CONFIG_INT("raw.warm.up", warm_up, 0);
 static CONFIG_INT("raw.use.srm.memory", use_srm_memory, 1);
-static CONFIG_INT("raw.small.hacks", small_hacks, 2);
+static CONFIG_INT("raw.small.hacks", small_hacks,
+#ifdef CONFIG_EOSM
+    1  /* ON: faster record start than More/All on EOS M */
+#else
+    2
+#endif
+);
 static CONFIG_INT("raw.killgd", kill_gd, 0);
 
 static CONFIG_INT("raw.h264.proxy", h264_proxy_menu, 0);
@@ -1021,7 +1027,12 @@ void setup_bit_depth_digital_gain(int force_off)
     {
         int div = 1 << (14 - bpp_d);
         raw_lv_request_digital_gain(bpp_d == 14 ? 0 : 4096 / div);
+#ifdef CONFIG_EOSM
+        if (bpp_d != 14 || prev_bpp_d != 0)
+            wait_lv_frames(1);
+#else
         wait_lv_frames(2);
+#endif
         prev_bpp_d = bpp_d;
     }
 }
@@ -1082,6 +1093,9 @@ void refresh_raw_settings(int force)
     if (!lv) return;
     
     if (!RAW_IS_IDLE) return;
+
+    /* avoid blocking on wait_lv_frames() while ML menu is open (Movie tab redraw) */
+    if (gui_menu_shown()) return;
 
     take_semaphore(settings_sem, 0);
 
@@ -2289,6 +2303,11 @@ int AeWbTask_Disabled()
     return 0;
 }
 
+int mlv_raw_rec_busy()
+{
+    return !RAW_IS_IDLE;
+}
+
 static REQUIRES(RawRecTask)
 void hack_liveview(int unhack)
 {
@@ -2385,7 +2404,9 @@ void hack_liveview(int unhack)
             if (!unhack) /* hack */
             {
                 WillSuspendAeWbTask = 1; // we are going to suspend AeWb task (check code around shutter_blanking_idle in crop_rec.c)
+#ifndef CONFIG_EOSM
                 wait_lv_frames(1);
+#endif
 
                 if (small_hacks == 2)
                 {
@@ -3601,12 +3622,23 @@ void raw_video_rec_task(uint32_t thread)
         /* disable Canon's powersaving (30 min in LiveView) */
         powersave_prohibit();
 
+#ifdef CONFIG_EOSM
+        int params_ready = raw_params_ready_for_rec();
+        if (params_ready)
+            wait_lv_frames(0);
+        else
+            wait_lv_frames(1);
+        if (!params_ready)
+            raw_set_dirty();
+        if (!(params_ready ? raw_update_params_now() : raw_update_params()))
+#else
         /* wait for two frames to be sure everything is refreshed */
         wait_lv_frames(2);
         
         /* detect raw parameters (geometry, black level etc) */
         raw_set_dirty();
         if (!raw_update_params())
+#endif
         {
             NotifyBox(5000, "Raw detect error");
             goto cleanup;
@@ -3914,8 +3946,10 @@ abort_and_check_early_stop:
 
             if (!RECORDING_H264 && thread == 0)
             {
+#ifndef CONFIG_EOSM
                 /* faster writing speed that way */
                 PauseLiveView();
+#endif
             }
 
             if (last_block_size > 3)
@@ -3945,13 +3979,18 @@ abort_and_check_early_stop:
     mlv_rec_call_cbr(MLV_REC_EVENT_STOPPING, NULL);
 
     /* wait until the other tasks calm down */
+#ifdef CONFIG_EOSM
+    wait_lv_frames(1);
+#else
     wait_lv_frames(2);
+#endif
 
     /* signal end of recording to the compression task */
     msg_queue_post(compress_mq, INT_MIN);
     
     set_recording_custom(CUSTOM_RECORDING_NOT_RECORDING);
 
+#ifndef CONFIG_EOSM
     if (!RECORDING_H264 && thread == 0)
     {
         /* faster writing speed that way */
@@ -3960,6 +3999,7 @@ abort_and_check_early_stop:
         /* PauseLiveView breaks UI locks - why? */
         gui_uilock(UILOCK_EVERYTHING);
     }
+#endif
     
     /* write all queued blocks, if any */
     uint32_t msg_count = 0;
@@ -4089,14 +4129,15 @@ cleanup:
             printf("H.264 stopped.\n");
         }
 
+#ifndef CONFIG_EOSM
         ResumeLiveView();
-        redraw();
-        raw_recording_state = RAW_IDLE;
+#endif
 
-        /* mlv_lite seems to make WB has no effect when changing its value after RAW video recording stops in x5 mode 
-         * refreshing LiveView will make WhiteBalance work again in this case, the following code does it         */
         if (crop_rec_is_enabled())
         {
+#ifdef CONFIG_EOSM
+            CheckPreviewRegsValuesAndForce();
+#else
             if (cam_650d || cam_700d || cam_eos_m || cam_100d) // what about other models?
             {
                 if (lv_dispsize == 5)
@@ -4105,7 +4146,13 @@ cleanup:
                     set_lv_zoom(5);
                 }
             }
+#endif
         }
+
+        raw_recording_state = RAW_IDLE;
+#ifndef CONFIG_EOSM
+        redraw();
+#endif
 
         mlv_rec_call_cbr(MLV_REC_EVENT_STOPPED, NULL);
     }
@@ -4321,7 +4368,6 @@ static struct menu_entry raw_video_menu[] =
                             "Slow down Canon GUI, disable auto exposure, white balance...\n"
                             "+ Suspend white balance and exposure task. Locks WB/Exposure!\n"
                             "+ Disable some of LiveView streams.\n",
-                .advanced = 1,
             },
             {
                 .name = "Show graph",
@@ -4841,6 +4887,29 @@ static unsigned int raw_rec_init()
             e->shidden = 1;
             card_spanning = 0; /* Just to make sure */
         }
+
+        /* Slim EOS M RAW video menu */
+        if (cam_eos_m && (
+            streq(e->name, "Aspect ratio") ||
+            streq(e->name, "Pre-record") ||
+            streq(e->name, "Rec trigger") ||
+            streq(e->name, "Digital dolly") ||
+            streq(e->name, "H.264 proxy") ||
+            streq(e->name, "Card warm-up") ||
+            streq(e->name, "Use SRM memory") ||
+            streq(e->name, "Show graph") ||
+            streq(e->name, "Sync beep") ||
+            streq(e->name, "Show EDMAC") ||
+            streq(e->name, "Playback") ||
+            streq(e->name, "Advanced...")
+        ))
+            e->shidden = 1;
+    }
+
+    if (cam_eos_m)
+    {
+        use_srm_memory = 1;
+        sync_beep = 1;
     }
     
     /* Hide More/All hacks options from not supported models  */

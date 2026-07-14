@@ -1,0 +1,10 @@
+EOS M Slim Baseline
+===================
+
+Base: dannephoto/magiclantern_hg_02 master (7a401f7)
+Slim modules: mlv_lite crop_rec dual_iso hdmi_out mlv_play mlv_snd sd_uhs file_man bench
+
+Zebra/histogram: kept from dannephoto-baseline (alignment, trails, RAW text removal, perf).
+All other slim UI/module/menu changes from eosm-slim-baseline (e4a7309).
+
+Branch: dannephoto-baseline

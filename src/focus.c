@@ -1334,7 +1334,9 @@ focus_init( void* unused )
     menu_add( "Focus", trap_focus_menu, COUNT(trap_focus_menu) );
     #endif
     
+#ifndef CONFIG_SLIM_MENUS
     menu_add( "Focus", focus_menu, COUNT(focus_menu) );
+#endif
 
     #ifdef FEATURE_AF_PATTERNS
     afp_menu_init();

@@ -5991,18 +5991,30 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     /* also check at startup */
     static int lv_dirty = 1;
 
+#ifdef CONFIG_EOSM
+    static int was_mlv_busy = 0;
+    static int eosm_post_rec_until = 0;
+    int mlv_busy = mlv_raw_rec_busy();
+    if (was_mlv_busy && !mlv_busy)
+        eosm_post_rec_until = get_ms_clock() + 800;
+    was_mlv_busy = mlv_busy;
+    int eosm_post_rec = get_ms_clock() < eosm_post_rec_until;
+#else
+    int mlv_busy = 0;
+    int eosm_post_rec = 0;
+#endif
+
     int menu_shown = gui_menu_shown();
     if (lv && menu_shown)
     {
         lv_dirty = 1;
     }
     
-    if (!lv || menu_shown || RECORDING_RAW)
+    if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
     {
         /* outside LV: no need to do anything */
         /* don't change while browsing the menu, but shortly after closing it */
-        /* don't change while recording raw, but after recording stops
-         * (H.264 should tolerate this pretty well, except maybe 50D) */
+        /* don't change while recording raw, or while mlv_lite is starting/stopping */
         return CBR_RET_CONTINUE;
     }
     
@@ -6017,22 +6029,30 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     if (lv_dirty)
     {
         /* do we need to refresh LiveView? */
-        if (crop_rec_needs_lv_refresh())
-        {
-            /* let's check this once again, just in case */
-            /* (possible race condition that would result in unnecessary refresh) */
-            wait_lv_frames(2);
             if (crop_rec_needs_lv_refresh())
             {
-                info_led_on();
-                gui_uilock(UILOCK_EVERYTHING);
-                int old_zoom = lv_dispsize;
-                set_zoom(lv_dispsize == 1 ? 5 : 1);
-                set_zoom(old_zoom);
-                gui_uilock(UILOCK_NONE);
-                info_led_off();
+                /* let's check this once again, just in case */
+                /* (possible race condition that would result in unnecessary refresh) */
+#ifdef CONFIG_EOSM
+                wait_lv_frames(1);
+                if (crop_rec_needs_lv_refresh())
+                {
+                    CheckPreviewRegsValuesAndForce();
+                }
+#else
+                wait_lv_frames(2);
+                if (crop_rec_needs_lv_refresh())
+                {
+                    info_led_on();
+                    gui_uilock(UILOCK_EVERYTHING);
+                    int old_zoom = lv_dispsize;
+                    set_zoom(lv_dispsize == 1 ? 5 : 1);
+                    set_zoom(old_zoom);
+                    gui_uilock(UILOCK_NONE);
+                    info_led_off();
+                }
+#endif
             }
-        }
         lv_dirty = 0;
         settings_changed = 0;
     }
@@ -6090,7 +6110,11 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 }
                 else
                 {
+#ifdef CONFIG_EOSM
+                    if (!eosm_post_rec && lv_dispsize == 1) set_zoom(5);
+#else
                     if (lv_dispsize == 1) set_zoom(5);
+#endif
                 }
             }
 
@@ -6110,7 +6134,11 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
             if (!is_manual_focus() && lv_af_mode == 1)
             {
+#ifdef CONFIG_EOSM
+                if (!eosm_post_rec_ms && lv_dispsize == 1) set_zoom(5);
+#else
                 if (lv_dispsize == 1) set_zoom(5);
+#endif
             }
         }
 
@@ -6825,6 +6853,10 @@ static unsigned int raw_info_update_cbr(unsigned int unused)
                 raw_info.width - skip_left - skip_right - 28,
                 raw_info.height - skip_top - skip_bottom - 16,
                 1);
+            raw_force_aspect_ratio(
+                raw_capture_info.binning_x + raw_capture_info.skipping_x,
+                raw_capture_info.binning_y + raw_capture_info.skipping_y
+            );
         }
     }
     return 0;
@@ -7118,7 +7150,37 @@ static unsigned int crop_rec_init()
         }
     }
 
-    menu_add("Movie", movie_menu_fps, COUNT(movie_menu_fps));
+    if (is_EOSM)
+    {
+        static const char * crop_slim_keep[] = {
+            "Preset:",
+            "Preset: ",
+            "Preset:  ",
+            "Aspect ratio:",
+            "Framerate:",
+            "Bit-depth",
+            NULL
+        };
+        for (struct menu_entry * e = crop_rec_menu[0].children; !MENU_IS_EOL(e); e++)
+        {
+            int keep = 0;
+            for (const char ** k = crop_slim_keep; *k; k++)
+            {
+                if (streq(e->name, *k))
+                {
+                    keep = 1;
+                    break;
+                }
+            }
+            if (!keep)
+                e->shidden = 1;
+        }
+
+        more_hacks = 1;
+    }
+
+    if (!is_EOSM)
+        menu_add("Movie", movie_menu_fps, COUNT(movie_menu_fps));
     menu_add("Movie", movie_menu_bitdepth, COUNT(movie_menu_bitdepth));
     menu_add("Movie", crop_rec_menu, COUNT(crop_rec_menu));
     menu_add("Movie", customize_buttons_menu, COUNT(customize_buttons_menu));

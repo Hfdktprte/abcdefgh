@@ -45,6 +45,7 @@ INSTALL_FINISH ?= $(UMOUNT) $(CF_CARD)
 INSTALL_ALL_SCRIPTS = \
 	$(call build,SCRIPTS,\
 		for f in $(shell find $(SCRIPT_DIR) -type f -name *.lua); do \
+			if [ -n "$(INSTALL_SLIM_SCRIPTS)" ] && echo $$f | grep -q '/tlapse\.lua$$'; then continue; fi; \
 			dst=$(INSTALL_SCRIPTS_DIR)/`echo $$f | sed "s|^$(SCRIPT_DIR)/||"`; \
 			dstdir=`dirname $$dst`; \
 			$(MKDIR) -p $$dstdir; \

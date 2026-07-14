@@ -565,7 +565,7 @@ static void my_big_init_task()
         ml_tasks++;
     }
     
-    msleep(500);
+    msleep(100);
     ml_started = 1;
 
 #ifdef CONFIG_5D3

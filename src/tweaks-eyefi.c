@@ -183,7 +183,9 @@ static struct menu_entry eyefi_menus[] = {
 static void eyefi_tweak_init()
 {
     if (check_eyefi()) {
+#ifndef CONFIG_SLIM_MENUS
         menu_add( "Shoot", eyefi_menus, COUNT(eyefi_menus) );
+#endif
     }
 }
 

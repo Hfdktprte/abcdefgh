@@ -481,7 +481,9 @@ static void iso_test()
 
 static void hdr_init()
 {
+#ifndef CONFIG_SLIM_MENUS
     menu_add( "Movie", hdr_menu, COUNT(hdr_menu) );
+#endif
 
     #ifdef CONFIG_FRAME_ISO_OVERRIDE_ANALOG_ONLY
     // round to nearest full-stop ISO (these cameras can't change the digital component)

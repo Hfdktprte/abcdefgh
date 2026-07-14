@@ -1705,7 +1705,7 @@ static void HijackFormatDialogBox_main()
 
 void debug_menu_init()
 {
-    #ifdef FEATURE_LV_DISPLAY_PRESETS
+    #if defined(FEATURE_LV_DISPLAY_PRESETS) && !defined(CONFIG_SLIM_MENUS)
     extern struct menu_entry livev_cfg_menus[];
     menu_add( "Prefs", livev_cfg_menus,  1);
     #endif

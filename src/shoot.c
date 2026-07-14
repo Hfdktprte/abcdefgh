@@ -4411,7 +4411,7 @@ static struct menu_entry expo_menus[] = {
         .edit_mode = EM_SHOW_LIVEVIEW,
     },
     #endif
-    #ifdef FEATURE_PICSTYLE
+    #if defined(FEATURE_PICSTYLE) && !defined(CONFIG_SLIM_MENUS)
     {
         .name = "Picture Style",
         .update     = picstyle_display,
@@ -6625,18 +6625,21 @@ static void shoot_init()
 {
     set_maindial_sem = create_named_semaphore("set_maindial_sem", 1);
 
-    menu_add( "Shoot", shoot_menus, COUNT(shoot_menus) );
     menu_add( "Expo", expo_menus, COUNT(expo_menus) );
     menu_add( "Movie", expo_menus2, COUNT(expo_menus2) );
     
+#ifndef CONFIG_SLIM_MENUS
+    menu_add( "Shoot", shoot_menus, COUNT(shoot_menus) );
+#endif
+    
     //~ menu_add( "Tweaks", vid_menus, COUNT(vid_menus) );
 
-    #ifdef FEATURE_EXPO_OVERRIDE
+    #if defined(FEATURE_EXPO_OVERRIDE) && !defined(CONFIG_SLIM_MENUS)
     extern struct menu_entry expo_override_menus[];
     menu_add( "Expo", expo_override_menus, 1 );
     #endif
 
-    #ifdef FEATURE_EXPSIM
+    #if defined(FEATURE_EXPSIM) && !defined(CONFIG_SLIM_MENUS)
     extern struct menu_entry expo_tweak_menus[];
     menu_add( "Expo", expo_tweak_menus, 1 );
     #endif

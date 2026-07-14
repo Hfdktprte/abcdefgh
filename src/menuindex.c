@@ -149,7 +149,9 @@ static struct menu_entry help_menus[] = {
 static void
 help_menu_init( void* unused )
 {
+#ifndef CONFIG_SLIM_MENUS
     menu_add("Help", help_menus, COUNT(help_menus));
+#endif
 }
 
 INIT_FUNC( "help_menu", help_menu_init );

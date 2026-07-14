@@ -84,18 +84,23 @@ static struct menu_entry movie_menu_raw_toggle[] =
         .name = "SD Overclock",
         .placeholder = 1,
     },
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "HDR video",
         .placeholder = 1,
     },
+#endif
     {
         .name = "FPS override",
         .placeholder = 1,
     },
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "FPS modifier",
         .placeholder = 1,
     },
+#endif
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "intervalometer",
         .placeholder = 1,
@@ -104,6 +109,7 @@ static struct menu_entry movie_menu_raw_toggle[] =
         .name = "recording delay",
         .placeholder = 1,
     },
+#endif
     /*
     {
         .name = "presets",

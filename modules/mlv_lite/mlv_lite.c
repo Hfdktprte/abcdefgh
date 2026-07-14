@@ -61,6 +61,7 @@
 #include "lvinfo.h"
 #include "beep.h"
 #include "raw.h"
+#include "histogram.h"
 #include "zebra.h"
 #include "lens.h"
 #include "focus.h"
@@ -4150,6 +4151,14 @@ cleanup:
         }
 
         raw_recording_state = RAW_IDLE;
+
+#ifdef CONFIG_EOSM
+        raw_invalidate_lv_calibration();
+        hist_invalidate_r2ev_cache();
+        wait_lv_frames(2);
+        raw_update_params();
+#endif
+
 #ifndef CONFIG_EOSM
         redraw();
 #endif
@@ -4668,7 +4677,7 @@ unsigned int raw_rec_update_preview(unsigned int ctx)
         if (!enabled && preview_dirty)
         {
             /* cleanup the mess, if any */
-            raw_set_dirty();
+            raw_invalidate_lv_calibration();
             preview_dirty = 0;
         }
         return enabled;

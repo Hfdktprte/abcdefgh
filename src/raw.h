@@ -150,6 +150,8 @@ void raw_set_preview_rect(int x, int y, int w, int h, int obey_info_bars);
 
 /* call this after you have altered the preview settings, and you want to restore the original ones */
 void raw_set_dirty(void);
+void raw_invalidate_lv_calibration(void);
+int raw_overlay_calibration_ready(void);
 
 /* true when idle refresh already populated geometry and black level */
 int raw_params_ready_for_rec(void);

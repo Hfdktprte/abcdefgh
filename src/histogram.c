@@ -34,6 +34,17 @@ CONFIG_INT( "hist.warn", hist_warn,  0 );
 CONFIG_INT( "hist.log",  hist_log,   0 );
 CONFIG_INT( "hist.meter", hist_meter,  0);
 
+#ifdef CONFIG_SLIM_MENUS
+static void hist_slim_init()
+{
+    if (hist_type < 2) hist_type = 2;
+    if (hist_log) hist_log = 0;
+    if (!hist_warn) hist_warn = 1;
+}
+
+INIT_FUNC("hist.slim", hist_slim_init);
+#endif
+
 struct Histogram histogram;
 
 #ifdef FEATURE_RAW_HISTOGRAM
@@ -58,6 +69,12 @@ static void hist_build_r2ev_cache()
         r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
 }
 
+void hist_invalidate_r2ev_cache(void)
+{
+    r2ev_white_level = -1;
+    r2ev_black_level = -1;
+}
+
 void FAST hist_build_raw()
 {
     static int raw_hist_aux = INT_MIN;
@@ -69,6 +86,9 @@ void FAST hist_build_raw()
     {
         return;
     }
+
+    if (!raw_overlay_calibration_ready())
+        return;
 
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;
@@ -135,6 +155,15 @@ void FAST hist_build_raw()
         histogram.max = MAX(histogram.max, histogram.hist_g[i]);
         histogram.max = MAX(histogram.max, histogram.hist_b[i]);
     }
+
+#ifdef CONFIG_SLIM_MENUS
+    /* slim UI: RAW histogram uses luma (green channel) */
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        histogram.hist[i] = histogram.hist_g[i];
+        histogram.max = MAX(histogram.max, histogram.hist[i]);
+    }
+#endif
 
     histobar_refresh();
 }
@@ -293,7 +322,11 @@ void hist_draw_image(
             thr = MAX(thr, 1);
             int yw = y_origin + 12 + (hist_log ? hist_height - 24 : 0);
             int bg = (hist_log ? COLOR_WHITE : COLOR_BLACK);
-            if (histogram.is_rgb)
+            if (histogram.is_rgb
+                #ifdef FEATURE_RAW_HISTOGRAM
+                || histogram.is_raw
+                #endif
+            )
             {
                 unsigned int over_r = histogram.hist_r[i];
                 unsigned int over_g = histogram.hist_g[i];
@@ -380,9 +413,13 @@ MENU_UPDATE_FUNC(hist_print)
         
         MENU_SET_VALUE(
             "%s%s",
+#ifdef CONFIG_SLIM_MENUS
+            raw ? "RAW, Luma" : "YUV, Luma",
+#else
             raw ? (RAW_HISTOBAR_ENABLED ? "RAW HistoBar" : "RAW RGB") :
             hist_type == 0 ? "Luma (YUV)" :
             hist_type == 1 ? "RGB (YUV)" : "RAW N/A",
+#endif
             hist_log ? ", Log" : (raw && RAW_HISTOBAR_ENABLED) ? "" : ", Linear"
         );
     }

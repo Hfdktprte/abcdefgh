@@ -34,17 +34,6 @@ CONFIG_INT( "hist.warn", hist_warn,  0 );
 CONFIG_INT( "hist.log",  hist_log,   0 );
 CONFIG_INT( "hist.meter", hist_meter,  0);
 
-#ifdef CONFIG_SLIM_MENUS
-static void hist_slim_init()
-{
-    if (hist_type < 2) hist_type = 2;
-    if (hist_log) hist_log = 0;
-    if (!hist_warn) hist_warn = 1;
-}
-
-INIT_FUNC("hist.slim", hist_slim_init);
-#endif
-
 struct Histogram histogram;
 
 #ifdef FEATURE_RAW_HISTOGRAM
@@ -77,6 +66,11 @@ void hist_invalidate_r2ev_cache(void)
 
 void FAST hist_build_raw()
 {
+#ifdef CONFIG_SLIM_MENUS
+    /* hiprio/zebras refresh raw geometry; hist must not block on autodetect */
+    if (!raw_info.black_level || raw_info.bits_per_pixel != 14)
+        return;
+#else
     static int raw_hist_aux = INT_MIN;
     if (should_run_polling_action(1000, &raw_hist_aux) || !raw_info.black_level)
     {
@@ -86,6 +80,7 @@ void FAST hist_build_raw()
     {
         return;
     }
+#endif
 
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;

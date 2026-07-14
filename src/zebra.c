@@ -4202,6 +4202,15 @@ livev_hipriority_task( void* unused )
             if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;          /* raw hisogram (any kind) */
             if (spotmeter_draw && spotmeter_formula == 3) raw_needed = 1;   /* spotmeter, units: raw */
         }
+#ifdef CONFIG_SLIM_MENUS
+        else if (lv && is_movie_mode())
+        {
+            #if !defined(CONFIG_70D)
+            if (zebra_draw && raw_zebra_enable == 1) raw_needed = 1;
+            #endif
+            if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;
+        }
+#endif
 
         if (!raw_flag && raw_needed)
         {
@@ -4268,29 +4277,26 @@ livev_hipriority_task( void* unused )
 #endif
                             ) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
                             k % 2 == 1  /* should redraw focus peaking? */
-                        ); 
-                )
+                        );
 #ifdef CONFIG_SLIM_MENUS
 #ifdef FEATURE_HISTOGRAM
-                if (hist_draw && !WAVEFORM_FULLSCREEN && k % 2 == 0)
-                {
-                    BMP_LOCK(
-                        if (lv && RAW_HISTOGRAM_ENABLED && can_use_raw_overlays())
-                        {
-                            hist_build_raw();
-                            if (histogram.max == 0) histogram.max = 1;
-                            if (get_screen_layout() == SCREENLAYOUT_3_2)
-                                hist_draw_image(os.x_max - HIST_WIDTH - 2,
-                                    os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1);
-                            else if (should_draw_bottom_graphs())
-                                hist_draw_image(os.x0 + 50, 480 - hist_height - 1);
-                            else
-                                hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
-                        }
-                    )
-                }
+                    if (hist_draw && !WAVEFORM_FULLSCREEN
+                        && RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()
+                        && raw_overlay_calibration_ready())
+                    {
+                        hist_build_raw();
+                        if (histogram.max == 0) histogram.max = 1;
+                        if (get_screen_layout() == SCREENLAYOUT_3_2)
+                            hist_draw_image(os.x_max - HIST_WIDTH - 2,
+                                os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1);
+                        else if (should_draw_bottom_graphs())
+                            hist_draw_image(os.x0 + 50, 480 - hist_height - 1);
+                        else
+                            hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
+                    }
 #endif
 #endif
+                )
             }
         }
 

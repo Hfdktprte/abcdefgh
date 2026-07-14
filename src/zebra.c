@@ -4286,7 +4286,7 @@ livev_hipriority_task( void* unused )
                     {
                         static int slim_hist_aux = 0;
                         static int slim_hist_ready = 0;
-                        if (should_run_polling_action(100, &slim_hist_aux) || !slim_hist_ready)
+                        if (should_run_polling_action(120, &slim_hist_aux) || !slim_hist_ready)
                         {
                             hist_build_raw();
                             slim_hist_ready = 1;

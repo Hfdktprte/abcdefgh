@@ -66,7 +66,15 @@ void hist_invalidate_r2ev_cache(void)
 
 void FAST hist_build_raw()
 {
-    if (!raw_update_params()) return;
+    static int raw_hist_aux = INT_MIN;
+    if (should_run_polling_action(1000, &raw_hist_aux) || !raw_info.black_level)
+    {
+        if (!raw_update_params()) return;
+    }
+    else if (raw_info.bits_per_pixel != 14)
+    {
+        return;
+    }
 
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;
@@ -75,6 +83,28 @@ void FAST hist_build_raw()
 
     hist_build_r2ev_cache();
 
+#ifdef CONFIG_SLIM_MENUS
+    /* slim: green-channel luma scan — same stride as dannephoto, fewer reads */
+    for (int i = os.y0; i < os.y_max; i += step)
+    {
+        int y = BM2RAW_Y(i);
+        if (y < raw_info.active_area.y1+8 || y > raw_info.active_area.y2-8) continue;
+
+        for (int j = os.x0; j < os.x_max; j += 8)
+        {
+            int x = BM2RAW_X(j);
+            if (x < raw_info.active_area.x1+8 || x > raw_info.active_area.x2-8) continue;
+
+            int g = raw_green_pixel_dark(x, y);
+            if (g == 0) continue;
+
+            int ig = r2ev[g];
+            histogram.hist_g[ig]++;
+            histogram.hist[ig]++;
+            histogram.total_px++;
+        }
+    }
+#else
     for (int i = os.y0; i < os.y_max; i += step)
     {
         int y = BM2RAW_Y(i);
@@ -89,7 +119,6 @@ void FAST hist_build_raw()
             int g = raw_green_pixel_dark(x, y);
             int b = raw_blue_pixel_dark(x, y);
 
-            /* ignore bad pixels */
             if (r == 0 || g == 0 || b == 0) continue;
 
             int ir = r2ev[r];
@@ -102,14 +131,38 @@ void FAST hist_build_raw()
             histogram.total_px++;
         }
     }
+#endif
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
+    static int gap_fill_aux = 0;
+    if (should_run_polling_action(300, &gap_fill_aux))
+    {
+#ifdef CONFIG_SLIM_MENUS
     for (int i = 0; i < 5000; i++)
     {
         int ev0 = r2ev[i];
         int evplus = r2ev[i+1];
         int evminus = r2ev[i-1];
-        if (evplus - evminus > 2) /* will there be a gap? fill it */
+        if (evplus - evminus > 2)
+        {
+            int num_bins = evplus - evminus - 1;
+            int delta = histogram.hist_g[ev0] / num_bins;
+            for (int e = evminus+1; e <= evplus-1; e++)
+            {
+                histogram.hist_g[e] += delta;
+                histogram.hist[e] += delta;
+                histogram.hist_g[ev0] -= delta;
+                histogram.hist[ev0] -= delta;
+            }
+        }
+    }
+#else
+    for (int i = 0; i < 5000; i++)
+    {
+        int ev0 = r2ev[i];
+        int evplus = r2ev[i+1];
+        int evminus = r2ev[i-1];
+        if (evplus - evminus > 2)
         {
             int num_bins = evplus - evminus - 1;
             int delta_r = histogram.hist_r[ev0] / num_bins;
@@ -126,22 +179,19 @@ void FAST hist_build_raw()
             }
         }
     }
+#endif
+    }
 
     for (int i = 0; i < HIST_WIDTH; i++)
     {
+#ifdef CONFIG_SLIM_MENUS
+        histogram.max = MAX(histogram.max, histogram.hist[i]);
+#else
         histogram.max = MAX(histogram.max, histogram.hist_r[i]);
         histogram.max = MAX(histogram.max, histogram.hist_g[i]);
         histogram.max = MAX(histogram.max, histogram.hist_b[i]);
-    }
-
-#ifdef CONFIG_SLIM_MENUS
-    /* slim UI: RAW histogram uses luma (green channel) */
-    for (int i = 0; i < HIST_WIDTH; i++)
-    {
-        histogram.hist[i] = histogram.hist_g[i];
-        histogram.max = MAX(histogram.max, histogram.hist[i]);
-    }
 #endif
+    }
 
     histobar_refresh();
 }

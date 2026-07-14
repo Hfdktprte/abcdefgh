@@ -64,6 +64,32 @@ void hist_invalidate_r2ev_cache(void)
     r2ev_black_level = -1;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+/* Smoothed curve for display — hides per-bin vertical bar look */
+static uint32_t hist_smooth[HIST_WIDTH];
+
+static void hist_smooth_7tap(const uint32_t *src, uint32_t *dst)
+{
+    static const int w[7] = {1, 2, 4, 6, 4, 2, 1};
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        int sum = 0;
+        for (int d = -3; d <= 3; d++)
+        {
+            int j = COERCE(i + d, 0, HIST_WIDTH - 1);
+            sum += src[j] * w[d + 3];
+        }
+        dst[i] = sum / 20;
+    }
+}
+
+static void hist_prepare_smooth_display(void)
+{
+    hist_smooth_7tap(histogram.hist, hist_smooth);
+    hist_smooth_7tap(hist_smooth, hist_smooth);
+}
+#endif
+
 void FAST hist_build_raw()
 {
     static int raw_hist_aux = INT_MIN;
@@ -188,6 +214,10 @@ void FAST hist_build_raw()
         histogram.max = MAX(histogram.max, histogram.hist_b[i]);
 #endif
     }
+
+#ifdef CONFIG_SLIM_MENUS
+    hist_prepare_smooth_display();
+#endif
 
     histobar_refresh();
 }
@@ -318,7 +348,12 @@ void hist_draw_image(
     for( i=0 ; i < HIST_WIDTH ; i++ )
     {
         // Scale by the maximum bin value
+#ifdef CONFIG_SLIM_MENUS
+        const uint32_t hist_val = histogram.is_rgb ? histogram.hist[i] : hist_smooth[i];
+        const uint32_t size  = hist_log ? log_length(hist_val)   * hist_height / log_max : (hist_val   * hist_height) / histogram.max;
+#else
         const uint32_t size  = hist_log ? log_length(histogram.hist[i])   * hist_height / log_max : (histogram.hist[i]   * hist_height) / histogram.max;
+#endif
         const uint32_t sizeR = hist_log ? log_length(histogram.hist_r[i]) * hist_height / log_max : (histogram.hist_r[i] * hist_height) / histogram.max;
         const uint32_t sizeG = hist_log ? log_length(histogram.hist_g[i]) * hist_height / log_max : (histogram.hist_g[i] * hist_height) / histogram.max;
         const uint32_t sizeB = hist_log ? log_length(histogram.hist_b[i]) * hist_height / log_max : (histogram.hist_b[i] * hist_height) / histogram.max;

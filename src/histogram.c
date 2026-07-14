@@ -44,12 +44,16 @@ struct Histogram histogram;
 static void histobar_refresh();
 
 static int r2ev_white_level = -1;
+static int r2ev_black_level = -1;
 static char r2ev[16384];
 
 static void hist_build_r2ev_cache()
 {
-    if (r2ev_white_level == raw_info.white_level) return;
+    if (r2ev_white_level == raw_info.white_level
+        && r2ev_black_level == raw_info.black_level)
+        return;
     r2ev_white_level = raw_info.white_level;
+    r2ev_black_level = raw_info.black_level;
     for (int i = 0; i < 16384; i++)
         r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
 }
@@ -102,9 +106,6 @@ void FAST hist_build_raw()
     }
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
-    static int gap_fill_aux = 0;
-    if (should_run_polling_action(300, &gap_fill_aux))
-    {
     for (int i = 0; i < 5000; i++)
     {
         int ev0 = r2ev[i];
@@ -126,7 +127,6 @@ void FAST hist_build_raw()
                 histogram.hist_b[ev0] -= delta_b;
             }
         }
-    }
     }
 
     for (int i = 0; i < HIST_WIDTH; i++)
@@ -259,8 +259,6 @@ void hist_draw_image(
     int log_max = log_length(histogram.max);
 
     #ifdef FEATURE_RAW_HISTOGRAM
-    const int v = (1200 - raw_info.dynamic_range) * HIST_WIDTH / 1200;
-    int underexposed_level = COERCE(v, 0, HIST_WIDTH-1);
     int stops_until_overexposure = 0;
     #endif
 
@@ -313,25 +311,8 @@ void hist_draw_image(
         }
 #endif
         #ifdef FEATURE_RAW_HISTOGRAM
-        /* divide the histogram in 12 equal slices - each slice is 1 EV */
         if (histogram.is_raw)
         {
-            int H = hist_height - MAX(MAX(sizeR, sizeG), sizeB) - 1;
-            int h = hist_height - MIN(MIN(sizeR, sizeG), sizeB) - 1;
-
-            /* mark what's below the noise floor with... noise */
-            if ((int)i <= underexposed_level && i%2==0)
-            {
-                for (int y = y_origin + ((i/2)%2)*2; y < (int)y_origin + hist_height; y += 4)
-                {
-                    int noise_color = 
-                        (y < (int)y_origin + H) ? COLOR_GRAY(60) :      /* noise color on top of histogram */
-                        (y < (int)y_origin + h) ? COLOR_WHITE    :      /* noise color where histogram has a solid color, but not white */
-                                                  COLOR_BLACK    ;      /* noise color where histogram is white */
-                    bmp_putpixel(x_origin + i, y, noise_color);
-                }
-            }
-
             /* compute a basic ETTR hint */
             unsigned int thr = histogram.total_px / 10000;
             if (histogram.hist_r[i] > thr || histogram.hist_g[i] > thr || histogram.hist_b[i] > thr)

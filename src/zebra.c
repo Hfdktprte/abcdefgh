@@ -553,7 +553,18 @@ hist_build()
           hist_type == 2) &&   /* Fall back to YUV RGB if we can't use the RAW RGB histogram */
          !EXT_MONITOR_RCA);    /* However, we cannot use YUV RGB histogram on RCA monitors, because they use YUV411 instead of YUV422 */
     
-    if (!waveform_draw && !vectorscope_draw && (!hist_draw || histogram.is_raw))
+    if (0
+        #ifdef FEATURE_WAVEFORM
+        || waveform_draw
+        #endif
+        #ifdef FEATURE_VECTORSCOPE
+        || vectorscope_draw
+        #endif
+        || (hist_draw && !histogram.is_raw))
+    {
+        /* need to scan YUV buffer for histogram/waveform/vectorscope */
+    }
+    else
     {
         /* optimization: no YUV-based histogram/waveform/scope enabled
          * => no need to scan the entire image */

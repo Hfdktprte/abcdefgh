@@ -4421,7 +4421,6 @@ static struct menu_entry raw_video_menu[] =
                 .choices = CHOICES("OFF", "16 MB", "32 MB", "64 MB", "128 MB", "256 MB", "512 MB", "1 GB"),
                 .help  = "Write a large file on the card at camera startup.",
                 .help2 = "Some cards seem to get a bit faster after this.",
-                .advanced = 1,
             },
             {
                 .name = "Use SRM memory",
@@ -4972,7 +4971,6 @@ static unsigned int raw_rec_init()
             streq(e->name, "Rec trigger") ||
             streq(e->name, "Digital dolly") ||
             streq(e->name, "H.264 proxy") ||
-            streq(e->name, "Card warm-up") ||
             streq(e->name, "Use SRM memory") ||
             streq(e->name, "Show graph") ||
             streq(e->name, "Sync beep") ||

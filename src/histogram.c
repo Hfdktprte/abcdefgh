@@ -309,7 +309,7 @@ static int hist_dot_label(int over, int hist_total_px)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-#define HIST_CLIP_DOT_RADIUS 3
+#define HIST_CLIP_DOT_RADIUS 10
 static int hist_clip_dot_radius(int over, int hist_total_px)
 {
     (void)over;

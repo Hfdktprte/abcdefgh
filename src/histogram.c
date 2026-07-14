@@ -316,8 +316,6 @@ void hist_draw_image(
         /* divide the histogram in 12 equal slices - each slice is 1 EV */
         if (histogram.is_raw)
         {
-            static unsigned bar_pos;
-            if (i == 0) bar_pos = 0;
             int H = hist_height - MAX(MAX(sizeR, sizeG), sizeB) - 1;
             int h = hist_height - MIN(MIN(sizeR, sizeG), sizeB) - 1;
 
@@ -332,14 +330,6 @@ void hist_draw_image(
                                                   COLOR_BLACK    ;      /* noise color where histogram is white */
                     bmp_putpixel(x_origin + i, y, noise_color);
                 }
-            }
-
-            /* draw full-stop (EV) bars */
-            if (i == bar_pos)
-            {
-                int dy = (i < font_med.width * 4) ? font_med.height : 0;
-                draw_line(x_origin + i, y_origin + dy, x_origin + i, y_origin + h, COLOR_GRAY(50));
-                bar_pos = (((bar_pos+1)*12/HIST_WIDTH) + 1) * HIST_WIDTH/12;
             }
 
             /* compute a basic ETTR hint */

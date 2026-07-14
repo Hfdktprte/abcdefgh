@@ -2739,11 +2739,10 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Zebras",
         .priv       = &zebra_draw,
-        .update     = zebra_draw_display,
         .max = 1,
         .icon_type = IT_BOOL,
         .help = "RAW zebra stripes on overexposed highlights.",
-        .help2 = "Toggle ON/OFF. Uses sensor RAW data in LiveView.",
+        .help2 = "Toggle ON/OFF with SET. Uses sensor RAW data in LiveView.",
         .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
@@ -3063,9 +3062,8 @@ struct menu_entry zebra_menus[] = {
         .priv       = &hist_draw,
         .max = 1,
         .icon_type = IT_BOOL,
-        .update = hist_print,
         .help = "RAW luma histogram on a linear scale.",
-        .help2 = "Toggle ON/OFF. Red/green/blue dots warn when channels clip.",
+        .help2 = "Toggle ON/OFF with SET. Clip dots warn when channels clip.",
         .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else

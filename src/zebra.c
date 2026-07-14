@@ -824,15 +824,21 @@ static int raw_zebra_color_at(int x, int y, int white, int underexposed)
     if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) return 0;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* clip-any: one solid color when max(R,G,B) exceeds white (fewer reads, no per-channel palette) */
-    int r = raw_red_pixel_dark(x, y);
-    int g = raw_green_pixel_dark(x, y);
-    int b = raw_blue_pixel_dark(x, y);
+    /* clip-any: one solid color when max(R,G,B) exceeds white */
+    struct raw_pixblock * const buf = (void*)raw_info.buffer;
+    int ye = (y / 2) * 2;
+    int i = (ye * raw_info.width + x) / 8;
+    int ip = i - raw_info.width * 2 / 8;
+    int ib = ((ye - 1) * raw_info.width + x) / 8;
+    int ibp = ib - raw_info.width * 2 / 8;
+    int r = MIN(buf[i].a, buf[ip].a);
+    int g = MIN(buf[i].h, buf[ip].h);
+    int b = MIN(buf[ib].h, buf[ibp].h);
     if (MAX(MAX(r, g), b) > white)
         return ZEBRA_COLOR_WORD_SOLID(COLOR_RED);
     if (underexposed)
     {
-        int u = raw_green_pixel_bright(x, y);
+        int u = MAX(buf[i].h, buf[ip].h);
         if (u <= underexposed)
             return ZEBRA_COLOR_WORD_SOLID(79);
     }
@@ -875,6 +881,46 @@ static void FAST draw_zebras_raw_lv()
     for(int i = os.y0 + off; i < os.y_max - off; i += 2 )
     {
         int y = BM2RAW_Y(i);
+        if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) continue;
+
+#ifdef CONFIG_SLIM_MENUS
+        /* dannephoto-style 8px row writes; alignment comes from lv2raw geometry in raw.c */
+        uint64_t * const b_row = (uint64_t*)( bvram        + BM_R(i) );
+        uint64_t * const m_row = (uint64_t*)( bvram_mirror + BM_R(i) );
+
+        for (int j = os.x0; j < os.x_max; j += 8)
+        {
+            int x = BM2RAW_X(j);
+            if (x < raw_info.active_area.x1 || x > raw_info.active_area.x2) continue;
+
+            uint64_t* bp = b_row + (j >> 3);
+            uint64_t* mp = m_row + (j >> 3);
+
+            #define BP (*bp)
+            #define MP (*mp)
+
+            if (BP != 0 && BP != MP)
+            {
+                little_cleanup(bp, mp);
+                little_cleanup((uint8_t*)bp + 4, (uint8_t*)mp + 4);
+                continue;
+            }
+
+            int c = raw_zebra_color_at(x, y, white, underexposed);
+            if (!c)
+            {
+                if (BP != 0) BP = MP = 0;
+                continue;
+            }
+            if (MP & 0x8080808080808080ULL) continue;
+
+            uint32_t c32 = (uint32_t)c;
+            BP = MP = c32 | ((uint64_t)c32 << 32);
+
+            #undef MP
+            #undef BP
+        }
+#else
         int y2 = BM2RAW_Y(i + 1);
 
         uint32_t * const b_row = (uint32_t*)( bvram        + BM_R(i)   );
@@ -907,6 +953,7 @@ static void FAST draw_zebras_raw_lv()
             #undef MP
             #undef BP
         }
+#endif
     }
 }
 
@@ -4220,7 +4267,13 @@ livev_hipriority_task( void* unused )
                 BMP_LOCK(
                     if (lv)
                         draw_zebra_and_focus(
-                            k % ((focus_peaking ? 5 : 2) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
+                            k % ((focus_peaking ? 5 :
+#ifdef CONFIG_SLIM_MENUS
+                            1
+#else
+                            2
+#endif
+                            ) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
                             k % 2 == 1  /* should redraw focus peaking? */
                         ); 
                 )

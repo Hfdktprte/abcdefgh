@@ -61,6 +61,8 @@ MENU_UPDATE_FUNC(hist_warn_display);
 
 MENU_UPDATE_FUNC(raw_histo_update);
 
+void hist_invalidate_r2ev_cache(void);
+
 #define RAW_HISTOGRAM_ENABLED (hist_draw && hist_type >= 2)
 #define RAW_HISTOBAR_ENABLED (hist_draw && hist_type == 3)
 

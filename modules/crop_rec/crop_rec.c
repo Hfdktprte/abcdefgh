@@ -6135,7 +6135,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             if (!is_manual_focus() && lv_af_mode == 1)
             {
 #ifdef CONFIG_EOSM
-                if (!eosm_post_rec_ms && lv_dispsize == 1) set_zoom(5);
+                if (!eosm_post_rec && lv_dispsize == 1) set_zoom(5);
 #else
                 if (lv_dispsize == 1) set_zoom(5);
 #endif

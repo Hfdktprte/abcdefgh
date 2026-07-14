@@ -50,6 +50,7 @@ static struct semaphore * raw_sem = 0;
 
 /* whether to recompute all the raw parameters (1), or just use cached values(0) */
 static int dirty = 0;
+static int raw_overlay_holdoff = 0;
  
 /* if get_ms_clock() is less than this, assume the raw data is invalid */
 static int next_retry_lv = 0;
@@ -65,6 +66,21 @@ static void raw_set_dirty_with_timeout(int timeout_ms)
 void raw_set_dirty(void)
 {
     dirty = 1;
+}
+
+void raw_invalidate_lv_calibration(void)
+{
+    dirty = 1;
+    raw_info.black_level = 0;
+    next_retry_lv = 0;
+    raw_overlay_holdoff = 1;
+}
+
+int raw_overlay_calibration_ready(void)
+{
+    return !raw_overlay_holdoff
+        && raw_info.black_level != 0
+        && raw_info.bits_per_pixel == 14;
 }
 
 int raw_params_ready_for_rec(void)
@@ -1223,6 +1239,9 @@ int raw_update_params_work()
 #endif
     
     dbg_printf("black=%d white=%d\n", raw_info.black_level, raw_info.white_level);
+
+    if (raw_overlay_holdoff && raw_info.black_level != 0)
+        raw_overlay_holdoff = 0;
 
     #ifdef RAW_DEBUG_DUMP
     dbg_printf("saving raw buffer...\n");

@@ -188,7 +188,11 @@ static CONFIG_INT( "zebra.colorspace",    zebra_colorspace,   0 );// luma/rgb/lu
 static CONFIG_INT( "zebra.thr.hi",    zebra_level_hi, 99 );
 static CONFIG_INT( "zebra.thr.lo",    zebra_level_lo, 0 );
 static CONFIG_INT( "zebra.rec", zebra_rec,  1 );
+#ifdef CONFIG_SLIM_MENUS
+static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  0 );
+#else
 static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
+#endif
 
 #define MZ_ZOOM_WHILE_RECORDING 1
 #define MZ_ZOOMREC_N_FOCUS_RING 2
@@ -548,10 +552,14 @@ hist_build()
     #endif
     
     histogram.is_rgb =
+#ifdef CONFIG_SLIM_MENUS
+        0;
+#else
         histogram.is_raw ||    /* RAW histogram is always RGB-based */
         ((hist_type == 1 ||    /* Use YUV RGB histogram if selected */
           hist_type == 2) &&   /* Fall back to YUV RGB if we can't use the RAW RGB histogram */
          !EXT_MONITOR_RCA);    /* However, we cannot use YUV RGB histogram on RCA monitors, because they use YUV411 instead of YUV422 */
+#endif
     
     if (0
         #ifdef FEATURE_WAVEFORM
@@ -614,7 +622,11 @@ hist_build()
 
 #ifdef FEATURE_RAW_ZEBRAS
 
+#ifdef CONFIG_SLIM_MENUS
+static CONFIG_INT("raw.zebra", raw_zebra_enable, 1);
+#else
 static CONFIG_INT("raw.zebra", raw_zebra_enable, 0); /* 1 = always, 2 = photo only */
+#endif
 #define RAW_ZEBRA_ENABLE (raw_zebra_enable == 1 || (raw_zebra_enable == 2 && !lv))
 
 static void FAST draw_zebras_raw()
@@ -622,6 +634,7 @@ static void FAST draw_zebras_raw()
     if (!DISPLAY_IS_ON) return;
     if (!PLAY_OR_QR_MODE) return;
     if (!raw_update_params()) return;
+    if (!raw_overlay_calibration_ready()) return;
 
     uint8_t * bvram = bmp_vram();
     if (!bvram) return;
@@ -821,6 +834,9 @@ static void FAST draw_zebras_raw_lv()
     {
         return;
     }
+
+    if (!raw_overlay_calibration_ready())
+        return;
 
     uint8_t * const bvram = bmp_vram_real();
     if (!bvram) return;
@@ -1184,8 +1200,11 @@ static void draw_zebras( int Z )
         #ifdef FEATURE_RAW_ZEBRAS
         if (RAW_ZEBRA_ENABLE && can_use_raw_overlays())
         {
-            if (lv) draw_zebras_raw_lv();
-            else draw_zebras_raw();
+            if (raw_overlay_calibration_ready())
+            {
+                if (lv) draw_zebras_raw_lv();
+                else draw_zebras_raw();
+            }
             return;
         }
         #endif
@@ -1946,6 +1965,9 @@ static MENU_UPDATE_FUNC(zebra_draw_display)
     
     if (z)
     {
+#ifdef CONFIG_SLIM_MENUS
+        MENU_SET_VALUE("RAW");
+#else
         MENU_SET_VALUE(
             "%s, ",
             zebra_colorspace == 0 ? "Luma" :
@@ -1973,13 +1995,16 @@ static MENU_UPDATE_FUNC(zebra_draw_display)
                 zebra_level_lo, zebra_level_hi
             );
         }
+#endif
     }
 
     #ifdef FEATURE_RAW_ZEBRAS
     if (z && can_use_raw_overlays_menu())
     {
         raw_zebra_update(entry, info);
+#ifndef CONFIG_SLIM_MENUS
         if (RAW_ZEBRA_ENABLE) MENU_SET_VALUE("RAW RGB");
+#endif
     }
     #endif
 }
@@ -2710,6 +2735,18 @@ struct menu_entry zebra_menus[] = {
     },
     #endif
     #ifdef FEATURE_ZEBRA
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Zebras",
+        .priv       = &zebra_draw,
+        .update     = zebra_draw_display,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "RAW zebra stripes on overexposed highlights.",
+        .help2 = "Toggle ON/OFF. Uses sensor RAW data in LiveView.",
+        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
+    },
+#else
     {
         .name = "Zebras",
         .priv       = &zebra_draw,
@@ -2779,6 +2816,7 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         },
     },
+#endif
     #endif
 
     #ifdef FEATURE_FOCUS_PEAK_DISP_FILTER
@@ -3019,6 +3057,18 @@ struct menu_entry zebra_menus[] = {
     },
     #endif
     #ifdef FEATURE_HISTOGRAM
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Histogram",
+        .priv       = &hist_draw,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .update = hist_print,
+        .help = "RAW luma histogram on a linear scale.",
+        .help2 = "Toggle ON/OFF. Red/green/blue dots warn when channels clip.",
+        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
+    },
+#else
     {
         .name = "Histogram",
         .priv       = &hist_draw,
@@ -3078,6 +3128,7 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         },
     },
+#endif
     #endif
     #ifdef FEATURE_WAVEFORM
     {
@@ -4471,6 +4522,16 @@ int handle_overlays_playback(struct event * event)
 
 static void zebra_init()
 {
+#ifdef CONFIG_SLIM_MENUS
+    zebra_raw_underexposure = 0;
+    #ifdef FEATURE_RAW_ZEBRAS
+    raw_zebra_enable = 1;
+    #endif
+    hist_type = 2;
+    hist_log = 0;
+    hist_warn = 1;
+    hist_meter = 0;
+#endif
     precompute_yuv2rgb();
     menu_add( "Overlay", zebra_menus, COUNT(zebra_menus) );
     menu_add( "Debug", livev_dbg_menus, COUNT(livev_dbg_menus) );

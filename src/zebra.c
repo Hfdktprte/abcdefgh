@@ -824,7 +824,6 @@ static int raw_zebra_color_at(int x, int y, int white, int underexposed)
     if (y < raw_info.active_area.y1 || y > raw_info.active_area.y2) return 0;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* clip-any: one solid color when max(R,G,B) exceeds white */
     struct raw_pixblock * const buf = (void*)raw_info.buffer;
     int ye = (y / 2) * 2;
     int i = (ye * raw_info.width + x) / 8;
@@ -834,15 +833,9 @@ static int raw_zebra_color_at(int x, int y, int white, int underexposed)
     int r = MIN(buf[i].a, buf[ip].a);
     int g = MIN(buf[i].h, buf[ip].h);
     int b = MIN(buf[ib].h, buf[ibp].h);
-    if (MAX(MAX(r, g), b) > white)
-        return ZEBRA_COLOR_WORD_SOLID(COLOR_RED);
-    if (underexposed)
-    {
-        int u = MAX(buf[i].h, buf[ip].h);
-        if (u <= underexposed)
-            return ZEBRA_COLOR_WORD_SOLID(79);
-    }
-    return 0;
+    int u = MAX(buf[i].h, buf[ip].h);
+
+    return zebra_rgb_solid_color(u <= underexposed, r > white, g > white, b > white);
 #else
     int r = raw_red_pixel_dark(x, y);
     int g = raw_green_pixel_dark(x, y);
@@ -2039,7 +2032,7 @@ static MENU_UPDATE_FUNC(zebra_draw_display)
     if (z)
     {
 #ifdef CONFIG_SLIM_MENUS
-        MENU_SET_VALUE("RAW clip");
+        MENU_SET_VALUE("RAW RGB");
 #else
         MENU_SET_VALUE(
             "%s, ",
@@ -2814,8 +2807,8 @@ struct menu_entry zebra_menus[] = {
         .priv       = &zebra_draw,
         .max = 1,
         .icon_type = IT_BOOL,
-        .help = "RAW clip-any zebras: solid red when any channel clips.",
-        .help2 = "Toggle ON/OFF with SET. Uses sensor RAW data in LiveView.",
+        .help = "RAW RGB zebras: per-channel clip colors from sensor data.",
+        .help2 = "Toggle ON/OFF with SET. Red/green/blue show which channels clip.",
         .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else

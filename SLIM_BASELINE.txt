@@ -1,7 +1,7 @@
 EOS M Slim Baseline (stable)
 ============================
 
-Tip commit: 775d6c0
+Tip commit: aee34e1
 Branch: eosm-slim-baseline
 
 Base: dannephoto/magiclantern_hg_02 master (7a401f7)
@@ -12,5 +12,8 @@ Includes:
 - Dannephoto zebra/histogram fixes (alignment, trails, RAW text removal)
 - RAW histogram/zebra perf (f9aa5dc)
 - No EV divider lines; histogram curve/gap-fill fixes (775d6c0)
+- Flat OFF/ON Zebras/Histogram with safe post-rec RAW calibration (2739480)
+- OFF/ON display only; Q/touch blocked on overlay toggles (57d39c0)
+- SET toggles flat overlay items; EOS M Q/SET handled as SET in ML menu (aee34e1)
 
 For further tweaks use branch: eosm-slim-dev

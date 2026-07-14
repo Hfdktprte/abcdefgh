@@ -153,6 +153,11 @@ static int idle_countdown_killflicker_prev = 5;
 extern int kill_canon_gui_mode;
 #endif
 
+#ifdef CONFIG_EOSM
+/* Set by mlv_lite after crop record stop. Core (not module) so powersave can link. */
+int eosm_stop_hold_until = 0;
+#endif
+
 int idle_is_powersave_enabled()
 {
     return idle_display_dim_after || idle_display_turn_off_after || idle_display_global_draw_off_after;
@@ -480,7 +485,6 @@ void idle_powersave_step()
             /* just stopped a crop recording? keep the current (killed-flicker)
              * front buffer state stable for a short settle window, so we don't
              * flash the Canon front buffer on + redraw and wipe the ML overlays */
-            extern int eosm_stop_hold_until;
             int stop_hold = (get_ms_clock() < eosm_stop_hold_until);
 #else
             int stop_hold = 0;

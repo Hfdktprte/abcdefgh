@@ -64,10 +64,12 @@ static struct menu_entry movie_menu_raw_toggle[] =
         .name = "Aperture Expo",
         .placeholder = 1,
     },
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "ISO Expo",
         .placeholder = 1,
     },
+#endif
     {
         .name = "Shutter lock",
         .placeholder = 1,

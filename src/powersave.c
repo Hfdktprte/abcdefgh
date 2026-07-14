@@ -153,11 +153,6 @@ static int idle_countdown_killflicker_prev = 5;
 extern int kill_canon_gui_mode;
 #endif
 
-#ifdef CONFIG_EOSM
-/* Set by mlv_lite after crop record stop. Core (not module) so powersave can link. */
-int eosm_stop_hold_until = 0;
-#endif
-
 int idle_is_powersave_enabled()
 {
     return idle_display_dim_after || idle_display_turn_off_after || idle_display_global_draw_off_after;
@@ -480,32 +475,19 @@ void idle_powersave_step()
         if (zebras_in_liveview && !gui_menu_shown())
         {
             int idle = liveview_display_idle() && lv_disp_mode == 0;
-
-#ifdef CONFIG_EOSM
-            /* just stopped a crop recording? keep the current (killed-flicker)
-             * front buffer state stable for a short settle window, so we don't
-             * flash the Canon front buffer on + redraw and wipe the ML overlays */
-            int stop_hold = (get_ms_clock() < eosm_stop_hold_until);
-#else
-            int stop_hold = 0;
-#endif
-
-            if (!stop_hold)
+            if (idle)
             {
-                if (idle)
-                {
-                    if (!canon_gui_front_buffer_disabled())
-                        idle_kill_flicker();
-                }
-                else
-                {
-                    if (canon_gui_front_buffer_disabled())
-                        idle_stop_killing_flicker();
-                }
-                static int prev_idle = 0;
-                if (!idle && prev_idle != idle) redraw();
-                prev_idle = idle;
+                if (!canon_gui_front_buffer_disabled())
+                    idle_kill_flicker();
             }
+            else
+            {
+                if (canon_gui_front_buffer_disabled())
+                    idle_stop_killing_flicker();
+            }
+            static int prev_idle = 0;
+            if (!idle && prev_idle != idle) redraw();
+            prev_idle = idle;
         }
     }
     else if (kill_canon_gui_mode == 2) // LV transparent menus and key presses

@@ -1,19 +1,29 @@
 EOS M Slim Baseline (stable)
 ============================
 
-Tip commit: aee34e1
-Branch: eosm-slim-baseline
+Tip commit: 4d7cb60
+Branch: eosm-slim-stability
+Tag: eosm-slim-stable (annotated)
 
-Base: dannephoto/magiclantern_hg_02 master (7a401f7)
-Slim modules: mlv_lite crop_rec dual_iso hdmi_out mlv_play mlv_snd sd_uhs file_man bench
+Fork: amitkattal/magiclantern_hg_02
+Reference upstream: dannephoto/magiclantern_hg_02 @ 7a401f7
 
-Includes:
-- Slim menus, module set, crop_rec/mlv_lite/raw (from e4a7309)
-- Dannephoto zebra/histogram fixes (alignment, trails, RAW text removal)
-- RAW histogram/zebra perf (f9aa5dc)
-- No EV divider lines; histogram curve/gap-fill fixes (775d6c0)
-- Flat OFF/ON Zebras/Histogram with safe post-rec RAW calibration (2739480)
-- OFF/ON display only; Q/touch blocked on overlay toggles (57d39c0)
-- SET toggles flat overlay items; EOS M Q/SET handled as SET in ML menu (aee34e1)
+Use this tip as the regression baseline for all future slim work.
+Do not regress zebra or histogram behavior validated on this build.
 
-For further tweaks use branch: eosm-slim-dev
+Stable feature set (validated):
+- Slim menus; modules: mlv_lite, crop_rec, dual_iso, hdmi_out, mlv_play, mlv_snd, sd_uhs, file_man, bench
+- RAW RGB zebras: per-channel colors, dannephoto-speed scan, aligned geometry (18b35f4 stack)
+- RAW histogram: boots with zebras, smooth curve display, ~168ms rebuild, hiprio draw path
+- Clip indicators: fixed radius-5 dots, all channels, no growth/labels
+- Movie tab: ISO Expo hidden (use Expo -> ISO)
+- CONFIG_SLIM_MENUS in platform/EOSM.202/features.h
+
+Key commits since prior baseline (aee34e1):
+- 8904572 / 9b7a6ae / 3fc1bcf — histogram boot + smooth curve + hiprio path
+- 6a211d2 / 331505c — clip dots all channels, fixed size
+- 4d7cb60 — hide duplicate ISO Expo from Movie tab
+
+CI: .github/workflows/build-eosm.yml
+
+For experiments, branch from eosm-slim-stability @ 4d7cb60 (or tag eosm-slim-stable).

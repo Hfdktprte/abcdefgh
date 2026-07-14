@@ -4183,6 +4183,15 @@ cleanup:
         /* everything saved, we can unlock the buttons */
         gui_uilock(UILOCK_NONE);
 
+#ifdef CONFIG_EOSM
+        /* Crop mode: force our preview registers while ML still owns the LV
+         * buffer, BEFORE Canon's front buffer is re-enabled below. This way
+         * Canon comes back already showing the cropped image instead of a
+         * black re-init frame, which shortens the flicker/black on stop. */
+        if (crop_rec_is_enabled())
+            CheckPreviewRegsValuesAndForce();
+#endif
+
         if (liveview_hacked)
         {
             hack_liveview(1);

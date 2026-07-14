@@ -4467,20 +4467,18 @@ void menu_entry_select(
     }
     else if (mode == 3) // SET
     {
-        /*
-        if (set_action == 0) // pickbox
+#ifdef CONFIG_SLIM_MENUS
+        if (IS_BOOL(entry) && !entry->children)
         {
-            if (entry->icon_type != IT_SUBMENU) edit_mode = !edit_mode;
-            else if( entry->select ) entry->select( entry->priv, 1);
-            else edit_mode = !edit_mode;
+            /* flat ON/OFF overlay toggles: SET only toggles, never opens submenu/edit */
+            edit_mode = 0;
+            menu_lv_transparent_mode = 0;
+            if IS_ML_PTR(entry->priv)
+                menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
+            entry_used = 1;
         }
-        else if (set_action == 1) // toggle
-        {
-            if (edit_mode) edit_mode = 0;
-            else if( entry->select ) entry->select( entry->priv, 1);
-            else if IS_ML_PTR(entry->priv) menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max);
-        }
-        else */
+        else
+#endif
         {
             if (submenu_level && edit_mode && IS_SINGLE_ITEM_SUBMENU_ENTRY(entry))
             {
@@ -5310,6 +5308,9 @@ handle_ml_menu_keys(struct event * event)
 
 #if defined(CONFIG_7D)
     case BGMT_JOY_CENTER:
+#endif
+#ifdef BGMT_Q_SET
+    case BGMT_Q_SET:
 #endif
     case BGMT_PRESS_SET:
         if (menu_help_active) // pel, don't touch this!

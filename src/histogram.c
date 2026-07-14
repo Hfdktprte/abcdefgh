@@ -66,21 +66,7 @@ void hist_invalidate_r2ev_cache(void)
 
 void FAST hist_build_raw()
 {
-#ifdef CONFIG_SLIM_MENUS
-    /* hiprio/zebras refresh raw geometry; hist must not block on autodetect */
-    if (!raw_info.black_level || raw_info.bits_per_pixel != 14)
-        return;
-#else
-    static int raw_hist_aux = INT_MIN;
-    if (should_run_polling_action(1000, &raw_hist_aux) || !raw_info.black_level)
-    {
-        if (!raw_update_params()) return;
-    }
-    else if (raw_info.bits_per_pixel != 14)
-    {
-        return;
-    }
-#endif
+    if (!raw_update_params()) return;
 
     memset(&histogram, 0, sizeof(histogram));
     histogram.is_raw = 1;

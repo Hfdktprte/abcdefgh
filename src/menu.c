@@ -2773,8 +2773,8 @@ entry_print(
     /* Reclaim icon column so label starts where the left meter used to be. */
     if (slim_style)
         x -= MENU_OFFSET;
-    /* Drop Av/Tv/Sv/DR+ side text; Shutter keeps ° in rinfo (drawn after arrows). */
-    if (!(entry->name && streq(entry->name, "Shutter")))
+    /* Drop Av/Tv/Sv/DR+ side text; Shutter / Dual ISO keep rinfo (angle ° / primary/second combo). */
+    if (!(entry->name && (streq(entry->name, "Shutter") || streq(entry->name, "Dual ISO"))))
         info->rinfo[0] = 0;
 #endif
 
@@ -2893,16 +2893,14 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows around the adjustable value; Dual ISO is right-arrow only (value► / OFF>). */
+    /* Dial arrows around the adjustable value (Dual ISO: second ISO or OFF inside arrows). */
     int draw_tri_arrows =
         slim_style &&
         info->value[0] &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;
-    int dual_iso_right_only =
-        draw_tri_arrows && entry->name && streq(entry->name, "Dual ISO");
-    int draw_left_arrow = draw_tri_arrows && !dual_iso_right_only;
+    int draw_left_arrow = draw_tri_arrows;
     int draw_right_arrow = draw_tri_arrows;
     int arrow_color = COLOR_WHITE;
     if (draw_tri_arrows && entry->selected)
@@ -2937,7 +2935,11 @@ skip_name:
     int adj_rinfo_w = 0;
 #ifdef CONFIG_SLIM_MENUS
     if (draw_tri_arrows && info->rinfo[0])
-        adj_rinfo_w = bmp_string_width(fnt, info->rinfo) + arrow_pad + 10; /* +° circle */
+    {
+        adj_rinfo_w = bmp_string_width(fnt, info->rinfo) + arrow_pad;
+        if (entry->name && streq(entry->name, "Shutter"))
+            adj_rinfo_w += 10; /* ° ring after angle digits */
+    }
 #endif
     int end = w + val_width
         + (draw_left_arrow ? (arrow_w + arrow_pad) : 0)
@@ -3001,7 +3003,7 @@ skip_name:
     {
         int x_after_value = x_value + val_width + arrow_pad + arrow_w;
         slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
-        /* Shutter angle after ► in same Canon font; ° drawn as a small ring (bfnt has no SYM_DEGREE). */
+        /* Secondary text after ► (shutter angle ° ring, or Dual ISO primary/second combo). */
         if (info->rinfo[0])
         {
             int rx = x_after_value + arrow_pad;
@@ -3011,11 +3013,14 @@ skip_name:
                 "%s",
                 info->rinfo
             );
-            int deg_x = rx + bmp_string_width(fnt, info->rinfo) + 2;
-            int deg_y = y + y_font_offset + MAX(fonth / 5, 4);
-            int deg_r = MAX(fonth / 10, 3);
-            draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r, arrow_color);
-            draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r - 1, arrow_color);
+            if (entry->name && streq(entry->name, "Shutter"))
+            {
+                int deg_x = rx + bmp_string_width(fnt, info->rinfo) + 2;
+                int deg_y = y + y_font_offset + MAX(fonth / 5, 4);
+                int deg_r = MAX(fonth / 10, 3);
+                draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r, arrow_color);
+                draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r - 1, arrow_color);
+            }
         }
     }
 #endif
@@ -5548,14 +5553,7 @@ handle_ml_menu_keys(struct event * event)
 #ifdef CONFIG_SLIM_MENUS
         {
             struct menu_entry * e = get_selected_menu_entry(menu);
-            /* Dual ISO: left does not cycle — move selection to previous row. */
-            if (e && e->name && streq(e->name, "Dual ISO") && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
-            {
-                menu_move( menu, -1 );
-                menu_lv_transparent_mode = 0;
-                menu_needs_full_redraw = 1;
-            }
-            else if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
                 menu_entry_select( menu, 1 );
             else { menu_move( menu, -1 ); menu_lv_transparent_mode = 0;  menu_needs_full_redraw = 1; }
         }

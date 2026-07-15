@@ -599,7 +599,7 @@ static MENU_UPDATE_FUNC(isoless_overlap_update)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* Recovery ISO (numeric) steps above the Expo ISO primary. Caps at 1600. */
+/* Second-ISO steps used by slim Dual ISO (must be > main ISO). */
 static const int slim_dual_recs[] = { 200, 400, 800, 1600 };
 
 static int slim_dual_primary_iso(void)
@@ -611,7 +611,6 @@ static int slim_dual_primary_iso(void)
     return 100;
 }
 
-/* Absolute CMOS index for 200/400/800/1600 (isoless_recovery_iso >= 0 mode). */
 static int slim_dual_rec_to_index(int rec_iso)
 {
     switch (rec_iso)
@@ -624,22 +623,101 @@ static int slim_dual_rec_to_index(int rec_iso)
     }
 }
 
-static int slim_dual_next_rec_above(int primary)
+/* Count valid second ISOs strictly above primary (from slim_dual_recs). */
+static int slim_dual_valid_count(int primary)
 {
-    unsigned i;
+    unsigned i, n = 0;
     for (i = 0; i < COUNT(slim_dual_recs); i++)
         if (slim_dual_recs[i] > primary)
-            return slim_dual_recs[i];
+            n++;
+    return n;
+}
+
+/* Cycle slot 0 = OFF; 1..n = ascending valid second ISOs. */
+static int slim_dual_cycle_pos(int primary)
+{
+    unsigned i, n = 0;
+
+    if (!isoless_hdr)
+        return 0;
+
+    if (isoless_recovery_iso < 0)
+        return 0;
+
+    int cur = raw2iso(72 + isoless_recovery_iso * 8);
+    for (i = 0; i < COUNT(slim_dual_recs); i++)
+    {
+        if (slim_dual_recs[i] <= primary)
+            continue;
+        n++;
+        if (slim_dual_recs[i] == cur)
+            return (int)n;
+    }
     return 0;
 }
 
-static int slim_dual_next_rec_after(int primary, int cur_rec)
+static void slim_dual_set_cycle_pos(int primary, int pos)
 {
+    int n = slim_dual_valid_count(primary);
+
+    if (n <= 0)
+    {
+        isoless_hdr = 0;
+        return;
+    }
+
+    pos = MOD(pos, n + 1);
+
+    if (pos == 0)
+    {
+        isoless_hdr = 0;
+        return;
+    }
+
     unsigned i;
+    int k = 0;
     for (i = 0; i < COUNT(slim_dual_recs); i++)
-        if (slim_dual_recs[i] > cur_rec && slim_dual_recs[i] > primary)
-            return slim_dual_recs[i];
-    return 0; /* none → OFF */
+    {
+        if (slim_dual_recs[i] <= primary)
+            continue;
+        k++;
+        if (k == pos)
+        {
+            isoless_hdr = 1;
+            isoless_recovery_iso = slim_dual_rec_to_index(slim_dual_recs[i]);
+            return;
+        }
+    }
+
+    isoless_hdr = 0;
+}
+
+/* When main ISO changes, keep second ISO if still valid; else first step above primary. */
+static void slim_dual_sync_primary(int primary)
+{
+    int n = slim_dual_valid_count(primary);
+
+    if (n <= 0)
+    {
+        isoless_hdr = 0;
+        return;
+    }
+
+    if (!isoless_hdr)
+        return;
+
+    if (isoless_recovery_iso < 0)
+    {
+        slim_dual_set_cycle_pos(primary, 1);
+        return;
+    }
+
+    int cur = raw2iso(72 + isoless_recovery_iso * 8);
+    if (cur > primary &&
+        (cur == 200 || cur == 400 || cur == 800 || cur == 1600))
+        return;
+
+    slim_dual_set_cycle_pos(primary, 1);
 }
 #endif
 
@@ -648,49 +726,37 @@ static MENU_UPDATE_FUNC(isoless_update)
 #ifdef CONFIG_SLIM_MENUS
     static int last_primary = -1;
     int primary = slim_dual_primary_iso();
+    int n = slim_dual_valid_count(primary);
     int recovery;
 
-    /* When main ISO changes while Dual ISO is on, retarget first number and snap
-     * recovery to the next full-stop above the new primary. */
-    if (isoless_hdr && primary != last_primary)
+    if (primary != last_primary)
     {
-        int next = slim_dual_next_rec_above(primary);
-        if (!next)
-            isoless_hdr = 0;
-        else
-            isoless_recovery_iso = slim_dual_rec_to_index(next);
-    }
-    last_primary = primary;
-
-    /* Keep recovery valid (> primary and in the slim set). */
-    if (isoless_hdr)
-    {
-        recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
-        if (recovery <= primary ||
-            (recovery != 200 && recovery != 400 && recovery != 800 && recovery != 1600))
-        {
-            int next = slim_dual_next_rec_above(primary);
-            if (!next)
-                isoless_hdr = 0;
-            else
-            {
-                isoless_recovery_iso = slim_dual_rec_to_index(next);
-                recovery = next;
-            }
-        }
-    }
-
-    if (!isoless_hdr)
-        MENU_SET_VALUE("OFF");
-    else
-    {
-        recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
-        MENU_SET_VALUE("%d/%d", primary, recovery);
-        isoless_check(entry, info);
+        slim_dual_sync_primary(primary);
+        last_primary = primary;
     }
 
     MENU_SET_ICON(0, 0);
     MENU_SET_ENABLED(1);
+
+    if (n <= 0 || !isoless_hdr)
+    {
+        /* ISO 1600 etc: only OFF — no combination text */
+        MENU_SET_VALUE("OFF");
+        MENU_SET_RINFO("");
+        return;
+    }
+
+    recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
+    if (recovery <= primary)
+    {
+        slim_dual_set_cycle_pos(primary, 1);
+        recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
+    }
+
+    /* ◄second► outside: primary/second */
+    MENU_SET_VALUE("%d", recovery);
+    MENU_SET_RINFO("%d/%d", primary, recovery);
+    isoless_check(entry, info);
     return;
 #else
     if (!isoless_hdr)
@@ -712,35 +778,20 @@ static MENU_UPDATE_FUNC(isoless_update)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* Right-arrow only: OFF → primary/next → … → /1600 → OFF. Left is handled in menu.c (row nav). */
+/* Left/right cycle: OFF ↔ valid second ISOs above main ISO (continuous). */
 static MENU_SELECT_FUNC(isoless_slim_select)
 {
     int primary = slim_dual_primary_iso();
-    int cur, next;
+    int n = slim_dual_valid_count(primary);
+    int pos;
 
     (void)priv;
 
-    /* Ignore reverse dial — left arrow moves the menu selection instead. */
-    if (delta < 0)
-        return;
+    if (n <= 0)
+        return; /* e.g. ISO 1600: arrows inert, stays OFF */
 
-    if (!isoless_hdr)
-    {
-        next = slim_dual_next_rec_above(primary);
-        if (next)
-        {
-            isoless_hdr = 1;
-            isoless_recovery_iso = slim_dual_rec_to_index(next);
-        }
-        return;
-    }
-
-    cur = raw2iso(72 + isoless_recovery_iso_index() * 8);
-    next = slim_dual_next_rec_after(primary, cur);
-    if (!next)
-        isoless_hdr = 0;
-    else
-        isoless_recovery_iso = slim_dual_rec_to_index(next);
+    pos = slim_dual_cycle_pos(primary);
+    slim_dual_set_cycle_pos(primary, pos + delta);
 }
 #endif
 

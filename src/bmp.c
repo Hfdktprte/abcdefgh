@@ -993,6 +993,55 @@ int bfnt_draw_char(int c, int px, int py, int fg, int bg)
     return crw;
 }
 
+/* Same as bfnt_draw_char, but each glyph pixel becomes scale×scale. Returns scaled advance width. */
+int bfnt_draw_char_scaled(int c, int px, int py, int fg, int bg, int scale)
+{
+    if (scale <= 1)
+        return bfnt_draw_char(c, px, py, fg, bg);
+
+    if (!bfnt_ok())
+        return 0;
+
+    uint8_t * const bvram = bmp_vram();
+    uint16_t* chardata = (uint16_t*) bfnt_find_char(c);
+    if (!chardata) return 0;
+    uint8_t* buff = (uint8_t*)(chardata + 5);
+    int ptr = 0;
+
+    int cw  = chardata[0];
+    int ch  = chardata[1];
+    int crw = chardata[2];
+    int xo  = chardata[3];
+    int yo  = chardata[4];
+    int bb  = cw / 8 + (cw % 8 == 0 ? 0 : 1);
+
+    if (crw + xo > 100) return 0;
+    if (ch + yo > 50) return 0;
+
+    if (bg != NO_BG_ERASE)
+        bmp_fill(bg, px, py, (crw + xo) * scale + 3, 40 * scale);
+
+    for (int i = 0; i < ch; i++)
+    {
+        for (int j = 0; j < bb; j++)
+        {
+            for (int k = 0; k < 8; k++)
+            {
+                if (j * 8 + k < cw && (buff[ptr + j] & (1 << (7 - k))))
+                {
+                    int x0 = px + (j * 8 + k + xo) * scale;
+                    int y0 = py + (i + yo) * scale;
+                    for (int dy = 0; dy < scale; dy++)
+                        for (int dx = 0; dx < scale; dx++)
+                            bmp_putpixel_fast(bvram, x0 + dx, y0 + dy, fg);
+                }
+            }
+        }
+        ptr += bb;
+    }
+    return crw * scale;
+}
+
 int bfnt_char_get_width(int c)
 {
     if (!bfnt_ok())

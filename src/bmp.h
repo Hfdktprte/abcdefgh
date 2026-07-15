@@ -428,6 +428,8 @@ void bmp_flip_ex(uint8_t* dst, uint8_t* src, uint8_t* mirror, int voffset);
 
 /* print a character with Canon's built-in font (useful for non-ASCII characters) */
 int bfnt_draw_char(int c, int px, int py, int fg, int bg);
+/* Same glyph, each pixel expanded to scale×scale. Returns scaled advance width. */
+int bfnt_draw_char_scaled(int c, int px, int py, int fg, int bg, int scale);
 
 /* return the width of a Canon built-in character */
 int bfnt_char_get_width(int c);

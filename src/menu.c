@@ -176,23 +176,18 @@ static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
 /* Circular outlined L/R arrow for WB inline value adjust. dir: -1 left, +1 right */
 static void slim_draw_circled_arrow(int cx, int cy, int dir, int color)
 {
-    const int r = 11;
+    /* True circle (equal rx/ry in BMP pixels); r=10 → diameter 21 */
+    const int r = 10;
     draw_circle(cx, cy, r, color);
     draw_circle(cx, cy, r - 1, color);
-    if (dir > 0)
-    {
-        draw_line(cx - 4, cy - 5, cx + 3, cy, color);
-        draw_line(cx - 4, cy + 5, cx + 3, cy, color);
-        draw_line(cx - 3, cy - 5, cx + 4, cy, color);
-        draw_line(cx - 3, cy + 5, cx + 4, cy, color);
-    }
-    else
-    {
-        draw_line(cx + 4, cy - 5, cx - 3, cy, color);
-        draw_line(cx + 4, cy + 5, cx - 3, cy, color);
-        draw_line(cx + 3, cy - 5, cx - 4, cy, color);
-        draw_line(cx + 3, cy + 5, cx - 4, cy, color);
-    }
+
+    /* Chevron centered on the same origin as the circle */
+    int tip = cx + dir * 4;
+    int base = cx - dir * 3;
+    draw_line(base, cy - 5, tip, cy, color);
+    draw_line(base, cy + 5, tip, cy, color);
+    draw_line(base + dir, cy - 5, tip + dir, cy, color);
+    draw_line(base + dir, cy + 5, tip + dir, cy, color);
 }
 #endif
 
@@ -2873,7 +2868,8 @@ skip_name:
         entry->selected &&
         info->value[0] &&
         !menu_lv_transparent_mode;
-    const int circ_d = 24; /* diameter of circled arrow */
+    /* Circle diameter = 2*r+1 with r=10 in slim_draw_circled_arrow */
+    const int circ_d = 21;
     int arrow_w = draw_circled_arrows ? circ_d : 0;
     int arrow_pad = draw_circled_arrows ? 6 : 0;
 #else
@@ -2929,10 +2925,11 @@ skip_name:
 
     int x_value = xval;
 #ifdef CONFIG_SLIM_MENUS
+    /* Vertical optical center of FONT_LARGE digits (slightly above geometric mid). */
+    int value_cy = y + y_font_offset + (fontspec_font(fnt)->height * 9) / 20;
     if (draw_circled_arrows)
     {
-        int cy = y + y_font_offset + fontspec_font(fnt)->height / 2;
-        slim_draw_circled_arrow(xval + circ_d / 2, cy, -1, COLOR_ORANGE);
+        slim_draw_circled_arrow(xval + circ_d / 2, value_cy, -1, COLOR_ORANGE);
         x_value = xval + circ_d + arrow_pad;
     }
 #endif
@@ -2948,8 +2945,7 @@ skip_name:
 #ifdef CONFIG_SLIM_MENUS
     if (draw_circled_arrows)
     {
-        int cy = y + y_font_offset + fontspec_font(fnt)->height / 2;
-        slim_draw_circled_arrow(x_value + val_width + arrow_pad + circ_d / 2, cy, 1, COLOR_ORANGE);
+        slim_draw_circled_arrow(x_value + val_width + arrow_pad + circ_d / 2, value_cy, 1, COLOR_ORANGE);
     }
 #endif
     
@@ -3029,7 +3025,7 @@ skip_name:
     if (entry->selected)
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* WB Expo: selection is orange text only — skip blue chrome */
+        /* WB Expo: no blue/cyan left bar, no blue row highlight — text-only selection */
         if (!(wb_expo_style && !customize_mode && !junkie_mode))
 #endif
         {
@@ -3136,6 +3132,12 @@ skip_name:
         display_customize_marker(entry, x - 44, y);
         return; // do not display icons
     }
+
+#ifdef CONFIG_SLIM_MENUS
+    /* Expo WB: never draw the left icon meter / selection-looking box */
+    if (wb_expo_style)
+        return;
+#endif
 
     // warning icon, if any
     int warn = (info->warning_level == MENU_WARN_NOT_WORKING);

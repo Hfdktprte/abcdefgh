@@ -1906,6 +1906,12 @@ static MENU_UPDATE_FUNC(kelvin_wbs_display)
 {
     kelvin_display(entry, info);
 
+#ifdef CONFIG_SLIM_MENUS
+    /* Expo White Balance parent: hide left meter icon (reads as a blue/cyan box). */
+    if (entry->children)
+        info->icon = 0;
+#endif
+
     if (lens_info.wbs_gm)
     {
         MENU_APPEND_RINFO(

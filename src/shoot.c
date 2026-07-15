@@ -1536,6 +1536,18 @@ static MENU_UPDATE_FUNC(iso_icon_update)
 
 static MENU_UPDATE_FUNC(iso_display)
 {
+#ifdef CONFIG_SLIM_MENUS
+    if (!lens_info.iso)
+    {
+        MENU_SET_VALUE("100");
+        MENU_SET_ENABLED(1);
+        MENU_SET_SHORT_NAME(" ");
+        return;
+    }
+    MENU_SET_VALUE("%d", raw2iso(lens_info.iso_equiv_raw));
+    MENU_SET_ENABLED(1);
+    MENU_SET_SHORT_NAME(" ");
+#else
     MENU_SET_VALUE(
         "%s", 
         lens_info.iso ? "" : "Auto"
@@ -1578,6 +1590,7 @@ static MENU_UPDATE_FUNC(iso_display)
     iso_icon_update(entry, info);
     
     MENU_SET_SHORT_NAME(" "); // obvious from value
+#endif
 }
 #endif
 
@@ -1600,6 +1613,25 @@ int is_native_iso(int iso)
     }
     return 0;
 }
+
+#ifdef CONFIG_SLIM_MENUS
+/* Expo ISO dial: full stops only, no Auto / thirds. Caps at 6400. */
+static int is_slim_menu_iso(int iso)
+{
+    switch (iso)
+    {
+        case 100:
+        case 200:
+        case 400:
+        case 800:
+        case 1600:
+        case 3200:
+        case 6400:
+            return 1;
+    }
+    return 0;
+}
+#endif
 
 int is_lowgain_iso(int iso)
 {
@@ -1652,6 +1684,19 @@ digital_iso_toggle( void * priv, int sign )
 void
 iso_toggle( void * priv, int sign )
 {
+#ifdef CONFIG_SLIM_MENUS
+    int (*iso_checker)(int) = is_slim_menu_iso;
+
+    /* Auto or non-list value: land on ISO 100 (or 6400 when dialing down from junk). */
+    if (!lens_info.raw_iso || !is_slim_menu_iso(raw2iso(lens_info.raw_iso)))
+    {
+        if (sign > 0)
+            lens_set_rawiso(72); /* 100 */
+        else
+            lens_set_rawiso(120); /* 6400 */
+        return;
+    }
+#else
     int (*iso_checker)(int) = is_round_iso;
     
     if (is_movie_mode())
@@ -1669,6 +1714,7 @@ iso_toggle( void * priv, int sign )
         if (digic_gain != 1024) // keep the DIGIC gain, toggle ISO in full-stops
             iso_checker = is_native_iso;
     }
+#endif
     
     int i = raw2index_iso(lens_info.raw_iso);
     int i0 = i;
@@ -1686,6 +1732,11 @@ iso_toggle( void * priv, int sign )
         if (priv == (void*)-1 && i == 0)
             break; // no auto iso allowed from shortcuts
         
+#ifdef CONFIG_SLIM_MENUS
+        if (values_iso[i] == 0)
+            continue; /* never Auto */
+#endif
+
         // did Canon accept our ISO? stop here
         if (lens_set_rawiso(codes_iso[i]) && lens_info.raw_iso == codes_iso[i])
             break;
@@ -1703,10 +1754,16 @@ static MENU_UPDATE_FUNC(shutter_display)
         int s = get_current_shutter_reciprocal_x1000();
         int deg = 3600 * fps_get_current_x1000() / s;
         deg = (deg + 5) / 10;
+#ifdef CONFIG_SLIM_MENUS
+        /* ◄ shutter ► sits on value; angle (°) is secondary text after the arrows. */
+        MENU_SET_VALUE("%s", lens_format_shutter_reciprocal(s, 5));
+        MENU_SET_RINFO("%d" SYM_DEGREE, deg);
+#else
         MENU_SET_VALUE(
             "%s, %d"SYM_DEGREE,
             lens_format_shutter_reciprocal(s, 5),
             deg);
+#endif
     }
     else
     {
@@ -1725,6 +1782,7 @@ static MENU_UPDATE_FUNC(shutter_display)
     }
 */
 
+#ifndef CONFIG_SLIM_MENUS
     if (!menu_active_but_hidden())
     {
         
@@ -1734,6 +1792,7 @@ static MENU_UPDATE_FUNC(shutter_display)
             FMT_FIXEDPOINT1(Tv)
         );
     }
+#endif
 
     if (lens_info.raw_shutter)
     {
@@ -1778,6 +1837,10 @@ static MENU_UPDATE_FUNC(aperture_display)
     int av = APEX_AV(lens_info.raw_aperture) * 10/8;
     if (!a || !lens_info.lens_exists) // for unchipped lenses, always display zero
         a = av = 0;
+#ifdef CONFIG_SLIM_MENUS
+    /* ASCII f/ so Canon Gothic renders (bfnt SYM_F_SLASH looks like the old font). */
+    MENU_SET_VALUE("f/%d.%d", a / 10, a % 10);
+#else
     MENU_SET_VALUE(
         SYM_F_SLASH"%d.%d",
         a / 10,
@@ -1793,10 +1856,15 @@ static MENU_UPDATE_FUNC(aperture_display)
             FMT_FIXEDPOINT1(av)
         );
     }
+#endif
     if (!lens_info.aperture)
     {
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, lens_info.lens_exists ? "Aperture is automatic - cannot adjust manually." : "Manual lens - cannot adjust aperture.");
         MENU_SET_ICON(MNI_PERCENT_OFF, 0);
+#ifdef CONFIG_SLIM_MENUS
+        /* Keep slim Canon font / arrows even when Av is automatic. */
+        MENU_SET_ENABLED(1);
+#endif
     }
     else
     {

@@ -5294,6 +5294,363 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
     }
 }
 
+/* ---- EOS M slim Crop Mode (single screen) ----
+ * Mode / Aspect / Preset drive recording config; Resolution is read-only;
+ * Frame Rate cycles only valid rates; Bit Depth stays 14/12/10 always.
+ * Module builds lack CONFIG_SLIM_MENUS — gate with is_EOSM. */
+
+static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2; default Higher */
+static int slim_bit_depth_ui = 1;   /* 0=14 1=12 2=10 → bit_depth_analog 0/1/3 */
+
+static void slim_crop_sync_from_backend(void)
+{
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3)
+        slim_unified_preset = COERCE(crop_preset_1x3_res_menu, 0, 2);
+    else if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+        slim_unified_preset = COERCE(crop_preset_3x3_res_menu, 0, 2);
+    else if (CROP_PRESET_MENU == CROP_PRESET_1X1)
+    {
+        if (crop_preset_1x1_res_menu <= 2) slim_unified_preset = 0;
+        else if (crop_preset_1x1_res_menu == 3) slim_unified_preset = 1;
+        else slim_unified_preset = 2;
+    }
+
+    if (OUTPUT_14BIT) slim_bit_depth_ui = 0;
+    else if (OUTPUT_12BIT) slim_bit_depth_ui = 1;
+    else slim_bit_depth_ui = 2; /* 11-bit or 10-bit → show as 10 */
+}
+
+static void slim_crop_apply_unified_preset(void)
+{
+    slim_unified_preset = COERCE(slim_unified_preset, 0, 2);
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3)
+        crop_preset_1x3_res_menu = slim_unified_preset;
+    else if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+        crop_preset_3x3_res_menu = slim_unified_preset;
+    else if (CROP_PRESET_MENU == CROP_PRESET_1X1)
+    {
+        static const int map_1x1[] = { 2, 3, 4 }; /* 3K, 1440p, 1280p */
+        crop_preset_1x1_res_menu = map_1x1[slim_unified_preset];
+    }
+}
+
+static void slim_crop_apply_bit_depth(void)
+{
+    static const int map[] = { 0, 1, 3 }; /* 14, 12, 10 */
+    slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 2);
+    bit_depth_analog = map[slim_bit_depth_ui];
+}
+
+/* Expected RAW WxH for EOS M (from crop_rec help / reg_override). */
+static void slim_crop_expected_res(int *w, int *h)
+{
+    *w = 1376;
+    *h = 2322; /* default Higher 1x3 16:9 */
+
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        return;
+
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3)
+    {
+        int p = COERCE(crop_preset_1x3_res_menu, 0, 2);
+        int ar = crop_preset_ar_menu;
+        if (ar == 0) { /* 16:9 */
+            if (p == 0) { *w = 1504; *h = 2538; }
+            else if (p == 1) { *w = 1376; *h = 2322; }
+            else { *w = 1280; *h = 2160; }
+        } else if (ar == 1) { /* 2:1 */
+            if (p == 0) { *w = 1600; *h = 2400; }
+            else if (p == 1) { *w = 1472; *h = 2208; }
+            else { *w = 1360; *h = 2040; }
+        } else if (ar == 2) { /* 2.20:1 */
+            if (p == 0) { *w = 1664; *h = 2268; }
+            else if (p == 1) { *w = 1552; *h = 2216; }
+            else { *w = 1424; *h = 1942; }
+        } else if (ar == 3) { /* 2.35:1 */
+            if (p == 0) { *w = 1736; *h = 2214; }
+            else if (p == 1) { *w = 1600; *h = 2040; }
+            else { *w = 1472; *h = 1878; }
+        } else { /* 2.39:1 */
+            if (p == 0) { *w = 1736; *h = 2178; }
+            else if (p == 1) { *w = 1600; *h = 2008; }
+            else { *w = 1472; *h = 1846; }
+        }
+        return;
+    }
+
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1)
+    {
+        int p = slim_unified_preset;
+        if (p == 0) { *w = 3072; *h = 1308; }      /* 3K */
+        else if (p == 1) { *w = 2560; *h = 1440; } /* 1440p */
+        else { *w = 1920; *h = 1280; }              /* 1280p */
+        return;
+    }
+
+    if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+    {
+        int p = COERCE(crop_preset_3x3_res_menu, 0, 2);
+        int ar = crop_preset_ar_menu;
+        if (p == 1) { *w = 1920; *h = 1080; return; }
+        if (p == 2) { *w = 1920; *h = 1280; return; } /* 1080p 3:2-ish */
+        /* High FPS ≈ height label */
+        if (ar == 0) { *w = 1736; *h = 976; }
+        else if (ar == 1) { *w = 1736; *h = 868; }
+        else if (ar == 2) { *w = 1736; *h = 790; }
+        else if (ar == 3) { *w = 1736; *h = 738; }
+        else { *w = 1736; *h = 726; }
+    }
+}
+
+/* Bit0=23.976 Bit1=25 Bit2=30 — rates allowed for current Mode/AR/Preset on EOS M. */
+static int slim_crop_fps_mask(void)
+{
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        return 0x1;
+
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3)
+    {
+        int p = COERCE(crop_preset_1x3_res_menu, 0, 2);
+        int ar = crop_preset_ar_menu;
+        if (p == 0) return 0x1;                 /* Highest: fixed ~24 only */
+        if (p == 1 && ar == 0) return 0x1;       /* Higher 16:9: 23.976 only */
+        return 0x1 | 0x2;                       /* Higher/Medium elsewhere: 24+25 */
+    }
+
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1)
+    {
+        if (slim_unified_preset == 0) return 0x1;           /* 3K: 24 */
+        if (slim_unified_preset == 1) return 0x1 | 0x2;      /* 1440p: 24+25 */
+        return 0x1 | 0x2;                                    /* 1280p: 24+25 */
+    }
+
+    if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+        return 0x1 | 0x2 | 0x4;
+
+    return 0x1;
+}
+
+static void slim_crop_clamp_fps(void)
+{
+    int mask = slim_crop_fps_mask();
+    if (mask & (1 << crop_preset_fps_menu))
+        return;
+    for (int i = 0; i < 3; i++)
+    {
+        if (mask & (1 << i))
+        {
+            crop_preset_fps_menu = i;
+            return;
+        }
+    }
+    crop_preset_fps_menu = 0;
+}
+
+static MENU_UPDATE_FUNC(slim_crop_parent_update)
+{
+    slim_crop_sync_from_backend();
+    slim_crop_apply_unified_preset();
+    slim_crop_clamp_fps();
+
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+    {
+        MENU_SET_VALUE("OFF");
+        return;
+    }
+
+    int w, h;
+    slim_crop_expected_res(&w, &h);
+    MENU_SET_VALUE("%dx%d", w, h);
+}
+
+static MENU_SELECT_FUNC(slim_crop_mode_select)
+{
+    crop_preset_index = MOD(crop_preset_index + delta, 4);
+    slim_crop_sync_from_backend();
+    slim_crop_apply_unified_preset();
+    slim_crop_clamp_fps();
+}
+
+static MENU_UPDATE_FUNC(slim_crop_mode_update)
+{
+    (void)entry;
+    (void)info;
+}
+
+static MENU_SELECT_FUNC(slim_crop_preset_select)
+{
+    slim_unified_preset = MOD(slim_unified_preset + delta, 3);
+    slim_crop_apply_unified_preset();
+    slim_crop_clamp_fps();
+}
+
+static MENU_UPDATE_FUNC(slim_crop_preset_update)
+{
+    slim_crop_sync_from_backend();
+    MENU_SET_VALUE("%s",
+        slim_unified_preset == 0 ? "Highest" :
+        slim_unified_preset == 1 ? "Higher" : "Medium");
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Select a Mode first.");
+}
+
+static MENU_UPDATE_FUNC(slim_crop_ar_update)
+{
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Select a Mode first.");
+    else if (CROP_PRESET_MENU == CROP_PRESET_1X1)
+        MENU_SET_WARNING(MENU_WARN_ADVICE, "Aspect ratio is fixed by the 1x1 preset.");
+}
+
+static MENU_SELECT_FUNC(slim_crop_ar_select)
+{
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF || CROP_PRESET_MENU == CROP_PRESET_1X1)
+        return;
+    menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
+    slim_crop_clamp_fps();
+}
+
+static MENU_UPDATE_FUNC(slim_crop_res_update)
+{
+    int w, h;
+    slim_crop_sync_from_backend();
+    slim_crop_expected_res(&w, &h);
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        MENU_SET_VALUE("—");
+    else
+        MENU_SET_VALUE("%dx%d", w, h);
+    /* Read-only: greyed via enabled=0 */
+    MENU_SET_ENABLED(0);
+}
+
+static MENU_SELECT_FUNC(slim_crop_fps_select)
+{
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+        return;
+
+    int mask = slim_crop_fps_mask();
+    int bits = (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1);
+    if (bits <= 1)
+        return;
+
+    int pos = crop_preset_fps_menu;
+    for (int step = 0; step < 3; step++)
+    {
+        pos = MOD(pos + delta, 3);
+        if (mask & (1 << pos))
+        {
+            crop_preset_fps_menu = pos;
+            return;
+        }
+    }
+}
+
+static MENU_UPDATE_FUNC(slim_crop_fps_update)
+{
+    slim_crop_clamp_fps();
+
+    static const char * labels[] = { "23.976 fps", "25 fps", "30 fps" };
+    MENU_SET_VALUE("%s", labels[COERCE(crop_preset_fps_menu, 0, 2)]);
+
+    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
+    {
+        MENU_SET_ENABLED(0);
+        MENU_SET_VALUE("23.976 fps");
+        return;
+    }
+
+    /* Only one valid rate → show it greyed (read-only). */
+    int mask = slim_crop_fps_mask();
+    int bits = (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1);
+    if (bits <= 1)
+        MENU_SET_ENABLED(0);
+}
+
+static MENU_SELECT_FUNC(slim_crop_bit_select)
+{
+    slim_bit_depth_ui = MOD(slim_bit_depth_ui + delta, 3);
+    slim_crop_apply_bit_depth();
+}
+
+static MENU_UPDATE_FUNC(slim_crop_bit_update)
+{
+    slim_crop_sync_from_backend();
+    MENU_SET_VALUE("%s",
+        slim_bit_depth_ui == 0 ? "14-bit" :
+        slim_bit_depth_ui == 1 ? "12-bit" : "10-bit");
+    /* Never gate Bit Depth on lossless / other settings. */
+}
+
+static struct menu_entry crop_rec_menu_eosm[] =
+{
+    {
+        .name       = "Crop Mode",
+        .update     = slim_crop_parent_update,
+        .icon_type  = IT_SUBMENU,
+        .edit_mode  = EM_INLINE_ADJUST,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "Mode, Aspect and Preset set RAW size; pick FPS and Bit Depth.",
+        .children = (struct menu_entry[]) {
+            {
+                .name       = "Mode",
+                .priv       = &crop_preset_index,
+                .select     = slim_crop_mode_select,
+                .update     = slim_crop_mode_update,
+                .max        = 3,
+                .choices    = CHOICES("OFF", "1x1", "1x3", "3x3"),
+                .edit_mode  = EM_INLINE_ADJUST,
+                .help       = "Crop / binning mode.",
+            },
+            {
+                .name       = "Aspect Ratio",
+                .priv       = &crop_preset_ar_menu,
+                .select     = slim_crop_ar_select,
+                .update     = slim_crop_ar_update,
+                .max        = 4,
+                .choices    = CHOICES("16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"),
+                .edit_mode  = EM_INLINE_ADJUST,
+                .help       = "Aspect ratio for the selected Mode and Preset.",
+            },
+            {
+                .name       = "Preset",
+                .priv       = &slim_unified_preset,
+                .select     = slim_crop_preset_select,
+                .update     = slim_crop_preset_update,
+                .max        = 2,
+                .choices    = CHOICES("Highest", "Higher", "Medium"),
+                .edit_mode  = EM_INLINE_ADJUST,
+                .help       = "Resolution tier. Highest / Higher / Medium.",
+            },
+            {
+                .name       = "Resolution",
+                .update     = slim_crop_res_update,
+                .help       = "RAW resolution from Mode, Aspect Ratio and Preset (read-only).",
+            },
+            {
+                .name       = "Frame Rate",
+                .priv       = &crop_preset_fps_menu,
+                .select     = slim_crop_fps_select,
+                .update     = slim_crop_fps_update,
+                .max        = 2,
+                .choices    = CHOICES("23.976 fps", "25 fps", "30 fps"),
+                .edit_mode  = EM_INLINE_ADJUST,
+                .help       = "Frame rates supported by the current configuration.",
+            },
+            {
+                .name       = "Bit Depth",
+                .priv       = &slim_bit_depth_ui,
+                .select     = slim_crop_bit_select,
+                .update     = slim_crop_bit_update,
+                .max        = 2,
+                .choices    = CHOICES("14-bit", "12-bit", "10-bit"),
+                .edit_mode  = EM_INLINE_ADJUST,
+                .help       = "Lossless RAW bit depth. Always available.",
+            },
+            MENU_EOL,
+        },
+    },
+};
+
 static struct menu_entry crop_rec_menu[] =
 {
     // FIXME: how to handle menu in cleaner way for is_DIGIC_5 models?
@@ -7193,31 +7550,17 @@ static unsigned int crop_rec_init()
 
     if (is_EOSM)
     {
-        static const char * crop_slim_keep[] = {
-            "Preset:",
-            "Preset: ",
-            "Preset:  ",
-            "Aspect ratio:",
-            "Framerate:",
-            "Bit-depth",
-            NULL
-        };
-        for (struct menu_entry * e = crop_rec_menu[0].children; !MENU_IS_EOL(e); e++)
-        {
-            int keep = 0;
-            for (const char ** k = crop_slim_keep; *k; k++)
-            {
-                if (streq(e->name, *k))
-                {
-                    keep = 1;
-                    break;
-                }
-            }
-            if (!keep)
-                e->shidden = 1;
-        }
-
+        slim_crop_sync_from_backend();
+        slim_crop_apply_unified_preset();
+        slim_crop_clamp_fps();
         more_hacks = 1;
+
+        /* New single-screen Crop Mode — do not add the legacy nested tree / extras. */
+        menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
+        menu_add("Movie", customize_buttons_menu, COUNT(customize_buttons_menu));
+        menu_add("Movie", movie_menu_shutter_range, COUNT(movie_menu_shutter_range));
+        lvinfo_add_items(info_items, COUNT(info_items));
+        return 0;
     }
 
     if (!is_EOSM)

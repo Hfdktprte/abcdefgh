@@ -4197,7 +4197,10 @@ show_vscroll(struct menu * parent){
     
     if(max > menu_len + 1){
 #ifdef CONFIG_SLIM_MENUS
-        int y_lo = (menu_grid_is_launched() && !submenu_level) ? 4 : 44;
+        /* Match slim title bar (Canon height + pad) + gap below blue line. */
+        int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;
+        int y_lo = (menu_grid_is_launched() && !submenu_level)
+            ? slim_header_h + 12 : 44;
         int h = submenu_level ? 378 : (menu_grid_is_launched() ? 450 : 385);
 #else
         int y_lo = 44;
@@ -4296,15 +4299,32 @@ void menus_display(
     if (customize_mode) fgs = get_customize_color();
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Grid-launched categories: no grey title bar — list starts at top. */
+    /* Grid-launched categories: title bar + blue underline, then gap, then list. */
     int slim_grid_launcher = menu_grid_is_launched();
-    int content_y = slim_grid_launcher ? 4 : 55;
+    int content_y = 55;
+    if (slim_grid_launcher)
+    {
+        int fh = (int)fontspec_font(FONT_CANON)->height;
+        /* Tall enough that Canon glyphs are fully inside the bar (pad above/below). */
+        int header_h = fh + 20;
+        int title_y = y + (header_h - fh) / 2 - 1;
+        if (title_y < y + 2) title_y = y + 2;
+
+        bmp_fill(bgu, orig_x, y, 720, header_h);
+
+        struct menu * sel = get_selected_toplevel_menu();
+        if (sel && sel->name)
+            bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE),
+                16, title_y, "%s", sel->name);
+
+        /* Blue accent along the bottom edge of the grey bar */
+        bmp_fill(MENU_BAR_COLOR, orig_x, y + header_h - 2, 720, 2);
+
+        content_y = header_h + 12;
+    }
+    else
 #else
     int content_y = 55;
-#endif
-
-#ifdef CONFIG_SLIM_MENUS
-    if (!slim_grid_launcher)
 #endif
     {
     bmp_fill(bgu, orig_x, y, 720, 42);

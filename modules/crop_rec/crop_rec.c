@@ -5747,6 +5747,16 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         return;
     }
 
+    /* EOS M 1x3 Highest 16:9 runs at 22.250, not 23.976. */
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3
+        && COERCE(crop_preset_1x3_res_menu, 0, 2) == 0
+        && crop_preset_ar_menu == 0)
+    {
+        MENU_SET_VALUE("22.250 fps");
+        MENU_SET_ENABLED(0);
+        return;
+    }
+
     static const char * labels[] = { "23.976 fps", "25 fps", "30 fps" };
     MENU_SET_VALUE("%s", labels[COERCE(crop_preset_fps_menu, 0, 2)]);
 

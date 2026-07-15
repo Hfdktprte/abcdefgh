@@ -4314,6 +4314,21 @@ static struct menu_entry slim_small_hacks_menu[] =
     },
 };
 
+/* Movie panel (EOS M slim): Kill Global Draw — same as RAW video submenu. */
+static struct menu_entry slim_kill_gd_menu[] =
+{
+    {
+        .name      = "Kill Global Draw",
+        .priv      = &kill_gd,
+        .max       = 1,
+        .choices   = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Disable global draw while recording.",
+        .help2     = "May help with performance. Some previews depend on GD.",
+    },
+};
+
 
 static struct menu_entry raw_video_menu[] =
 {
@@ -5031,10 +5046,11 @@ static unsigned int raw_rec_init()
     }
     else
     {
-        /* Flat Small Hacks on Custom panel */
+        /* Flat Small Hacks on Settings; Kill Global Draw on Movie (was under RAW video). */
         if (small_hacks > 2)
             small_hacks = 2;
         menu_add("Settings", slim_small_hacks_menu, COUNT(slim_small_hacks_menu));
+        menu_add("Movie", slim_kill_gd_menu, COUNT(slim_kill_gd_menu));
     }
 
     lvinfo_add_items (info_items, COUNT(info_items));

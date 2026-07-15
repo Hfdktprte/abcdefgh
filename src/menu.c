@@ -35,6 +35,7 @@
 #include "zebra.h"
 #include "focus.h"
 #include "menuhelp.h"
+#include "menu-grid.h"
 #include "console.h"
 #include "debug.h"
 #include "lvinfo.h"
@@ -4225,6 +4226,9 @@ void menus_display(
     if (mod_menu_dirty)
         mod_menu_rebuild();
 
+#ifdef CONFIG_SLIM_MENUS
+    if (!menu_grid_is_active() && !menu_grid_is_launched())
+#endif
     if (get_selected_toplevel_menu()->icon != menu_first_by_icon)
     {
         select_menu_by_icon(menu_first_by_icon);
@@ -4286,6 +4290,18 @@ void menus_display(
 
     if (customize_mode) fgs = get_customize_color();
 
+#ifdef CONFIG_SLIM_MENUS
+    int slim_grid_launcher = menu_grid_is_launched();
+    if (slim_grid_launcher)
+    {
+        bmp_fill(bgu, orig_x, y, 720, 42);
+        struct menu * sel = get_selected_toplevel_menu();
+        if (sel)
+            bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 12, y + 4, "%s", sel->name);
+    }
+    else
+#endif
+    {
     bmp_fill(bgu, orig_x, y, 720, 42);
     //~ bmp_fill(fgu, orig_x, y+42, 720, 2);
     
@@ -4318,28 +4334,10 @@ void menus_display(
                 int x1 = x - 1;
                 int x2 = x1 + icon_spacing + 2;
 
-                //~ draw_line(x1, y+42-4, x1, y+5, fgu);
-                //~ draw_line(x2, y+42-4, x2, y+5, fgu);
-                //~ draw_line(x1-1, y+42-4, x1-1, y+5, fgu);
-                //~ draw_line(x2+1, y+42-4, x2+1, y+5, fgu);
-
-                //~ draw_line(x1+4, y+1, x2-4, y+1, fgu);
-                //~ draw_line(x1+4, y, x2-4, y, fgu);
-
                 draw_line(x1-1, y+40, x2+1, y+40, bgs);
                 draw_line(x1-2, y+41, x2+2, y+41, bgs);
                 draw_line(x1-3, y+42, x2+3, y+42, bgs);
                 draw_line(x1-4, y+43, x2+4, y+43, bgs);
-
-                //~ draw_line(x1-4, y+42, x1, y+42-4, fgu);
-                //~ draw_line(x2+4, y+42, x2, y+42-4, fgu);
-                //~ draw_line(x1-4, y+41, x1, y+41-4, fgu);
-                //~ draw_line(x2+4, y+41, x2, y+41-4, fgu);
-
-                //~ draw_line(x1, y+5, x1+4, y+1, fgu);
-                //~ draw_line(x2, y+5, x2-4, y+1, fgu);
-                //~ draw_line(x1, y+4, x1+4, y, fgu);
-                //~ draw_line(x2, y+4, x2-4, y, fgu);
                 
                 draw_line(x1, y+2, x1, y+3, bgu);
                 draw_line(x1+1, y+2, x1+1, y+2, bgu);
@@ -4349,6 +4347,16 @@ void menus_display(
             }
             x += icon_spacing;
         }
+    }
+    }
+    menu = menus;
+
+    for( ; menu ; menu = menu->next )
+    {
+        if (!menu_has_visible_items(menu) && !menu->selected)
+            continue; // empty menu
+        if (IS_SUBMENU(menu))
+            continue;
         
         if (submenu) continue;
         
@@ -5020,10 +5028,18 @@ menu_redraw_do()
             }
             //~ prev_z = z;
             
+#ifdef CONFIG_SLIM_MENUS
+            if (menu_grid_is_active())
+                menu_grid_draw();
+            else
+#endif
             menus_display( menus, 0, 0 ); 
 
             if (!menu_lv_transparent_mode && !SUBMENU_OR_EDIT && !junkie_mode)
             {
+#ifdef CONFIG_SLIM_MENUS
+                if (!menu_grid_is_active())
+#endif
                 if (is_menu_active("Help")) menu_show_version();
             }
             
@@ -5407,11 +5423,48 @@ handle_ml_menu_keys(struct event * event)
 #endif
 
     int menu_needs_full_redraw = 0; // if true, do not allow quick redraws
+
+#ifdef CONFIG_SLIM_MENUS
+    if (menu_grid_is_active())
+    {
+        int grid_handled = menu_grid_handle_key(button_code, &menu_needs_full_redraw);
+        if (!grid_handled)
+        {
+            if (menu_needs_full_redraw) menu_redraw_full();
+            else menu_redraw();
+            keyrepeat_ack(button_code);
+            return 0;
+        }
+    }
+#endif
     
     switch( button_code )
     {
     case BGMT_MENU:
     {
+#ifdef CONFIG_SLIM_MENUS
+        if (menu_grid_is_active())
+        {
+            give_semaphore(gui_sem);
+            break;
+        }
+        if (menu_grid_is_launched())
+        {
+            if (SUBMENU_OR_EDIT || menu_lv_transparent_mode || menu_help_active)
+            {
+                submenu_level = 0;
+                edit_mode = 0;
+                menu_lv_transparent_mode = 0;
+                menu_help_active = 0;
+            }
+            else
+            {
+                menu_grid_return();
+            }
+            menu_needs_full_redraw = 1;
+            break;
+        }
+#endif
         if (SUBMENU_OR_EDIT || menu_lv_transparent_mode || menu_help_active)
         {
             submenu_level = 0;
@@ -5525,7 +5578,12 @@ handle_ml_menu_keys(struct event * event)
 #ifdef CONFIG_SLIM_MENUS
         {
             struct menu_entry * e = get_selected_menu_entry(menu);
-            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+            if (menu_grid_is_launched() && !submenu_level && !edit_mode && !menu_lv_transparent_mode
+                && !entry_is_inline_adjustable(e))
+            {
+                /* Top-level category from grid: L/R does not switch hidden tabs. */
+            }
+            else if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
                 menu_entry_select( menu, 0 );
             else { menu_move( menu, 1 ); menu_lv_transparent_mode = 0; menu_needs_full_redraw = 1; }
         }
@@ -5553,7 +5611,12 @@ handle_ml_menu_keys(struct event * event)
 #ifdef CONFIG_SLIM_MENUS
         {
             struct menu_entry * e = get_selected_menu_entry(menu);
-            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+            if (menu_grid_is_launched() && !submenu_level && !edit_mode && !menu_lv_transparent_mode
+                && !entry_is_inline_adjustable(e))
+            {
+                /* Top-level category from grid: L/R does not switch hidden tabs. */
+            }
+            else if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
                 menu_entry_select( menu, 1 );
             else { menu_move( menu, -1 ); menu_lv_transparent_mode = 0;  menu_needs_full_redraw = 1; }
         }
@@ -5642,6 +5705,11 @@ handle_ml_menu_keys(struct event * event)
         if (submenu_level)
         {
             menu_close_submenu();
+            menu_needs_full_redraw = 1;
+        }
+        else if (menu_grid_is_launched())
+        {
+            menu_grid_return();
             menu_needs_full_redraw = 1;
         }
         else
@@ -5872,6 +5940,9 @@ static void menu_open()
     keyrepeat = 0;
     menu_shown = 1;
     //~ menu_hidden_should_display_help = 0;
+#ifdef CONFIG_SLIM_MENUS
+    menu_grid_open();
+#endif
     if (lv) menu_zebras_mirror_dirty = 1;
 
     piggyback_canon_menu();
@@ -5887,6 +5958,9 @@ static void menu_close()
     if (!menu_shown) return;
     menu_shown = false;
 
+#ifdef CONFIG_SLIM_MENUS
+    menu_grid_close();
+#endif
     customize_mode = 0;
     update_disp_mode_bits_from_params();
 

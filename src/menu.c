@@ -151,6 +151,18 @@ extern void CancelDateTimer();
 #define SHOULD_USE_EDIT_MODE(entry) (!IS_BOOL(entry) && !IS_ACTION(entry))
 
 #ifdef CONFIG_SLIM_MENUS
+/* Title bar left edge — menu row labels align under this. */
+#define SLIM_MENU_TITLE_X 16
+
+static const char * slim_menu_display_name(const char * name)
+{
+    if (!name) return "";
+    if (streq(name, "Expo")) return "Exposure";
+    if (streq(name, "Overlay")) return "Overlays";
+    if (streq(name, "Prefs")) return "Custom";
+    return name;
+}
+
 /* Dial L/R adjusts value on the selected row; SET opens submenu when present. */
 static int entry_is_inline_adjustable(struct menu_entry * entry)
 {
@@ -4315,7 +4327,7 @@ void menus_display(
         struct menu * sel = get_selected_toplevel_menu();
         if (sel && sel->name)
             bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE),
-                16, title_y, "%s", sel->name);
+                SLIM_MENU_TITLE_X, title_y, "%s", slim_menu_display_name(sel->name));
 
         /* Blue accent along the bottom edge of the grey bar */
         bmp_fill(MENU_BAR_COLOR, orig_x, y + header_h - 2, 720, 2);
@@ -4404,7 +4416,12 @@ void menus_display(
         {
             menu_display(
                 menu,
+#ifdef CONFIG_SLIM_MENUS
+                /* After slim ICON reclaim (x -= MENU_OFFSET), labels sit under title E. */
+                (slim_grid_launcher ? SLIM_MENU_TITLE_X : orig_x) + MENU_OFFSET,
+#else
                 orig_x + MENU_OFFSET,
+#endif
                 y + content_y,
                 edit_mode ? 1 : 0
             );

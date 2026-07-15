@@ -652,33 +652,42 @@ static MENU_UPDATE_FUNC(isoless_update)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* Dial cycles recovery ISO only: primary/200, primary/400, primary/800, primary/1600.
- * Primary always mirrors the main Expo ISO selection. SET still toggles Dual ISO ON/OFF. */
+/* Dial: primary/200 → /400 → /800 → /1600 → OFF → /200 … (primary from main ISO only). */
 static MENU_SELECT_FUNC(isoless_slim_select)
 {
     static const int slim_rec[] = { 1, 2, 3, 4 }; /* CMOS indices for 200..1600 */
-    int i, cur;
+    int i;
 
     (void)priv;
 
     if (!isoless_hdr)
     {
-        /* Coming from OFF: enable and pick first / last depending on dial direction. */
+        /* OFF → enable at first or last recovery depending on dial direction */
         isoless_hdr = 1;
         isoless_recovery_iso = (delta > 0) ? slim_rec[0] : slim_rec[3];
         return;
     }
 
-    cur = isoless_recovery_iso;
     for (i = 0; i < 4; i++)
-        if (slim_rec[i] == cur)
+        if (slim_rec[i] == isoless_recovery_iso)
             break;
     if (i >= 4)
-        i = (delta > 0) ? 0 : 3;
-    else
-        i = MOD(i + delta, 4);
+        i = 0;
 
-    isoless_recovery_iso = slim_rec[i];
+    if (delta > 0)
+    {
+        if (i >= 3)
+            isoless_hdr = 0; /* /1600 → OFF */
+        else
+            isoless_recovery_iso = slim_rec[i + 1];
+    }
+    else
+    {
+        if (i <= 0)
+            isoless_hdr = 0; /* /200 → OFF */
+        else
+            isoless_recovery_iso = slim_rec[i - 1];
+    }
 }
 #endif
 

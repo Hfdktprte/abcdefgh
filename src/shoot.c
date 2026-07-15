@@ -1755,9 +1755,10 @@ static MENU_UPDATE_FUNC(shutter_display)
         int deg = 3600 * fps_get_current_x1000() / s;
         deg = (deg + 5) / 10;
 #ifdef CONFIG_SLIM_MENUS
-        /* ◄ shutter ► sits on value; angle (°) is secondary text after the arrows. */
+        /* ◄ shutter ► on value; angle + ° always in rinfo (FONT_LARGE draws SYM_DEGREE). */
         MENU_SET_VALUE("%s", lens_format_shutter_reciprocal(s, 5));
         MENU_SET_RINFO("%d" SYM_DEGREE, deg);
+        MENU_SET_ENABLED(1);
 #else
         MENU_SET_VALUE(
             "%s, %d"SYM_DEGREE,

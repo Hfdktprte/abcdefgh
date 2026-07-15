@@ -5616,15 +5616,23 @@ static MENU_SELECT_FUNC(slim_crop_preset_select)
     if (n <= 1)
         return;
 
-    if (slim_mode_ui == 0 && slim_1x1_ar == 1)
+    /* Both L and R: Medium → Higher → Highest → Medium… (never reverse).
+     * For 1x1 2.35:1 (2 choices): Higher → Highest → Higher… */
+    (void)delta;
+    if (n == 2)
     {
-        /* 1x1 2.35:1 — toggle Highest (0) ↔ Higher (1) */
-        slim_unified_preset = (slim_unified_preset == 0) ? 1 : 0;
+        slim_unified_preset = (slim_unified_preset == 1) ? 0 : 1;
         slim_crop_apply_mode();
         return;
     }
 
-    slim_unified_preset = MOD(slim_unified_preset + delta, 3);
+    if (slim_unified_preset == 2)
+        slim_unified_preset = 1;      /* Medium → Higher */
+    else if (slim_unified_preset == 1)
+        slim_unified_preset = 0;      /* Higher → Highest */
+    else
+        slim_unified_preset = 2;      /* Highest → Medium */
+
     slim_crop_apply_unified_preset();
     slim_crop_clamp_fps();
 }

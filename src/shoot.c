@@ -1841,6 +1841,8 @@ static MENU_UPDATE_FUNC(aperture_display)
 #ifdef CONFIG_SLIM_MENUS
     /* ASCII f/ so Canon Gothic renders (bfnt SYM_F_SLASH looks like the old font). */
     MENU_SET_VALUE("f/%d.%d", a / 10, a % 10);
+    /* Never grey Aperture on slim Exposure. */
+    MENU_SET_ENABLED(1);
 #else
     MENU_SET_VALUE(
         SYM_F_SLASH"%d.%d",
@@ -1860,17 +1862,19 @@ static MENU_UPDATE_FUNC(aperture_display)
 #endif
     if (!lens_info.aperture)
     {
+#ifdef CONFIG_SLIM_MENUS
+        MENU_SET_WARNING(MENU_WARN_ADVICE, lens_info.lens_exists ? "Aperture is automatic - cannot adjust manually." : "Manual lens - cannot adjust aperture.");
+#else
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, lens_info.lens_exists ? "Aperture is automatic - cannot adjust manually." : "Manual lens - cannot adjust aperture.");
         MENU_SET_ICON(MNI_PERCENT_OFF, 0);
-#ifdef CONFIG_SLIM_MENUS
-        /* Keep slim Canon font / arrows even when Av is automatic. */
-        MENU_SET_ENABLED(1);
 #endif
     }
     else
     {
         MENU_SET_ICON(MNI_PERCENT, (lens_info.raw_aperture - lens_info.raw_aperture_min) * 100 / (lens_info.raw_aperture_max - lens_info.raw_aperture_min));
+#ifndef CONFIG_SLIM_MENUS
         MENU_SET_ENABLED(1);
+#endif
     }
 
     MENU_SET_SHORT_NAME(" "); // obvious from value
@@ -4512,7 +4516,7 @@ static struct menu_entry expo_menus[] = {
 #endif
     },
 #ifdef CONFIG_SLIM_MENUS
-    MENU_PLACEHOLDER("Shutter fine-tuning"),
+    MENU_PLACEHOLDER("Shutter tuning"),
     MENU_PLACEHOLDER("Shutter lock"),
 #endif
     #endif
@@ -4523,10 +4527,11 @@ static struct menu_entry expo_menus[] = {
         .select     = aperture_toggle,
         .icon_type  = IT_PERCENT,
         .help = "Adjust aperture. Also displays APEX aperture (Av) in stops.",
-        .depends_on = DEP_CHIPPED_LENS,
 #ifdef CONFIG_SLIM_MENUS
+        .depends_on = 0,
         .edit_mode = EM_INLINE_ADJUST,
 #else
+        .depends_on = DEP_CHIPPED_LENS,
         .edit_mode = EM_SHOW_LIVEVIEW,
 #endif
     },

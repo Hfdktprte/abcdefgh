@@ -735,6 +735,10 @@ int shutter_finetune_get_adjusted_timer()
 
 static MENU_UPDATE_FUNC(shutter_finetune_display)
 {
+#ifdef CONFIG_SLIM_MENUS
+    /* Never grey — OFF is a normal selectable value. */
+    MENU_SET_ENABLED(1);
+#endif
     if (!shutter_finetune)
     {
         MENU_SET_VALUE("OFF");
@@ -901,19 +905,25 @@ void digic_iso_step()
 static struct menu_entry lv_img_menu[] =
 {
     {
+#ifdef CONFIG_SLIM_MENUS
+    .name = "Shutter tuning",
+    .icon_type = IT_PERCENT_LOG,
+    .depends_on = 0,
+#else
     .name = "Shutter fine-tuning",
+    .icon_type = IT_PERCENT_LOG_OFF,
+    .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+#endif
     .priv = &shutter_finetune,
     .update = shutter_finetune_display,
     .min = -500,
     .max = 500,
-    .icon_type = IT_PERCENT_LOG_OFF,
 #ifdef CONFIG_SLIM_MENUS
     .edit_mode = EM_INLINE_ADJUST,
 #else
     .edit_mode = EM_SHOW_LIVEVIEW,
 #endif
     .help = "Fine-tune shutter speed in approx 20-microsecond increments.",
-    .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
     },
 };
 #endif

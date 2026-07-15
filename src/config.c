@@ -873,6 +873,7 @@ static struct menu_entry cfg_menus[] = {
 };
 #endif
 
+#ifndef CONFIG_SLIM_MENUS
 static struct menu_entry cfg_menusmovie[] =
 {
     {
@@ -883,12 +884,10 @@ static struct menu_entry cfg_menusmovie[] =
         .choices = (const char **) config_preset_choices,
         .select = config_preset_toggle,
         .update = config_preset_update,
-#ifdef CONFIG_SLIM_MENUS
-        .edit_mode = EM_INLINE_ADJUST,
-#endif
         .help = "Choose a configuration preset and start customize(restart needed)."
     },
 };
+#endif
 
 /* called at startup, after init_func's */
 void config_load()
@@ -948,7 +947,9 @@ static void config_menu_init()
 {
 #ifdef CONFIG_CONFIG_FILE
     menu_add( "Prefs", cfg_menus, COUNT(cfg_menus) );
+#ifndef CONFIG_SLIM_MENUS
     menu_add( "Movie", cfg_menusmovie, COUNT(cfg_menusmovie) );
+#endif
     config_save_sem = create_named_semaphore("config_save_sem",1);
 #endif
 }

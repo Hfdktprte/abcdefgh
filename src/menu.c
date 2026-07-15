@@ -2912,11 +2912,12 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows around the adjustable value (Dual ISO: second ISO or OFF inside arrows). */
+    /* Dial arrows around the adjustable value — always on for adjustable rows
+     * (including OFF). Do not hide when enabled==0 / bool OFF. */
     int draw_tri_arrows =
         slim_style &&
+        entry_is_inline_adjustable(entry) &&
         info->value[0] &&
-        info->enabled != 0 &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;
@@ -3658,19 +3659,51 @@ menu_display(
     int num_visible = get_menu_visible_count(menu);
     int target_height = menu->submenu_height ? menu->submenu_height - 54 : 370;
 #ifdef CONFIG_SLIM_MENUS
-    /* Former help footer (~50px) is unused — extend the item list into it. */
+    int slim_row_h = (int)fontspec_font(FONT_CANON)->height + 8;
     if (!menu->submenu_height)
-        target_height = 430;
+    {
+        /* Count rows against the remaining screen below the list origin. */
+        if (menu_grid_is_launched() && !submenu_level)
+        {
+            int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;
+            int list_y0 = slim_header_h + 12;
+            target_height = 480 - list_y0 - 6;
+        }
+        else
+            target_height = 430;
+    }
+    int natural_height = num_visible * slim_row_h;
+    int ideal_num_items = MAX(1, target_height / slim_row_h);
+#else
+    int natural_height = num_visible * font_large.height;
+    int ideal_num_items = target_height / font_large.height;
 #endif
     if (is_menu_active("Help")) target_height -= 20;
     if (is_menu_active("Focus")) target_height -= 70;
-    int natural_height = num_visible * font_large.height;
-    int ideal_num_items = target_height / font_large.height;
+#ifdef CONFIG_SLIM_MENUS
+    /* Recompute after Help/Focus trim so selection never leaves the viewport. */
+    natural_height = num_visible * slim_row_h;
+    ideal_num_items = MAX(1, target_height / slim_row_h);
+#endif
 
     /* if the menu items does not exceed max count by too much (e.g. 12 instead of 11),
      * prefer to squeeze them vertically in order to avoid scrolling. */
     
     /* but if we can't avoid scrolling, don't squeeze */
+#ifdef CONFIG_SLIM_MENUS
+    /* Slim Canon rows are taller — never squeeze one extra past what fits. */
+    if (num_visible > ideal_num_items)
+    {
+        num_visible = ideal_num_items;
+        natural_height = num_visible * slim_row_h;
+        target_height -= submenu_level ? 16 : 12;
+        y += submenu_level ? 4 : 2;
+    }
+    else
+    {
+        menu->scroll_pos = 0;
+    }
+#else
     if (num_visible > ideal_num_items + 1)
     {
         num_visible = ideal_num_items;
@@ -3683,6 +3716,7 @@ menu_display(
     {
         menu->scroll_pos = 0;
     }
+#endif
     
     int extra_spacing = (target_height - natural_height);
     
@@ -4222,15 +4256,21 @@ show_vscroll(struct menu * parent){
     int max = get_menu_visible_count(parent);
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Match menu_display row estimate (Canon Gothic + pad). */
+    /* Match menu_display: Canon Gothic row height and remaining viewport. */
     int target_height = parent && parent->submenu_height ? parent->submenu_height - 54 : 430;
     int row_h = (int)fontspec_font(FONT_CANON)->height + 8;
+    if ((!parent || !parent->submenu_height) && menu_grid_is_launched() && !submenu_level)
+    {
+        int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;
+        int list_y0 = slim_header_h + 12;
+        target_height = 480 - list_y0 - 6;
+    }
     int menu_len = MAX(1, target_height / MAX(row_h, 1));
 #else
     int menu_len = MENU_LEN;
 #endif
     
-    if(max > menu_len + 1){
+    if(max > menu_len){
 #ifdef CONFIG_SLIM_MENUS
         /* Match slim title bar (Canon height + pad) + gap below blue line. */
         int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;

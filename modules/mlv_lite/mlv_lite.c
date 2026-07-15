@@ -4315,6 +4315,7 @@ static struct menu_entry slim_small_hacks_menu[] =
         .max      = 2,
         .update   = slim_small_hacks_update,
         .choices  = CHOICES("OFF", "ON", "More"),
+        .edit_mode = EM_INLINE_ADJUST,
         .help     = "Disable some tasks to increase write speed.",
         .help2    = "\n"
                     "Slow down Canon GUI, disable auto exposure, white balance...\n"
@@ -5042,7 +5043,7 @@ static unsigned int raw_rec_init()
         /* Flat Small Hacks on Custom panel */
         if (small_hacks > 2)
             small_hacks = 2;
-        menu_add("Custom", slim_small_hacks_menu, COUNT(slim_small_hacks_menu));
+        menu_add("Settings", slim_small_hacks_menu, COUNT(slim_small_hacks_menu));
     }
 
     lvinfo_add_items (info_items, COUNT(info_items));

@@ -163,7 +163,7 @@ static void twocard_init()
     bench_menu_show("CF+SD write benchmark (1 min)");
 }
 
-/* Card Benchmark Off/On on Custom panel (EOS M slim).
+/* Card Benchmark Off/On on Settings panel (EOS M slim).
  * Turning On via L/R starts Quick R/W (1 min) without SET. */
 static int card_bench_ui = 0;
 
@@ -183,6 +183,7 @@ static struct menu_entry slim_card_bench_menu[] =
         .max      = 1,
         .select   = slim_card_bench_select,
         .choices  = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
         .help     = "Quick R/W benchmark (1 min). Turning ON starts it immediately.",
         .help2    = "Uses a 16MB buffer and a 1GB temp file.",
     },
@@ -199,7 +200,7 @@ static unsigned int bench_init()
     }
     
     if (is_camera("EOSM", "2.0.2"))
-        menu_add("Custom", slim_card_bench_menu, COUNT(slim_card_bench_menu));
+        menu_add("Settings", slim_card_bench_menu, COUNT(slim_card_bench_menu));
     else
         menu_add("Debug", bench_menu, COUNT(bench_menu));
     

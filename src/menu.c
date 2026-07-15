@@ -1534,12 +1534,12 @@ void menu_add(
 #ifdef CONFIG_SLIM_MENUS
     if (streq(name, "File Manager"))
         return;
-    /* Prefs panel removed — Custom panel replaces it. */
+    /* Prefs panel removed — Settings panel replaces it. */
     if (streq(name, "Prefs"))
         return;
     if (streq(name, "Debug"))
     {
-        /* Slim Debug tab: unused (Card Benchmark lives on Custom). */
+        /* Slim Debug tab: unused (Card Benchmark lives on Settings). */
         return;
     }
 #endif
@@ -5953,7 +5953,7 @@ menu_init( void )
 #endif
     menu_find_by_name( "Display",   ICON_ML_DISPLAY );
 #ifdef CONFIG_SLIM_MENUS
-    menu_find_by_name( "Custom",    ICON_ML_PREFS   );
+    menu_find_by_name( "Settings",  ICON_ML_PREFS   );
 #else
     menu_find_by_name( "Prefs",     ICON_ML_PREFS   );
 #endif

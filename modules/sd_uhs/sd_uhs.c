@@ -624,7 +624,7 @@ static struct menu_entry sd_uhs_menu[] =
     },
 };
 
-/* Flat Custom-panel SD rows (EOS M slim). Access Mode defaults to SDR104. */
+/* Flat Settings-panel SD rows (EOS M slim). Access Mode defaults to SDR104. */
 static struct menu_entry sd_uhs_menu_custom[] =
 {
     {
@@ -633,6 +633,7 @@ static struct menu_entry sd_uhs_menu_custom[] =
         .update = sd_uhs_update,
         .max    = 3,
         .choices = CHOICES("OFF", "160 MHz", "192 MHz", "240 MHz (H)"),
+        .edit_mode = EM_INLINE_ADJUST,
         .help   = "Choose a preset then restart the camera.",
         .help2  = "\n"
                   " \n"
@@ -645,6 +646,7 @@ static struct menu_entry sd_uhs_menu_custom[] =
         .update     = sd_access_mode_update,
         .max        = 1,
         .choices    = CHOICES("SDR50", "SDR104"),
+        .edit_mode  = EM_INLINE_ADJUST,
         .help       = "SDR104 is required above 100 MHz. Some cards prefer SDR50.",
     },
 };
@@ -668,7 +670,7 @@ static unsigned int sd_uhs_init()
     }
 
     if (is_camera("EOSM", "2.0.2"))
-        menu_add("Custom", sd_uhs_menu_custom, COUNT(sd_uhs_menu_custom));
+        menu_add("Settings", sd_uhs_menu_custom, COUNT(sd_uhs_menu_custom));
     else
         menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));
 

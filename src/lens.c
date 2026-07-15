@@ -1994,29 +1994,6 @@ static struct menu_entry tweak_menus[] = {
     }
 };
 
-#ifdef CONFIG_SLIM_MENUS
-static struct menu_entry custom_lens_menus[] = {
-#ifndef CONFIG_FULLFRAME
-    {
-        .name = "Crop Factor Display",
-        .priv = &crop_info,
-        .max  = 1,
-        .choices = CHOICES("OFF", "35mm Equivalent"),
-        .help = "Display the 35mm equiv. focal length including crop factor.",
-        .depends_on = DEP_LIVEVIEW | DEP_CHIPPED_LENS,
-    },
-#endif
-    {
-        .name = "Focus Distance Units",
-        .priv = &focus_units,
-        .choices = CHOICES("mm/cm", "ft/in"),
-        .max = 1,
-        .help  = "Can select between Metric and Imperial focus distance units",
-    },
-};
-#endif
-
-
 /* better place for this menu? */
 static struct menu_entry lens_info_menus[] = {
    {
@@ -2075,9 +2052,7 @@ static struct menu_entry lens_info_menus[] = {
 void
 crop_factor_menu_init()
 {
-#ifdef CONFIG_SLIM_MENUS
-    menu_add("Custom", custom_lens_menus, COUNT(custom_lens_menus));
-#else
+#ifndef CONFIG_SLIM_MENUS
     menu_add("Prefs", tweak_menus, COUNT(tweak_menus));
     menu_add("Debug", lens_info_menus, COUNT(lens_info_menus));
 

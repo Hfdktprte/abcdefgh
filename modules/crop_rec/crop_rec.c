@@ -5320,6 +5320,7 @@ static struct menu_entry slim_more_hacks_menu[] = {
         .choices  = CHOICES("OFF", "Allow"),
         .priv     = &more_hacks,
         .update   = slim_more_hacks_update,
+        .edit_mode = EM_INLINE_ADJUST,
         .help     = "Allow More hacks even when other settings would block them.",
     },
 };
@@ -7786,7 +7787,7 @@ static unsigned int crop_rec_init()
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
-        menu_add("Custom", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
+        menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
     }

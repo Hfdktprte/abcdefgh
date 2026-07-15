@@ -3455,6 +3455,7 @@ static struct menu_entry custom_display_menus[] = {
         .max = 1,
         .update = slim_digic_peaking_update,
         .choices = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
         .help  = "Focus peaking via DIGIC. ON uses the slightly sharper filter.",
         .depends_on = DEP_LIVEVIEW,
     },
@@ -3473,6 +3474,7 @@ static struct menu_entry custom_display_menus[] = {
             "Bottom 3:2",
             "Bottom 16:9"
         ),
+        .edit_mode = EM_INLINE_ADJUST,
         .help = "Position of top/bottom bars, useful for external displays.",
         .depends_on = DEP_LIVEVIEW,
     },
@@ -3955,7 +3957,7 @@ static struct menu_entry play_menus[] = {
 static void tweak_init()
 {
 #ifdef CONFIG_SLIM_MENUS
-    menu_add("Custom", custom_display_menus, COUNT(custom_display_menus));
+    menu_add("Settings", custom_display_menus, COUNT(custom_display_menus));
     menu_add("Display", display_menus, COUNT(display_menus));
 #else
     menu_add( "Prefs", play_menus, COUNT(play_menus) );

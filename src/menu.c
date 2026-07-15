@@ -2930,14 +2930,21 @@ skip_name:
         arrow_color = COLOR_GRAY(50);
     int fonth = fontspec_font(fnt)->height;
     int tri_h = MAX(fonth - 4, 18); /* match value glyph height */
-    int arrow_w = draw_tri_arrows ? (tri_h * 6) / 10 + 1 : 0;
-    int arrow_pad = draw_tri_arrows ? 8 : 0;
+    int arrow_slot_w = (tri_h * 6) / 10 + 1;
+    int arrow_slot_pad = 8;
+    int arrow_w = draw_tri_arrows ? arrow_slot_w : 0;
+    int arrow_pad = draw_tri_arrows ? arrow_slot_pad : 0;
+    /* Read-only values (e.g. Resolution): indent past where ◄ would be so digits
+     * line up with dial-adjustable value text, not the arrow tip. */
+    int value_left_pad = (!draw_tri_arrows && info->value[0])
+        ? (arrow_slot_w + arrow_slot_pad) : 0;
 #else
     int draw_tri_arrows = 0;
     int draw_left_arrow = 0;
     int draw_right_arrow = 0;
     int arrow_w = 0;
     int arrow_pad = 0;
+    int value_left_pad = 0;
 #endif
     
     // far right end
@@ -2963,6 +2970,7 @@ skip_name:
     }
 #endif
     int end = w + val_width
+        + value_left_pad
         + (draw_left_arrow ? (arrow_w + arrow_pad) : 0)
         + (draw_right_arrow ? (arrow_w + arrow_pad) : 0)
         + adj_rinfo_w;
@@ -3008,6 +3016,10 @@ skip_name:
     {
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
         x_value = xval + arrow_w + arrow_pad;
+    }
+    else if (value_left_pad)
+    {
+        x_value = xval + value_left_pad;
     }
 #endif
 
@@ -4251,6 +4263,13 @@ show_vscroll(struct menu * parent){
     
     if (edit_mode)
         return;
+
+#ifdef CONFIG_SLIM_MENUS
+    /* Movie page: no vertical scroll indicator (list still scrolls). */
+    if (parent && parent->name && streq(parent->name, "Movie")
+        && menu_grid_is_launched() && !submenu_level)
+        return;
+#endif
     
     int pos = get_menu_selected_pos(parent);
     int max = get_menu_visible_count(parent);

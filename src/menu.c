@@ -2872,8 +2872,9 @@ entry_print(
     {
         /* Canon Gothic — native camera UI font (smoother than RBF bitmap fonts). */
         int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
-        /* OFF is a normal dial state — never grey Monitoring/Expo rows for that. */
-        if (info->warning_level == MENU_WARN_NOT_WORKING)
+        /* OFF (bool) stays white; read-only rows use enabled=0 and stay grey. */
+        if (info->warning_level == MENU_WARN_NOT_WORKING
+            || (info->enabled == 0 && !IS_BOOL(entry)))
             fg = COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
@@ -2905,7 +2906,8 @@ skip_name:
     if (slim_style && !customize_mode && !junkie_mode)
     {
         int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
-        if (info->warning_level == MENU_WARN_NOT_WORKING)
+        if (info->warning_level == MENU_WARN_NOT_WORKING
+            || (info->enabled == 0 && !IS_BOOL(entry)))
             fg = entry->selected ? COLOR_ORANGE : COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
@@ -2914,6 +2916,7 @@ skip_name:
     int draw_tri_arrows =
         slim_style &&
         info->value[0] &&
+        info->enabled != 0 &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;

@@ -25,13 +25,14 @@
 static struct menu_entry movie_menu_raw_toggle[] =
 {
     {
-         .name = "Crop mood",
+         .name = "Crop Mode",
          .placeholder = 1,
     },
     {
          .name = "RAW video",
          .placeholder = 1,
     },
+#ifndef CONFIG_SLIM_MENUS
     {
          .name = "Bit-depth",
          .placeholder = 1,
@@ -44,6 +45,7 @@ static struct menu_entry movie_menu_raw_toggle[] =
          .name = "Aspect ratio:",
          .placeholder = 1,
     },
+#endif
     {
          .name = "Customize buttons",
          .placeholder = 1,

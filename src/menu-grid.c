@@ -74,12 +74,13 @@ static void grid_cell_rect(int idx, int *x, int *y, int *w, int *h)
 
 static void grid_draw_ml_icon(int icon, int cx, int cy)
 {
-    int iw = bfnt_char_get_width(icon);
-    /* ML tab glyphs are ~40 px tall including padding used in menus_display. */
-    int ih = 40;
+    const int scale = 2;
+    int iw = bfnt_char_get_width(icon) * scale;
+    /* ML tab glyphs are ~40 px tall at 1x; 2x → ~80. */
+    int ih = 40 * scale;
     int x = cx - iw / 2;
     int y = cy - ih / 2;
-    bfnt_draw_char(icon, x, y, COLOR_CYAN, NO_BG_ERASE);
+    bfnt_draw_char_scaled(icon, x, y, COLOR_CYAN, NO_BG_ERASE, scale);
 }
 
 int menu_grid_is_active(void)   { return grid_active; }

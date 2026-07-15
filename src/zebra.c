@@ -2813,7 +2813,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW RGB zebras: per-channel clip colors from sensor data.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
     {
@@ -2905,7 +2904,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Show which parts of the image are in focus.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW,
     },
 #else
     {
@@ -3069,7 +3067,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Overlay any image in LiveView. In PLAY mode, press LV btn.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW,
         .works_best_in = DEP_LIVEVIEW,
     },
 #else
@@ -3104,7 +3101,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Exposure aid: display brightness from a small spot.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
     {
@@ -3157,7 +3153,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Exposure aid: each brightness level is color-coded.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
     {
@@ -3195,7 +3190,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW luma histogram on a linear scale.",
         .help2 = "Dial L/R toggles ON/OFF. Clip dots warn when channels clip.",
-        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
     {
@@ -3270,7 +3264,6 @@ struct menu_entry zebra_menus[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Exposure aid: useful for checking overall brightness.",
         .help2 = "Dial L/R toggles ON/OFF.",
-        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
     },
 #else
     {
@@ -3306,9 +3299,10 @@ struct menu_entry zebra_menus[] = {
         .choices = CHOICES("OFF", "ON"),
         .edit_mode = EM_INLINE_ADJUST,
         .help2 = "Dial L/R toggles ON/OFF.",
+#else
+        .depends_on = DEP_GLOBAL_DRAW,
 #endif
         .help = "Electronic level indicator in 0.5 degree steps.",
-        .depends_on = DEP_GLOBAL_DRAW,
     },
     #endif
 };

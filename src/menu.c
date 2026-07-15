@@ -2872,7 +2872,8 @@ entry_print(
     {
         /* Canon Gothic — native camera UI font (smoother than RBF bitmap fonts). */
         int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
-        if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
+        /* OFF is a normal dial state — never grey Monitoring/Expo rows for that. */
+        if (info->warning_level == MENU_WARN_NOT_WORKING)
             fg = COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
@@ -2890,6 +2891,9 @@ skip_name:
     if (0)
         bmp_printf(FONT_SMALL, x, y, "name(%s)(%d) value(%s)(%d)", info->name, strlen(info->name), info->value, strlen(info->value));
 
+#ifdef CONFIG_SLIM_MENUS
+    if (!(slim_style && !customize_mode && !junkie_mode))
+#endif
     if (info->enabled == 0) 
         fnt = MENU_FONT_GRAY;
     
@@ -2901,7 +2905,7 @@ skip_name:
     if (slim_style && !customize_mode && !junkie_mode)
     {
         int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
-        if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
+        if (info->warning_level == MENU_WARN_NOT_WORKING)
             fg = entry->selected ? COLOR_ORANGE : COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
@@ -2918,7 +2922,7 @@ skip_name:
     int arrow_color = COLOR_WHITE;
     if (draw_tri_arrows && entry->selected)
         arrow_color = COLOR_ORANGE;
-    if (draw_tri_arrows && (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0) && !entry->selected)
+    if (draw_tri_arrows && info->warning_level == MENU_WARN_NOT_WORKING && !entry->selected)
         arrow_color = COLOR_GRAY(50);
     int fonth = fontspec_font(fnt)->height;
     int tri_h = MAX(fonth - 4, 18); /* match value glyph height */

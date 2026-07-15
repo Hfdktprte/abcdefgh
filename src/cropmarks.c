@@ -169,6 +169,16 @@ static MENU_UPDATE_FUNC(crop_display_submenu)
 }
 
 static struct menu_entry cropmarks_menu[] = {
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Cropmarks",
+        .priv = &crop_enabled,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Cropmarks or custom grids for framing.",
+        .depends_on = DEP_GLOBAL_DRAW,
+    },
+#else
     {
         .name = "Cropmarks",
         .priv = &crop_enabled,
@@ -203,6 +213,7 @@ static struct menu_entry cropmarks_menu[] = {
             MENU_EOL
         },
     },
+#endif
 };
 
 static void cropmark_draw_from_cache()

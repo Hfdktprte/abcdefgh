@@ -241,7 +241,7 @@ static void grid_icon_custom(int cx, int cy, int size)
 static const grid_tile_t grid_tiles[GRID_COUNT] =
 {
     { "Exposure",  "Expo",    grid_icon_exposure },
-    { "Overlays",  "Overlay", grid_icon_overlays },
+    { "Monitoring",  "Overlay", grid_icon_overlays },
     { "Movie",     "Movie",   grid_icon_movie },
     { "Custom",    "Prefs",   grid_icon_custom },
 };

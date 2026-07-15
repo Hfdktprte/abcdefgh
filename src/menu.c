@@ -158,7 +158,7 @@ static const char * slim_menu_display_name(const char * name)
 {
     if (!name) return "";
     if (streq(name, "Expo")) return "Exposure";
-    if (streq(name, "Overlay")) return "Overlays";
+    if (streq(name, "Overlay")) return "Monitoring";
     if (streq(name, "Prefs")) return "Custom";
     return name;
 }

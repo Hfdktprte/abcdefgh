@@ -82,17 +82,16 @@ static void card_benchmark_run(int full_test)
 {
     msleep(1000);
 
-    if (!lv)
-    {
-        /* run the benchmark in either LV on PLAY mode */
-        /* (photo mode is not very interesting) */
-        enter_play_mode();
-    }
+    /* Always leave LiveView → PLAY on LCD (PLAY-UNK) for minimal overhead. */
+    if (lv)
+        close_liveview();
+    enter_play_mode();
 
     NotifyBox(2000, "%s Card benchmark (1 GB)...", get_shooting_card()->type);
-    msleep(3000);
+    msleep(2000);
     canon_gui_disable_front_buffer();
     clrscr();
+    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
     print_benchmark_header();
 

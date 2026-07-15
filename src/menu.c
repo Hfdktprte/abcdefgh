@@ -149,6 +149,20 @@ extern void CancelDateTimer();
 #define IS_ACTION(entry) ((entry)->icon_type == IT_ACTION || (entry)->icon_type == IT_SUBMENU)
 #define SHOULD_USE_EDIT_MODE(entry) (!IS_BOOL(entry) && !IS_ACTION(entry))
 
+#ifdef CONFIG_SLIM_MENUS
+/* Dial L/R adjusts value on the selected row; SET opens submenu when present. */
+static int entry_is_inline_adjustable(struct menu_entry * entry)
+{
+    if (!entry || !(entry->edit_mode & EM_INLINE_ADJUST))
+        return 0;
+    if (entry->select)
+        return 1;
+    if (IS_ML_PTR(entry->priv) && entry->max > entry->min)
+        return 1;
+    return 0;
+}
+#endif
+
 #define HAS_SINGLE_ITEM_SUBMENU(entry) ((entry)->children && !(entry)->children[0].next && !(entry)->children[0].prev && !MENU_IS_EOL(entry->children))
 #define IS_SINGLE_ITEM_SUBMENU_ENTRY(entry) (!(entry)->next && !(entry)->prev)
 
@@ -2770,6 +2784,12 @@ entry_print(
                 new_name[max_len] = 0;
             }
 
+#ifdef CONFIG_SLIM_MENUS
+            if (entry->selected && !customize_mode && !junkie_mode &&
+                info->warning_level != MENU_WARN_NOT_WORKING)
+                fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
+#endif
+
             bmp_printf(
                 fnt,
                 x, y + y_font_offset,
@@ -2783,6 +2803,13 @@ entry_print(
             goto skip_name;
         }
     }
+
+#ifdef CONFIG_SLIM_MENUS
+    if (entry->selected && !customize_mode && !junkie_mode &&
+        info->warning_level != MENU_WARN_NOT_WORKING &&
+        !(submenu_level && !in_submenu))
+        fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
+#endif
 
     bmp_printf(
         fnt,
@@ -2801,6 +2828,29 @@ skip_name:
     
     if (use_small_font)
         fnt = (fnt & ~FONT_MASK) | FONT_MED_LARGE;
+
+#ifdef CONFIG_SLIM_MENUS
+    /* Selected row: orange text highlight (background stays black). */
+    if (entry->selected && !customize_mode && !junkie_mode &&
+        info->warning_level != MENU_WARN_NOT_WORKING &&
+        info->enabled != 0 &&
+        !(submenu_level && !in_submenu))
+    {
+        fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
+    }
+
+    int draw_inline_arrows =
+        entry->selected &&
+        entry_is_inline_adjustable(entry) &&
+        info->value[0] &&
+        !menu_lv_transparent_mode;
+    int arrow_w = draw_inline_arrows ? bfnt_char_get_width(ICON_ML_FORWARD) : 0;
+    int arrow_pad = draw_inline_arrows ? 2 : 0;
+#else
+    int draw_inline_arrows = 0;
+    int arrow_w = 0;
+    int arrow_pad = 0;
+#endif
     
     // far right end
     int x_end = in_submenu ? x + g_submenu_width - SUBMENU_OFFSET : 717;
@@ -2814,7 +2864,7 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    int end = w + val_width;
+    int end = w + val_width + (draw_inline_arrows ? 2 * (arrow_w + arrow_pad) : 0);
     int wmax = x_end - x;
 
     // right-justified info field?
@@ -2847,13 +2897,34 @@ skip_name:
         xval += char_width * (caret_position - strlen(info->value) + 1);
     }
 
+    int x_value = xval;
+#ifdef CONFIG_SLIM_MENUS
+    if (draw_inline_arrows)
+    {
+        /* < value > with ICON_ML_FORWARD (same arrow as Q>). */
+        bfnt_draw_char_hflip(
+            ICON_ML_FORWARD, xval, y + y_font_offset - 5,
+            COLOR_ORANGE, NO_BG_ERASE);
+        x_value = xval + arrow_w + arrow_pad;
+    }
+#endif
+
     // print value field
     bmp_printf(
         fnt,
-        xval, y + y_font_offset,
+        x_value, y + y_font_offset,
         "%s",
         info->value
     );
+
+#ifdef CONFIG_SLIM_MENUS
+    if (draw_inline_arrows)
+    {
+        bfnt_draw_char(
+            ICON_ML_FORWARD, x_value + val_width + arrow_pad, y + y_font_offset - 5,
+            COLOR_ORANGE, NO_BG_ERASE);
+    }
+#endif
     
     if(entry->selected &&
        editing_with_caret(entry) &&
@@ -2862,7 +2933,7 @@ skip_name:
     {
         int w1 = bmp_string_width(fnt, (info->value + strlen(info->value) - caret_position));
         int w2 = bmp_string_width(fnt, (info->value + strlen(info->value) - caret_position - 1));
-        bmp_fill(COLOR_WHITE, xval + val_width - w2, y + fontspec_font(fnt)->height - 4, w2 - w1, 2);
+        bmp_fill(COLOR_WHITE, x_value + val_width - w2, y + fontspec_font(fnt)->height - 4, w2 - w1, 2);
     }
 
     // print right-justified info, if any
@@ -2882,7 +2953,7 @@ skip_name:
     {
         // Forward sign for submenus that open with SET
         submenu_key_hint(
-            xval-18 - (info->value[0] ? font_large.width*2 : 0), y + y_icon_offset, 
+            x_value-18 - (info->value[0] ? font_large.width*2 : 0), y + y_icon_offset, 
             info->warning_level == MENU_WARN_NOT_WORKING ? MENU_FONT_GRAY : 60, 
             COLOR_BLACK, 
             ICON_ML_FORWARD
@@ -2919,13 +2990,27 @@ skip_name:
     // selection bar
     if (entry->selected)
     {
-        int color_left = 45;
-        int color_right = MENU_BAR_COLOR;
-        if (junkie_mode && !in_submenu) color_left = color_right = COLOR_BLACK;
-        if (customize_mode) { color_left = color_right = get_customize_color(); }
+#ifdef CONFIG_SLIM_MENUS
+        if (!customize_mode && !junkie_mode)
+        {
+            /* Orange outline around name + value only; no blue left bar / row fill. */
+            int outline_right = x_value + val_width;
+            if (draw_inline_arrows)
+                outline_right += arrow_pad + arrow_w;
+            int outline_w = MAX(outline_right - xl + 6, bmp_string_width(fnt, info->name) + 8);
+            bmp_draw_rect(COLOR_ORANGE, xl, y + 2, outline_w, h - 5);
+        }
+        else
+#endif
+        {
+            int color_left = 45;
+            int color_right = MENU_BAR_COLOR;
+            if (junkie_mode && !in_submenu) color_left = color_right = COLOR_BLACK;
+            if (customize_mode) { color_left = color_right = get_customize_color(); }
 
-        selection_bar_backend(color_left, COLOR_BLACK, xl, y, xc-xl, h-1);
-        selection_bar_backend(color_right, COLOR_BLACK, xc, y, x_end-xc, h-1);
+            selection_bar_backend(color_left, COLOR_BLACK, xl, y, xc-xl, h-1);
+            selection_bar_backend(color_right, COLOR_BLACK, xc, y, x_end-xc, h-1);
+        }
         
         // use a pickbox if possible
         if (edit_mode && CAN_HAVE_PICKBOX(entry))
@@ -4268,6 +4353,7 @@ submenu_display(struct menu * submenu)
 */            
 
         submenu_key_hint(720-bx-45, by+5, COLOR_WHITE, MENU_BG_COLOR_HEADER_FOOTER, ICON_ML_Q_BACK);
+
     }
                                                    /* titlebar + padding difference for large submenus */
     menu_display(submenu,  bx + SUBMENU_OFFSET,  by + 40 + (count > 7 ? 10 : 25), edit_mode ? 1 : 0);
@@ -4476,6 +4562,19 @@ void menu_entry_select(
             if IS_ML_PTR(entry->priv)
                 menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
             entry_used = 1;
+        }
+        else if (entry->edit_mode & EM_INLINE_ADJUST)
+        {
+            /* Dial adjusts value on this row; SET opens advanced submenu when present. */
+            edit_mode = 0;
+            menu_lv_transparent_mode = 0;
+            if (entry->children)
+            {
+                if (!submenu_level)
+                    menu_toggle_submenu();
+                entry_used = 1;
+            }
+            /* else: value-only row — SET does nothing (use dial) */
         }
         else
 #endif
@@ -5279,8 +5378,17 @@ handle_ml_menu_keys(struct event * event)
     case BGMT_WHEEL_RIGHT:
         menu_damage = 1;
         if (menu_help_active) { menu_help_next_page(); break; }
+#ifdef CONFIG_SLIM_MENUS
+        {
+            struct menu_entry * e = get_selected_menu_entry(menu);
+            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+                menu_entry_select( menu, 0 );
+            else { menu_move( menu, 1 ); menu_lv_transparent_mode = 0; menu_needs_full_redraw = 1; }
+        }
+#else
         if (SUBMENU_OR_EDIT || menu_lv_transparent_mode) menu_entry_select( menu, 0 );
         else { menu_move( menu, 1 ); menu_lv_transparent_mode = 0; menu_needs_full_redraw = 1; }
+#endif
         //~ menu_hidden_should_display_help = 0;
         break;
 
@@ -5298,8 +5406,17 @@ handle_ml_menu_keys(struct event * event)
     case BGMT_WHEEL_LEFT:
         menu_damage = 1;
         if (menu_help_active) { menu_help_prev_page(); break; }
+#ifdef CONFIG_SLIM_MENUS
+        {
+            struct menu_entry * e = get_selected_menu_entry(menu);
+            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+                menu_entry_select( menu, 1 );
+            else { menu_move( menu, -1 ); menu_lv_transparent_mode = 0;  menu_needs_full_redraw = 1; }
+        }
+#else
         if (SUBMENU_OR_EDIT || menu_lv_transparent_mode) menu_entry_select( menu, 1 );
         else { menu_move( menu, -1 ); menu_lv_transparent_mode = 0;  menu_needs_full_redraw = 1; }
+#endif
         //~ menu_hidden_should_display_help = 0;
         break;
 
@@ -5364,13 +5481,38 @@ handle_ml_menu_keys(struct event * event)
     /* Q is always defined */
     case BGMT_Q:
     case MLEV_JOYSTICK_LONG:
+#ifndef CONFIG_SLIM_MENUS
     case BGMT_PLAY:
+#endif
         if (menu_help_active) { menu_help_active = 0; /* menu_damage = 1; */ break; }
         menu_entry_select( menu, 2 ); // Q action select
         menu_needs_full_redraw = 1;
         //~ menu_damage = 1;
         //~ menu_hidden_should_display_help = 0;
         break;
+
+#ifdef CONFIG_SLIM_MENUS
+    case BGMT_PLAY:
+        /* PLAY always backs out of advanced submenus (e.g. White Balance). */
+        if (menu_help_active) { menu_help_active = 0; break; }
+        if (submenu_level)
+        {
+            menu_close_submenu();
+            menu_needs_full_redraw = 1;
+        }
+        else
+        {
+            /* Top level: same as Q (open submenu / secondary action) for non-inline rows;
+             * for inline rows with children, PLAY is reserved as Back and does nothing here. */
+            struct menu_entry * e = get_selected_menu_entry(menu);
+            if (!(e && (e->edit_mode & EM_INLINE_ADJUST) && e->children))
+            {
+                menu_entry_select( menu, 2 );
+                menu_needs_full_redraw = 1;
+            }
+        }
+        break;
+#endif
 
     default:
         /*DebugMsg( DM_MAGIC, 3, "%s: unknown event %08x? %08x %08x %x08",

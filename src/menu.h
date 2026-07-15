@@ -207,6 +207,8 @@ struct menu_entry
 
 #define EM_AUTO 0
 #define EM_SHOW_LIVEVIEW 1
+/* Slim: dial L/R adjusts value while row is selected; SET opens submenu if any */
+#define EM_INLINE_ADJUST 2
 
 /* rounding modes */
 #define EM_ROUND_ISO_R10    0x10      /* ISO 3 R"10: 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100 ... */

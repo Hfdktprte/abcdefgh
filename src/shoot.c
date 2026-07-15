@@ -4214,17 +4214,25 @@ static struct menu_entry expo_menus[] = {
         .name = "White Balance",
         .update    = kelvin_wbs_display,
         .select     = kelvin_toggle,
-        .help  = "Adjust Kelvin white balance and GM/BA WBShift.",
+        .help  = "Dial L/R adjusts Kelvin. SET opens advanced White Balance options.",
         .help2 = "Advanced: WBShift, RGB multipliers, Push-button WB...",
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#else
         .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
         .submenu_width = 700,
         .children =  (struct menu_entry[]) {
             {
                 .name = "White Balance",
                 .update    = kelvin_display,
                 .select     = kelvin_toggle,
-                .help = "Adjust Kelvin white balance.",
+                .help = "Dial L/R adjusts Kelvin white balance.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             {
                 .name = "WBShift G/M",
@@ -4234,7 +4242,11 @@ static struct menu_entry expo_menus[] = {
                 .max = 9,
                 .icon_type = IT_PERCENT_OFF,
                 .help = "Green-Magenta white balance shift, for fluorescent lights.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             {
                 .name = "WBShift B/A",
@@ -4244,7 +4256,11 @@ static struct menu_entry expo_menus[] = {
                 .max = 9,
                 .icon_type = IT_PERCENT_OFF,
                 .help = "Blue-Amber WBShift; 1 unit = 5 mireks on Kelvin axis.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             {
                 .name = "R multiplier",
@@ -4253,7 +4269,11 @@ static struct menu_entry expo_menus[] = {
                 .select = wb_custom_gain_toggle,
                 .icon_type = IT_PERCENT,
                 .help = "RED channel multiplier, for custom white balance.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             {
                 .name = "G multiplier",
@@ -4262,7 +4282,11 @@ static struct menu_entry expo_menus[] = {
                 .select = wb_custom_gain_toggle,
                 .icon_type = IT_PERCENT,
                 .help = "GREEN channel multiplier, for custom white balance.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             {
                 .name = "B multiplier",
@@ -4271,7 +4295,11 @@ static struct menu_entry expo_menus[] = {
                 .select = wb_custom_gain_toggle,
                 .icon_type = IT_PERCENT,
                 .help = "BLUE channel multiplier, for custom white balance.",
+#ifdef CONFIG_SLIM_MENUS
+                .edit_mode = EM_INLINE_ADJUST,
+#else
                 .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
             },
             /*{
                 .name = "Auto adjust Kelvin",

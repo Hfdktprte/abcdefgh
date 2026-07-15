@@ -429,6 +429,9 @@ void bmp_flip_ex(uint8_t* dst, uint8_t* src, uint8_t* mirror, int voffset);
 /* print a character with Canon's built-in font (useful for non-ASCII characters) */
 int bfnt_draw_char(int c, int px, int py, int fg, int bg);
 
+/* same as bfnt_draw_char, horizontally flipped (left-pointing ML_FORWARD, etc.) */
+int bfnt_draw_char_hflip(int c, int px, int py, int fg, int bg);
+
 /* return the width of a Canon built-in character */
 int bfnt_char_get_width(int c);
 

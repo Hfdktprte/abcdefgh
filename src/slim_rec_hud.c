@@ -149,7 +149,11 @@ static void hud_draw_top(void)
     }
 
     {
+#ifdef CONFIG_BATTERY_INFO
         int bat = GetBatteryLevel();
+#else
+        int bat = battery_level_bars == 0 ? 5 : battery_level_bars == 1 ? 30 : 100;
+#endif
         if (bat >= 0 && bat <= 100)
         {
             snprintf(buf, sizeof(buf), "%d%%", bat);

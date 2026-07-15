@@ -108,8 +108,36 @@ void unpatch_HDMI_output()
     }
 }
 
+static int hdmi_is_connected(void)
+{
+    return EDID_HDMI_INFO && EDID_HDMI_INFO->dwVideoCode != 0;
+}
+
+/* EOS M Settings: HDMI Output tracks the cable — ON when plugged, OFF when not.
+ * Keep the ROM hook armed whenever possible so the next plug inherits Resolution. */
+static void hdmi_slim_sync_connection(void)
+{
+    if (!is_camera("EOSM", "2.0.2") || !EDID_HDMI_INFO)
+        return;
+
+    if (hdmi_output_patch_status == HDMI_NOT_PATCHED)
+        patch_HDMI_output();
+
+    hdmi_patch_enabled = hdmi_is_connected() ? 1 : 0;
+}
+
+static unsigned int hdmi_out_shoot_cbr(unsigned int unused)
+{
+    hdmi_slim_sync_connection();
+    return CBR_RET_CONTINUE;
+}
+
 static void hdmi_output_toggle(void* priv, int sign)
 {
+    /* EOS M: connection state owns ON/OFF — user cannot force it. */
+    if (is_camera("EOSM", "2.0.2"))
+        return;
+
     if (hdmi_patch_enabled) 
     {
         hdmi_patch_enabled = 0;
@@ -124,47 +152,59 @@ static void hdmi_output_toggle(void* priv, int sign)
 
 static MENU_UPDATE_FUNC(hdmi_update)
 {
-    if (EDID_HDMI_INFO->dwVideoCode == 0) // LCD, HDMI isn't connected
+    if (is_camera("EOSM", "2.0.2"))
+    {
+        hdmi_slim_sync_connection();
+        if (!hdmi_is_connected())
+        {
+            /* OFF + greyed / not navigable while LCD only. */
+            MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI isn't connected.");
+            return;
+        }
+        /* ON + greyed while cable present — Resolution is still adjustable. */
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI connected — output stays ON.");
+        return;
+    }
+    else if (!hdmi_is_connected())
     {
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI isn't connected.");
     }
 
-    if (hdmi_output_patch_status != HDMI_NOT_PATCHED)
+    if (hdmi_output_patch_status != HDMI_NOT_PATCHED && hdmi_is_connected())
     {
-        if (EDID_HDMI_INFO->dwVideoCode != 0) // Not LCD, HDMI is connected
+        if ((output_resolution == OUTPUT_480p       && EDID_HDMI_INFO->dwVideoCode != 2)  ||
+            (output_resolution == OUTPUT_1080i_50Hz && EDID_HDMI_INFO->dwVideoCode != 20) ||
+            (output_resolution == OUTPUT_1080i_60Hz && EDID_HDMI_INFO->dwVideoCode != 5)  || 
+            (output_resolution == OUTPUT_1080p_24Hz && EDID_HDMI_INFO->dwVideoCode != 32)  )
         {
-            if ((output_resolution == OUTPUT_480p       && EDID_HDMI_INFO->dwVideoCode != 2)  ||
-                (output_resolution == OUTPUT_1080i_50Hz && EDID_HDMI_INFO->dwVideoCode != 20) ||
-                (output_resolution == OUTPUT_1080i_60Hz && EDID_HDMI_INFO->dwVideoCode != 5)  || 
-                (output_resolution == OUTPUT_1080p_24Hz && EDID_HDMI_INFO->dwVideoCode != 32)  )
-            {
-                MENU_SET_WARNING(MENU_WARN_ADVICE, "Reconnect HDMI cable or restart camera to apply output setting.");
-            }
+            MENU_SET_WARNING(MENU_WARN_ADVICE, "Reconnect HDMI cable or restart camera to apply output setting.");
         }
     }
 }
 
 static MENU_UPDATE_FUNC(output_resolution_update)
 {
-    /* Slim Settings panel: lock when HDMI Output is OFF. */
-    if (is_camera("EOSM", "2.0.2") && !hdmi_patch_enabled)
+    if (is_camera("EOSM", "2.0.2"))
     {
-        MENU_SET_ENABLED(0);
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI Output is disabled.");
-        return;
+        hdmi_slim_sync_connection();
+        if (!hdmi_is_connected())
+        {
+            MENU_SET_ENABLED(0);
+            MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI isn't connected.");
+            return;
+        }
+        /* Connected: Resolution is editable; Output stays locked ON. */
+        MENU_SET_ENABLED(1);
     }
 
-    if (hdmi_output_patch_status != HDMI_NOT_PATCHED)
+    if (hdmi_output_patch_status != HDMI_NOT_PATCHED && hdmi_is_connected())
     {
-        if (EDID_HDMI_INFO->dwVideoCode != 0) // Not LCD, HDMI is connected
+        if ((output_resolution == OUTPUT_480p       && EDID_HDMI_INFO->dwVideoCode != 2)  ||
+            (output_resolution == OUTPUT_1080i_50Hz && EDID_HDMI_INFO->dwVideoCode != 20) ||
+            (output_resolution == OUTPUT_1080i_60Hz && EDID_HDMI_INFO->dwVideoCode != 5)  || 
+            (output_resolution == OUTPUT_1080p_24Hz && EDID_HDMI_INFO->dwVideoCode != 32)  )
         {
-            if ((output_resolution == OUTPUT_480p       && EDID_HDMI_INFO->dwVideoCode != 2)  ||
-                (output_resolution == OUTPUT_1080i_50Hz && EDID_HDMI_INFO->dwVideoCode != 20) ||
-                (output_resolution == OUTPUT_1080i_60Hz && EDID_HDMI_INFO->dwVideoCode != 5)  || 
-                (output_resolution == OUTPUT_1080p_24Hz && EDID_HDMI_INFO->dwVideoCode != 32)  )
-            {
-                MENU_SET_WARNING(MENU_WARN_ADVICE, "Reconnect HDMI cable or restart camera to apply output setting.");
-            }
+            MENU_SET_WARNING(MENU_WARN_ADVICE, "Reconnect HDMI cable or restart camera to apply output setting.");
         }
     }
 }
@@ -341,13 +381,14 @@ static unsigned int hdmi_out_init()
         return 1;
     }
 
-    /* patch on startup if "HDMI output" was enabled */
-    if (hdmi_patch_enabled)
+    if (is_camera("EOSM", "2.0.2"))
     {
-        if (hdmi_output_patch_status == HDMI_NOT_PATCHED)
-        {
-            patch_HDMI_output();
-        }
+        /* Cable owns ON/OFF; keep hook armed for the next plug. */
+        hdmi_slim_sync_connection();
+    }
+    else if (hdmi_patch_enabled && hdmi_output_patch_status == HDMI_NOT_PATCHED)
+    {
+        patch_HDMI_output();
     }
 
     return 0;
@@ -360,8 +401,12 @@ static unsigned int hdmi_out_deinit()
 
 MODULE_INFO_START()
     MODULE_INIT(hdmi_out_init)
-    MODULE_DEINIT(hdmi_out_init)
+    MODULE_DEINIT(hdmi_out_deinit)
 MODULE_INFO_END()
+
+MODULE_CBRS_START()
+    MODULE_CBR(CBR_SHOOT_TASK, hdmi_out_shoot_cbr, 0)
+MODULE_CBRS_END()
 
 MODULE_CONFIGS_START()
     MODULE_CONFIG(hdmi_patch_enabled)

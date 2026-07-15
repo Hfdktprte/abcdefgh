@@ -4196,8 +4196,13 @@ show_vscroll(struct menu * parent){
     int menu_len = MENU_LEN;
     
     if(max > menu_len + 1){
+#ifdef CONFIG_SLIM_MENUS
+        int y_lo = (menu_grid_is_launched() && !submenu_level) ? 4 : 44;
+        int h = submenu_level ? 378 : (menu_grid_is_launched() ? 450 : 385);
+#else
         int y_lo = 44;
         int h = submenu_level ? 378 : 385;
+#endif
         int size = (h - y_lo) * menu_len / max;
         int y = y_lo + ((h - size) * (pos-1) / (max-1));
         int x = MIN(360 + g_submenu_width/2, 720-3);
@@ -4291,15 +4296,15 @@ void menus_display(
     if (customize_mode) fgs = get_customize_color();
 
 #ifdef CONFIG_SLIM_MENUS
+    /* Grid-launched categories: no grey title bar — list starts at top. */
     int slim_grid_launcher = menu_grid_is_launched();
-    if (slim_grid_launcher)
-    {
-        bmp_fill(bgu, orig_x, y, 720, 42);
-        struct menu * sel = get_selected_toplevel_menu();
-        if (sel)
-            bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 12, y + 4, "%s", sel->name);
-    }
-    else
+    int content_y = slim_grid_launcher ? 4 : 55;
+#else
+    int content_y = 55;
+#endif
+
+#ifdef CONFIG_SLIM_MENUS
+    if (!slim_grid_launcher)
 #endif
     {
     bmp_fill(bgu, orig_x, y, 720, 42);
@@ -4371,7 +4376,7 @@ void menus_display(
             menu_display_junkie(
                 mn,
                 x - icon_spacing,
-                y + 55,
+                y + content_y,
                 icon_spacing
             );
         }
@@ -4380,7 +4385,7 @@ void menus_display(
             menu_display(
                 menu,
                 orig_x + MENU_OFFSET,
-                y + 55, 
+                y + content_y,
                 edit_mode ? 1 : 0
             );
             
@@ -5020,8 +5025,8 @@ menu_redraw_do()
             else
             {
 #ifdef CONFIG_SLIM_MENUS
-                /* Full height to bottom — old path left 400px of body + grey footer (glitch when footer removed). */
-                bmp_fill(COLOR_BLACK, 0, 40, 720, 440);
+                /* Full screen — no grey header/footer reclaim strip. */
+                bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 #else
                 bmp_fill(COLOR_BLACK, 0, 40, 720, 400 );
 #endif

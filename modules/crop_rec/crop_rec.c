@@ -5307,6 +5307,7 @@ static struct menu_entry slim_more_hacks_menu[] = {
         .choices  = CHOICES("OFF", "Allow"),
         .priv     = &more_hacks,
         .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
         .help     = "Allow More hacks even when other settings would block them.",
     },
 };

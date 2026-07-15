@@ -4280,15 +4280,18 @@ static MENU_UPDATE_FUNC(raw_playback_update)
 
 static MENU_UPDATE_FUNC(small_hacks_update)
 {
+    MENU_SET_ENABLED(1);
+
     if (video_mode_crop && small_hacks >= 2)
     {
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "More and All options don't work with Movie crop mode.");
+        /* Advice only — keep Small Hacks adjustable with L/R arrows. */
+        MENU_SET_WARNING(MENU_WARN_ADVICE, "More and All options don't work with Movie crop mode.");
         MENU_SET_VALUE("ON");
     }
     
     if (use_h264_proxy() && small_hacks >= 2)
     {
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "More and All options don't work with H.264 proxy.");
+        MENU_SET_WARNING(MENU_WARN_ADVICE, "More and All options don't work with H.264 proxy.");
         MENU_SET_VALUE("ON");
     }
 }
@@ -4303,6 +4306,7 @@ static struct menu_entry slim_small_hacks_menu[] =
         .update   = small_hacks_update,
         .choices  = CHOICES("OFF", "ON", "More"),
         .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
         .help     = "Disable some tasks to increase write speed.",
         .help2    = "\n"
                     "Slow down Canon GUI, disable auto exposure, white balance...\n"

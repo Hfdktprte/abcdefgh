@@ -414,6 +414,8 @@ static void sd_overclock_task()
 
 static MENU_UPDATE_FUNC(sd_uhs_update)
 {
+    MENU_SET_ENABLED(1);
+
     /* Simple method to check if Canon safe mode get triggered (switched to 48 MHz / 21 MB/s) */
     /* Safe mode get triggered when a SD card doesn't accpet our overclocking configuration or 
      * if there is an instabilty with the overclocking setting.                               */
@@ -427,7 +429,8 @@ static MENU_UPDATE_FUNC(sd_uhs_update)
         {
             if (*(uint32_t*)0xC0400614 == 0x1d000601)
             {
-                MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Safe mode was triggered, try lower frequency or different access mode.");
+                /* Advice only — keep row adjustable with L/R arrows. */
+                MENU_SET_WARNING(MENU_WARN_ADVICE, "Safe mode was triggered, try lower frequency or different access mode.");
             }
         }
     }
@@ -619,6 +622,7 @@ static struct menu_entry sd_uhs_menu_custom[] =
         .max    = 3,
         .choices = CHOICES("OFF", "160 MHz", "192 MHz", "240 MHz (H)"),
         .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
         .help   = "Choose a preset then restart the camera.",
         .help2  = "\n"
                   " \n"
@@ -631,6 +635,7 @@ static struct menu_entry sd_uhs_menu_custom[] =
         .max        = 1,
         .choices    = CHOICES("SDR50", "SDR104"),
         .edit_mode  = EM_INLINE_ADJUST,
+        .icon_type  = IT_DICE,
         .help       = "SDR104 is required above 100 MHz. Some cards prefer SDR50.",
     },
 };

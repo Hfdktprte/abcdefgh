@@ -2428,8 +2428,8 @@ static void submenu_key_hint(int x, int y, int fg, int bg, int chr)
 static void menu_clean_footer()
 {
 #ifdef CONFIG_SLIM_MENUS
-    /* Slim: no reserved help/description strip — menu uses full height. */
-    return;
+    /* No grey help strip — keep the reclaim area solid black with the menu body. */
+    bmp_fill(COLOR_BLACK, 0, 430, 720, 50);
 #else
     int h = 50;
     if (is_menu_active("Help")) h = font_med.height * 3 + 2;
@@ -2893,13 +2893,17 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows around the adjustable value; color follows selection. Order: ◄ value ► */
+    /* Dial arrows around the adjustable value; Dual ISO is right-arrow only (value► / OFF>). */
     int draw_tri_arrows =
         slim_style &&
         info->value[0] &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;
+    int dual_iso_right_only =
+        draw_tri_arrows && entry->name && streq(entry->name, "Dual ISO");
+    int draw_left_arrow = draw_tri_arrows && !dual_iso_right_only;
+    int draw_right_arrow = draw_tri_arrows;
     int arrow_color = COLOR_WHITE;
     if (draw_tri_arrows && entry->selected)
         arrow_color = COLOR_ORANGE;
@@ -2911,6 +2915,8 @@ skip_name:
     int arrow_pad = draw_tri_arrows ? 8 : 0;
 #else
     int draw_tri_arrows = 0;
+    int draw_left_arrow = 0;
+    int draw_right_arrow = 0;
     int arrow_w = 0;
     int arrow_pad = 0;
 #endif
@@ -2927,13 +2933,16 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    /* Secondary text painted immediately after arrows (e.g. shutter angle with °) */
+    /* Secondary text after arrows (shutter angle digits + drawn ° in Canon style) */
     int adj_rinfo_w = 0;
 #ifdef CONFIG_SLIM_MENUS
     if (draw_tri_arrows && info->rinfo[0])
-        adj_rinfo_w = bmp_string_width(FONT_LARGE, info->rinfo) + arrow_pad;
+        adj_rinfo_w = bmp_string_width(fnt, info->rinfo) + arrow_pad + 10; /* +° circle */
 #endif
-    int end = w + val_width + (draw_tri_arrows ? 2 * (arrow_w + arrow_pad) : 0) + adj_rinfo_w;
+    int end = w + val_width
+        + (draw_left_arrow ? (arrow_w + arrow_pad) : 0)
+        + (draw_right_arrow ? (arrow_w + arrow_pad) : 0)
+        + adj_rinfo_w;
     int wmax = x_end - x;
 
     // right-justified info field? (skipped when rinfo sits next to dial arrows)
@@ -2972,9 +2981,8 @@ skip_name:
 #ifdef CONFIG_SLIM_MENUS
     /* Optical center of FONT_CANON glyphs */
     int value_cy = y + y_font_offset + (fonth * 9) / 20;
-    if (draw_tri_arrows)
+    if (draw_left_arrow)
     {
-        /* ◄ value ► — tip of left arrow at outer left, tip of right at outer right */
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
         x_value = xval + arrow_w + arrow_pad;
     }
@@ -2989,25 +2997,25 @@ skip_name:
     );
 
 #ifdef CONFIG_SLIM_MENUS
-    if (draw_tri_arrows)
+    if (draw_right_arrow)
     {
         int x_after_value = x_value + val_width + arrow_pad + arrow_w;
         slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
-        /* e.g. shutter angle immediately after ► — use FONT_LARGE so SYM_DEGREE (°) renders
-         * (FONT_CANON/bfnt has no ML \x83 glyph, so ° vanished when painted in Canon font). */
+        /* Shutter angle after ► in same Canon font; ° drawn as a small ring (bfnt has no SYM_DEGREE). */
         if (info->rinfo[0])
         {
-            int rfg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
-            if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
-                rfg = entry->selected ? COLOR_ORANGE : COLOR_GRAY(50);
-            int rfont = FONT(FONT_LARGE, rfg, COLOR_BLACK);
-            int ry = y + (h - (int)font_large.height) / 2;
+            int rx = x_after_value + arrow_pad;
             bmp_printf(
-                rfont,
-                x_after_value + arrow_pad, ry,
+                fnt,
+                rx, y + y_font_offset,
                 "%s",
                 info->rinfo
             );
+            int deg_x = rx + bmp_string_width(fnt, info->rinfo) + 2;
+            int deg_y = y + y_font_offset + MAX(fonth / 5, 4);
+            int deg_r = MAX(fonth / 10, 3);
+            draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r, arrow_color);
+            draw_circle(deg_x + deg_r, deg_y + deg_r, deg_r - 1, arrow_color);
         }
     }
 #endif
@@ -4665,7 +4673,13 @@ void menu_entry_select(
     else if (mode == 3) // SET
     {
 #ifdef CONFIG_SLIM_MENUS
-        if (IS_BOOL(entry) && !entry->children)
+        /* Dual ISO / White Balance: SET is intentionally inert (dial only). */
+        if (entry->name && (streq(entry->name, "Dual ISO")
+            || streq(entry->name, "White Balance")))
+        {
+            entry_used = 1;
+        }
+        else if (IS_BOOL(entry) && !entry->children)
         {
             /* flat ON/OFF overlay toggles: SET only toggles, never opens submenu/edit */
             edit_mode = 0;
@@ -4679,13 +4693,7 @@ void menu_entry_select(
             /* Dial adjusts value on this row. */
             edit_mode = 0;
             menu_lv_transparent_mode = 0;
-            /* White Balance / Dual ISO: SET does nothing — dial only. */
-            if (entry->name && (streq(entry->name, "White Balance")
-                || streq(entry->name, "Dual ISO")))
-            {
-                /* SET does nothing — use dial */
-            }
-            else if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
+            if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
             {
                 /* Bool with children: SET toggles ON/OFF */
                 menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
@@ -4998,7 +5006,12 @@ menu_redraw_do()
             }
             else
             {
+#ifdef CONFIG_SLIM_MENUS
+                /* Full height to bottom — old path left 400px of body + grey footer (glitch when footer removed). */
+                bmp_fill(COLOR_BLACK, 0, 40, 720, 440);
+#else
                 bmp_fill(COLOR_BLACK, 0, 40, 720, 400 );
+#endif
             }
             //~ prev_z = z;
             
@@ -5535,7 +5548,14 @@ handle_ml_menu_keys(struct event * event)
 #ifdef CONFIG_SLIM_MENUS
         {
             struct menu_entry * e = get_selected_menu_entry(menu);
-            if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
+            /* Dual ISO: left does not cycle — move selection to previous row. */
+            if (e && e->name && streq(e->name, "Dual ISO") && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
+            {
+                menu_move( menu, -1 );
+                menu_lv_transparent_mode = 0;
+                menu_needs_full_redraw = 1;
+            }
+            else if (entry_is_inline_adjustable(e) || SUBMENU_OR_EDIT || menu_lv_transparent_mode)
                 menu_entry_select( menu, 1 );
             else { menu_move( menu, -1 ); menu_lv_transparent_mode = 0;  menu_needs_full_redraw = 1; }
         }

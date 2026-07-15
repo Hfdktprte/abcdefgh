@@ -5353,13 +5353,33 @@ static int slim_preset_choice_count(void)
 {
     if (slim_mode_ui == 3)
         return 1; /* LV: Highest only */
+    if (slim_mode_ui == 2)
+        return 1; /* 3x3: Highest only — one res per Aspect Ratio */
     if (slim_mode_ui == 0)
     {
         /* 1x1: only 2.35:1 has Higher + Highest */
         return (slim_1x1_ar == 1) ? 2 : 1;
     }
-    /* 1x3 / 3x3: Highest / Higher / Medium */
+    /* 1x3: Highest / Higher / Medium */
     return 3;
+}
+
+/* Map 3x3 Aspect Ratio → backend High FPS (0) or mv1080 3:2 (2). */
+static void slim_crop_apply_3x3_from_ar(void)
+{
+    int ar = COERCE(crop_preset_ar_menu, 0, 4);
+    slim_unified_preset = 0;
+    if (ar == 4)
+    {
+        /* 3:2 → mv1080_3_2 @ 23.976/25/30 */
+        crop_preset_3x3_res_menu = 2;
+    }
+    else
+    {
+        /* 16:9 / 2:1 / 2.20 / 2.35 → High FPS presets */
+        crop_preset_3x3_res_menu = 0;
+        crop_preset_fps_reduce = 0; /* full High FPS timers */
+    }
 }
 
 /* Map 1x1 AR (+ Preset for 2.35:1) → res index, WxH, FPS mask. */
@@ -5458,7 +5478,8 @@ static void slim_crop_sync_from_backend(void)
     else if (CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
         slim_mode_ui = 2;
-        slim_unified_preset = COERCE(crop_preset_3x3_res_menu, 0, 2);
+        slim_unified_preset = 0;
+        /* Keep AR; backend res comes from slim_crop_apply_3x3_from_ar. */
     }
 
     if (OUTPUT_10BIT || OUTPUT_11BIT) slim_bit_depth_ui = 0;
@@ -5473,11 +5494,14 @@ static void slim_crop_apply_unified_preset(void)
         /* Apply via slim_1x1_resolve in slim_crop_apply_mode. */
         return;
     }
+    if (slim_mode_ui == 2)
+    {
+        slim_crop_apply_3x3_from_ar();
+        return;
+    }
     slim_unified_preset = COERCE(slim_unified_preset, 0, 2);
     if (slim_mode_ui == 1 || CROP_PRESET_MENU == CROP_PRESET_1X3)
         crop_preset_1x3_res_menu = slim_unified_preset;
-    else if (slim_mode_ui == 2 || CROP_PRESET_MENU == CROP_PRESET_3X3)
-        crop_preset_3x3_res_menu = slim_unified_preset;
 }
 
 static void slim_crop_apply_mode(void)
@@ -5568,16 +5592,14 @@ static void slim_crop_expected_res(int *w, int *h)
 
     if (CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
-        int p = COERCE(crop_preset_3x3_res_menu, 0, 2);
-        int ar = crop_preset_ar_menu;
-        if (p == 1) { *w = 1920; *h = 1080; return; }
-        if (p == 2) { *w = 1920; *h = 1280; return; } /* 1080p 3:2-ish */
-        /* High FPS ≈ height label */
+        /* One resolution per Aspect Ratio (Preset always Highest / High FPS or 3:2). */
+        int ar = COERCE(crop_preset_ar_menu, 0, 4);
         if (ar == 0) { *w = 1736; *h = 976; }
         else if (ar == 1) { *w = 1736; *h = 868; }
         else if (ar == 2) { *w = 1736; *h = 790; }
         else if (ar == 3) { *w = 1736; *h = 738; }
-        else { *w = 1736; *h = 726; }
+        else { *w = 1736; *h = 1160; } /* 3:2 */
+        return;
     }
 }
 
@@ -5609,7 +5631,12 @@ static int slim_crop_fps_mask(void)
     }
 
     if (CROP_PRESET_MENU == CROP_PRESET_3X3)
-        return 0x1 | 0x2 | 0x4;
+    {
+        int ar = COERCE(crop_preset_ar_menu, 0, 4);
+        if (ar == 4)
+            return 0x1 | 0x2 | 0x4; /* 3:2 → 23.976 / 25 / 30 */
+        return 0; /* High FPS AR: single fixed rate (shown specially) */
+    }
 
     return 0x1;
 }
@@ -5713,6 +5740,16 @@ static MENU_UPDATE_FUNC(slim_crop_ar_update)
         MENU_SET_ENABLED(1);
         return;
     }
+    if (slim_mode_ui == 2)
+    {
+        /* 3x3: last option is 3:2 (not 2.39:1). */
+        static const char * labels_3x3[] = {
+            "16:9", "2:1", "2.20:1", "2.35:1", "3:2"
+        };
+        MENU_SET_VALUE("%s", labels_3x3[COERCE(crop_preset_ar_menu, 0, 4)]);
+        MENU_SET_ENABLED(1);
+        return;
+    }
     MENU_SET_ENABLED(1);
 }
 
@@ -5734,6 +5771,8 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
     }
 
     menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
+    if (slim_mode_ui == 2)
+        slim_crop_apply_3x3_from_ar();
     slim_crop_clamp_fps();
 }
 
@@ -5778,6 +5817,20 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         MENU_SET_VALUE("3");
         MENU_SET_ENABLED(0);
         return;
+    }
+
+    /* 3x3 High FPS: one fixed rate per Aspect Ratio. */
+    if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+    {
+        int ar = COERCE(crop_preset_ar_menu, 0, 4);
+        if (ar < 4)
+        {
+            static const char * hfr[] = { "46.800", "50", "54", "55.6" };
+            MENU_SET_VALUE("%s", hfr[ar]);
+            MENU_SET_ENABLED(0);
+            return;
+        }
+        /* ar == 4 (3:2): fall through to 23.976 / 25 / 30 */
     }
 
     /* EOS M 1x3 Highest 16:9 runs at 22.250, not 23.976. */

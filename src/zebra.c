@@ -2784,6 +2784,7 @@ static CONFIG_INT("electronic.level", electronic_level, 0);
 
 struct menu_entry zebra_menus[] = {
     #ifdef FEATURE_GLOBAL_DRAW
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "Global Draw",
         .priv       = &global_draw,
@@ -2799,6 +2800,7 @@ struct menu_entry zebra_menus[] = {
         .help = "Enable/disable ML overlay graphics (zebra, cropmarks...)",
         //.essential = FOR_LIVEVIEW,
     },
+#endif
     #endif
     #ifdef FEATURE_ZEBRA
 #ifdef CONFIG_SLIM_MENUS
@@ -2891,6 +2893,16 @@ struct menu_entry zebra_menus[] = {
     #endif
 
     #ifdef FEATURE_FOCUS_PEAK
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Focus Peak",
+        .priv           = &focus_peaking,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Show which parts of the image are in focus.",
+        .depends_on = DEP_GLOBAL_DRAW,
+    },
+#else
     {
         .name = "Focus Peak",
         .priv           = &focus_peaking,
@@ -2957,8 +2969,10 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         },
     },
+#endif
     #endif
     #ifdef FEATURE_MAGIC_ZOOM
+#ifndef CONFIG_SLIM_MENUS
     {
         .name = "Magic Zoom",
         .priv = &zoom_overlay_enabled,
@@ -3031,6 +3045,7 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         },
     },
+#endif
     #endif
     #ifdef FEATURE_CROPMARKS
     MENU_PLACEHOLDER("Cropmarks"),
@@ -3039,6 +3054,17 @@ struct menu_entry zebra_menus[] = {
         #ifndef FEATURE_CROPMARKS
         #error This requires FEATURE_CROPMARKS.
         #endif
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Ghost image",
+        .priv = &transparent_overlay,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Overlay any image in LiveView. In PLAY mode, press LV btn.",
+        .depends_on = DEP_GLOBAL_DRAW,
+        .works_best_in = DEP_LIVEVIEW,
+    },
+#else
     {
         .name = "Ghost image",
         .priv = &transparent_overlay, 
@@ -3057,8 +3083,19 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         }
     },
+#endif
     #endif
     #ifdef FEATURE_SPOTMETER
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Spotmeter",
+        .priv           = &spotmeter_draw,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Exposure aid: display brightness from a small spot.",
+        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
+    },
+#else
     {
         .name = "Spotmeter",
         .priv           = &spotmeter_draw,
@@ -3096,8 +3133,19 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         }
     },
+#endif
     #endif
     #ifdef FEATURE_FALSE_COLOR
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "False color",
+        .priv       = &falsecolor_draw,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Exposure aid: each brightness level is color-coded.",
+        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
+    },
+#else
     {
         .name = "False color",
         .priv       = &falsecolor_draw,
@@ -3120,6 +3168,7 @@ struct menu_entry zebra_menus[] = {
             MENU_EOL
         }
     },
+#endif
     #endif
     #ifdef FEATURE_HISTOGRAM
 #ifdef CONFIG_SLIM_MENUS
@@ -3195,6 +3244,16 @@ struct menu_entry zebra_menus[] = {
 #endif
     #endif
     #ifdef FEATURE_WAVEFORM
+#ifdef CONFIG_SLIM_MENUS
+    {
+        .name = "Waveform",
+        .priv       = &waveform_draw,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .help = "Exposure aid: useful for checking overall brightness.",
+        .depends_on = DEP_GLOBAL_DRAW | DEP_EXPSIM,
+    },
+#else
     {
         .name = "Waveform",
         .priv       = &waveform_draw,
@@ -3215,6 +3274,7 @@ struct menu_entry zebra_menus[] = {
         },
         //.essential = FOR_LIVEVIEW | FOR_PLAYBACK,
     },
+#endif
     #endif
     MENU_PLACEHOLDER("Vectorscope"),
     #ifdef FEATURE_LEVEL_INDICATOR
@@ -3222,6 +3282,7 @@ struct menu_entry zebra_menus[] = {
         .name = "Level Indicator", 
         .priv = &electronic_level, 
         .max  = 1, 
+        .icon_type = IT_BOOL,
         .help = "Electronic level indicator in 0.5 degree steps.",
         .depends_on = DEP_GLOBAL_DRAW,
     },
@@ -4635,6 +4696,8 @@ int handle_overlays_playback(struct event * event)
 static void zebra_init()
 {
 #ifdef CONFIG_SLIM_MENUS
+    /* Slim Monitoring: Global Draw is hidden — keep overlays always enabled. */
+    global_draw = 3;
     zebra_raw_underexposure = 0;
     #ifdef FEATURE_RAW_ZEBRAS
     raw_zebra_enable = 1;

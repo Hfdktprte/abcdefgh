@@ -341,7 +341,13 @@ static void mlv_snd_queue_slot()
 
 static void mlv_snd_prepare_audio()
 {
-    mlv_snd_in_sample_rate = mlv_snd_rates[mlv_snd_rate_sel];
+    if (is_camera("EOSM", "2.0.2"))
+    {
+        mlv_snd_rate_sel = 0;
+        mlv_snd_in_sample_rate = 48000;
+    }
+    else
+        mlv_snd_in_sample_rate = mlv_snd_rates[mlv_snd_rate_sel];
 
     /* some models may need this */
     SoundDevActiveIn(0);
@@ -691,6 +697,19 @@ static struct menu_entry mlv_snd_menu[] =
     },
 };
 
+/* EOS M slim: ON/OFF only; always 48 kHz when enabled. */
+static struct menu_entry mlv_snd_menu_eosm[] =
+{
+    {
+        .name       = "Sound recording",
+        .priv       = &mlv_snd_enabled,
+        .max        = 1,
+        .choices    = CHOICES("OFF", "ON"),
+        .edit_mode  = EM_INLINE_ADJUST,
+        .help       = "Record 48 kHz audio with MLV.",
+    },
+};
+
 static unsigned int mlv_snd_init()
 {
     /* causes ERR70 ?! */
@@ -705,18 +724,14 @@ static unsigned int mlv_snd_init()
     mlv_snd_buffers_empty = (struct msg_queue *) msg_queue_create("mlv_snd_buffers_empty", MLV_SND_BLOCKS_PER_SLOT * MLV_SND_SLOTS);
     mlv_snd_buffers_done = (struct msg_queue *) msg_queue_create("mlv_snd_buffers_done", MLV_SND_BLOCKS_PER_SLOT * MLV_SND_SLOTS);
 
-    /* will the same menu work in both submenus? probably not */
     if (is_camera("EOSM", "2.0.2"))
     {
         mlv_snd_vsync_delay = 1;
-        for (struct menu_entry * e = mlv_snd_menu[0].children; !MENU_IS_EOL(e); e++)
-        {
-            if (streq(e->name, "Audio delay") || streq(e->name, "Trace output"))
-                e->shidden = 1;
-        }
+        mlv_snd_rate_sel = 0;
+        mlv_snd_in_sample_rate = 48000;
+        menu_add("Movie", mlv_snd_menu_eosm, COUNT(mlv_snd_menu_eosm));
     }
-
-    if (menu_get_value_from_script("Movie", "RAW video") != INT_MIN)
+    else if (menu_get_value_from_script("Movie", "RAW video") != INT_MIN)
     {
         menu_add("Movie", mlv_snd_menu, COUNT(mlv_snd_menu));
     }

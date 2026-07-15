@@ -3711,6 +3711,10 @@ menu_display(
 
     if (scroll_pos > 0)
     {
+#ifdef CONFIG_SLIM_MENUS
+        /* Far-right scrollbar replaces the centered chevron for grid menus. */
+        if (!menu_grid_is_launched())
+#endif
         for (int i = -13; i <= 13; i++)
             draw_line(360 - i, y + 8 - 12, 360, y - 12, MENU_BAR_COLOR);
     }
@@ -3770,9 +3774,14 @@ menu_display(
 
     if (more_entries)
     {
-        y += 10;
-        for (int i = -13; i <= 13; i++)
-            draw_line(360 - i, y - 8, 360, y, MENU_BAR_COLOR);
+#ifdef CONFIG_SLIM_MENUS
+        if (!menu_grid_is_launched())
+#endif
+        {
+            y += 10;
+            for (int i = -13; i <= 13; i++)
+                draw_line(360 - i, y - 8, 360, y, MENU_BAR_COLOR);
+        }
     }
 
 end:
@@ -4212,19 +4221,44 @@ show_vscroll(struct menu * parent){
     int pos = get_menu_selected_pos(parent);
     int max = get_menu_visible_count(parent);
 
+#ifdef CONFIG_SLIM_MENUS
+    /* Match menu_display row estimate (Canon Gothic + pad). */
+    int target_height = parent && parent->submenu_height ? parent->submenu_height - 54 : 430;
+    int row_h = (int)fontspec_font(FONT_CANON)->height + 8;
+    int menu_len = MAX(1, target_height / MAX(row_h, 1));
+#else
     int menu_len = MENU_LEN;
+#endif
     
     if(max > menu_len + 1){
 #ifdef CONFIG_SLIM_MENUS
         /* Match slim title bar (Canon height + pad) + gap below blue line. */
         int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;
-        int y_lo = (menu_grid_is_launched() && !submenu_level)
+        int far_right = menu_grid_is_launched() && !submenu_level;
+        int y_lo = far_right
             ? slim_header_h + 12 : 44;
-        int h = submenu_level ? 378 : (menu_grid_is_launched() ? 450 : 385);
+        int h_bot = submenu_level ? 422 : (far_right ? 472 : 429);
+        int track_h = h_bot - y_lo;
+        int size = MAX(8, track_h * menu_len / max);
+        int y = y_lo + ((track_h - size) * (pos-1) / MAX(max-1, 1));
+        int x = far_right ? 716 : MIN(360 + g_submenu_width/2, 720-3);
+        int bar_w = far_right ? 2 : 3;
+        if (submenu_level) x -= 6;
+
+        /* Subtle track + thumb on the far right for grid Movie/etc. */
+        if (far_right)
+        {
+            bmp_fill(COLOR_GRAY(20), x, y_lo, bar_w, track_h);
+            bmp_fill(COLOR_GRAY(50), x, y, bar_w, size);
+        }
+        else
+        {
+            bmp_fill(COLOR_BLACK, x-2, y_lo, 6, track_h);
+            bmp_fill(MENU_BAR_COLOR, x, y, bar_w, size);
+        }
 #else
         int y_lo = 44;
         int h = submenu_level ? 378 : 385;
-#endif
         int size = (h - y_lo) * menu_len / max;
         int y = y_lo + ((h - size) * (pos-1) / (max-1));
         int x = MIN(360 + g_submenu_width/2, 720-3);
@@ -4232,6 +4266,7 @@ show_vscroll(struct menu * parent){
         
         bmp_fill(COLOR_BLACK, x-2, y_lo, 6, h);
         bmp_fill(MENU_BAR_COLOR, x, y, 3, size);
+#endif
     }
 }
 

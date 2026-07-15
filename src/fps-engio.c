@@ -1572,7 +1572,9 @@ static struct menu_entry fps_menu[] = {
 
 static void fps_init()
 {
+#ifndef CONFIG_SLIM_MENUS
     menu_add( "Movie", fps_menu, COUNT(fps_menu) );
+#endif
 }
 
 INIT_FUNC("fps", fps_init);

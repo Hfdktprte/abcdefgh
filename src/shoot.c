@@ -4669,9 +4669,9 @@ static struct menu_entry expo_menus[] = {
     MENU_PLACEHOLDER("Dual ISO"),
 };
 
+#ifndef CONFIG_SLIM_MENUS
 static struct menu_entry expo_menus2[] = {
 #ifdef FEATURE_EXPO_ISO
-#ifndef CONFIG_SLIM_MENUS
 {
     .name = "ISO Expo",
     .update    = iso_display,
@@ -4716,7 +4716,6 @@ static struct menu_entry expo_menus2[] = {
     },
 },
 #endif
-#endif
 #ifdef FEATURE_EXPO_SHUTTER
 {
     .name = "Shutter Expo",
@@ -4739,6 +4738,7 @@ static struct menu_entry expo_menus2[] = {
 },
 #endif
 };
+#endif /* CONFIG_SLIM_MENUS */
 
 
 
@@ -6744,9 +6744,8 @@ static void shoot_init()
     set_maindial_sem = create_named_semaphore("set_maindial_sem", 1);
 
     menu_add( "Expo", expo_menus, COUNT(expo_menus) );
-    menu_add( "Movie", expo_menus2, COUNT(expo_menus2) );
-    
 #ifndef CONFIG_SLIM_MENUS
+    menu_add( "Movie", expo_menus2, COUNT(expo_menus2) );
     menu_add( "Shoot", shoot_menus, COUNT(shoot_menus) );
 #endif
     

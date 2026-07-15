@@ -4999,10 +4999,14 @@ static unsigned int raw_rec_init()
         raw_video_menu[0].children[13].max = 2;
     }
 
-    menu_add("Movie", raw_video_menu, COUNT(raw_video_menu));
+    /* EOS M slim: RAW status is shown elsewhere — omit the Movie menu entry. */
+    if (!cam_eos_m)
+    {
+        menu_add("Movie", raw_video_menu, COUNT(raw_video_menu));
 
-    /* hack: force proper alignment in menu */
-    raw_video_menu->children->parent_menu->split_pos = 15;
+        /* hack: force proper alignment in menu */
+        raw_video_menu->children->parent_menu->split_pos = 15;
+    }
 
     lvinfo_add_items (info_items, COUNT(info_items));
 

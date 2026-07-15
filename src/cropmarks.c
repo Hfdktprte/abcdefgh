@@ -168,14 +168,69 @@ static MENU_UPDATE_FUNC(crop_display_submenu)
     MENU_SET_ICON(MNI_DICE, (num_cropmarks<<16) + index);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+/* Cycle: OFF -> crop0 -> crop1 -> ... -> OFF. Dial L/R; SET does nothing. */
+static MENU_SELECT_FUNC(slim_cropmarks_select)
+{
+    if (!cropmarks_initialized)
+        find_cropmarks();
+
+    if (num_cropmarks <= 0)
+    {
+        crop_enabled = 0;
+        return;
+    }
+
+    int pos = crop_enabled ? (COERCE(crop_index, 0, num_cropmarks - 1) + 1) : 0;
+    pos = MOD(pos + delta, num_cropmarks + 1);
+
+    if (pos == 0)
+    {
+        crop_enabled = 0;
+    }
+    else
+    {
+        crop_enabled = 1;
+        crop_index = pos - 1;
+    }
+    crop_set_dirty(10);
+}
+
+static MENU_UPDATE_FUNC(slim_cropmarks_update)
+{
+    if (!cropmarks_initialized)
+        find_cropmarks();
+
+    if (!crop_enabled || num_cropmarks <= 0)
+    {
+        MENU_SET_VALUE("OFF");
+        return;
+    }
+
+    int index = COERCE(crop_index, 0, num_cropmarks - 1);
+    char name[MAX_CROP_NAME_LEN];
+    snprintf(name, sizeof(name), "%s", cropmark_names[index]);
+    /* Strip .BMP / .bmp for a cleaner ◄ value ► */
+    int n = strlen(name);
+    if (n > 4 && (streq(name + n - 4, ".BMP") || streq(name + n - 4, ".bmp")))
+        name[n - 4] = 0;
+    MENU_SET_VALUE("%s", name);
+
+    if (cropmark_movieonly && !is_movie_mode())
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Cropmarks are configured only for movie mode");
+}
+#endif
+
 static struct menu_entry cropmarks_menu[] = {
 #ifdef CONFIG_SLIM_MENUS
     {
         .name = "Cropmarks",
-        .priv = &crop_enabled,
+        .select = slim_cropmarks_select,
+        .update = slim_cropmarks_update,
+        .edit_mode = EM_INLINE_ADJUST,
         .max = 1,
-        .icon_type = IT_BOOL,
         .help = "Cropmarks or custom grids for framing.",
+        .help2 = "Dial L/R: OFF, then each available cropmark, wrap to OFF.",
         .depends_on = DEP_GLOBAL_DRAW,
     },
 #else

@@ -4728,40 +4728,33 @@ void menu_entry_select(
     else if (mode == 3) // SET
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* Dual ISO / White Balance: SET is intentionally inert (dial only). */
+        /* Dual ISO / White Balance: SET inert (dial only), even with children. */
         if (entry->name && (streq(entry->name, "Dual ISO")
             || streq(entry->name, "White Balance")))
         {
             entry_used = 1;
         }
+        else if (entry->edit_mode & EM_INLINE_ADJUST)
+        {
+            /* Dial-only value on this row. SET opens advanced submenu only. */
+            edit_mode = 0;
+            menu_lv_transparent_mode = 0;
+            if (entry->children)
+            {
+                if (!submenu_level)
+                    menu_toggle_submenu();
+            }
+            /* No children (Monitoring ON/OFF etc.): SET does nothing. */
+            entry_used = 1;
+        }
         else if (IS_BOOL(entry) && !entry->children)
         {
-            /* flat ON/OFF overlay toggles: SET only toggles, never opens submenu/edit */
+            /* Flat ON/OFF without dial adjust: SET toggles */
             edit_mode = 0;
             menu_lv_transparent_mode = 0;
             if IS_ML_PTR(entry->priv)
                 menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
             entry_used = 1;
-        }
-        else if (entry->edit_mode & EM_INLINE_ADJUST)
-        {
-            /* Dial adjusts value on this row. */
-            edit_mode = 0;
-            menu_lv_transparent_mode = 0;
-            if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
-            {
-                /* Bool with children: SET toggles ON/OFF */
-                menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
-                entry_used = 1;
-            }
-            else if (entry->children)
-            {
-                /* ISO etc: SET opens advanced submenu */
-                if (!submenu_level)
-                    menu_toggle_submenu();
-                entry_used = 1;
-            }
-            /* else: value-only row — SET does nothing (use dial) */
         }
         else
 #endif

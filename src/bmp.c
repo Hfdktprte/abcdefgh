@@ -993,65 +993,6 @@ int bfnt_draw_char(int c, int px, int py, int fg, int bg)
     return crw;
 }
 
-/* Horizontally flipped bfnt glyph (e.g. left arrow from ICON_ML_FORWARD). */
-int bfnt_draw_char_hflip(int c, int px, int py, int fg, int bg)
-{
-    if (!bfnt_ok())
-        return 0;
-
-#ifdef CONFIG_40D
-    if(c >= 'a' && c <= 'z') { c += 1; }
-#endif
-
-    uint8_t * const bvram = bmp_vram();
-
-    uint16_t* chardata = (uint16_t*) bfnt_find_char(c);
-    if (!chardata) return 0;
-    uint8_t* buff = (uint8_t*)(chardata + 5);
-    int ptr = 0;
-
-    int cw  = chardata[0];
-    int ch  = chardata[1];
-    int crw = chardata[2];
-    int xo  = chardata[3];
-    int yo  = chardata[4];
-    int bb  = cw / 8 + (cw % 8 == 0 ? 0 : 1);
-
-    if (crw+xo > 100) return 0;
-    if (ch+yo > 50) return 0;
-
-    if (bg != NO_BG_ERASE)
-    {
-        bmp_fill(bg, px, py, crw+xo+3, 40);
-    }
-
-    int i,j,k;
-    for (i = 0; i < ch; i++)
-    {
-        for (j = 0; j < bb; j++)
-        {
-            for (k = 0; k < 8; k++)
-            {
-                if (j*8 + k < cw)
-                {
-                    if ((buff[ptr+j] & (1 << (7-k))))
-                    {
-                        int sx = j*8 + k + xo;
-                        int dx = crw + xo - 1 - sx;
-                        #ifdef CONFIG_VXWORKS
-                        bmp_putpixel_fast(bvram, px+dx, py + (i+yo)*(c < 0 ? 1 : 2), fg);
-                        #else
-                        bmp_putpixel_fast(bvram, px+dx, py+i+yo, fg);
-                        #endif
-                    }
-                }
-            }
-        }
-        ptr += bb;
-    }
-    return crw;
-}
-
 int bfnt_char_get_width(int c)
 {
     if (!bfnt_ok())

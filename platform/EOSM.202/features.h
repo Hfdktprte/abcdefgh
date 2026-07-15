@@ -45,7 +45,5 @@
 
 /* Slim UI: crop_rec RAW workflow only */
 #define CONFIG_SLIM_MENUS
-/* Cinema-style recording HUD (top status + bottom zebra/GB/AU meters) */
-#define CONFIG_SLIM_REC_HUD
 #undef FEATURE_EXPO_LOCK
 #undef FEATURE_EXPO_PRESET

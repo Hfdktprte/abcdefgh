@@ -1,6 +1,5 @@
-/** Slim menu grid launcher — 2x2 category picker with minimal square icons. */
+/** Slim menu grid launcher — 2x2 category picker using ML tab icons (cyan). */
 #include "dryos.h"
-#include "math.h"
 #include "bmp.h"
 #include "font.h"
 #include "config.h"
@@ -14,20 +13,20 @@
 #define GRID_COUNT      (GRID_COLS * GRID_ROWS)
 /* One spacing value: left = mid = right = top = between = bottom. */
 #define GRID_SPACE      40
-#define GRID_RADIUS     36   /* soft modern card corners */
-#define GRID_SEL_BORDER 6    /* orange ring thickness outside the grey fill */
+#define GRID_RADIUS     36
+#define GRID_SEL_BORDER 6
+#define GRID_LABEL_PAD  16   /* baseline inset from bottom of each card */
+#define GRID_ICON_GAP   14   /* clear space between icon area and label */
 
 static int grid_active = 0;
 static int grid_launched = 0;
 static CONFIG_INT("menu.grid.sel", grid_sel, 0);
 
-typedef void (*grid_icon_draw_fn)(int cx, int cy, int size);
-
 typedef struct
 {
     const char *label;
     const char *menu_name;
-    grid_icon_draw_fn draw;
+    int icon;   /* ICON_ML_* from baseline menu tab bar */
 } grid_tile_t;
 
 static void grid_fill_round_rect(int x, int y, int w, int h, int r, int color)
@@ -44,113 +43,17 @@ static void grid_fill_round_rect(int x, int y, int w, int h, int r, int color)
     fill_circle(x + w - r - 1, y + h - r - 1, r, color);
 }
 
-static void grid_stroke_round_rect(int x, int y, int w, int h, int r, int color, int thick)
-{
-    /* True circular corners (same as fill) — not chamfer diagonals. */
-    if (w <= 0 || h <= 0) return;
-    r = MIN(r, MIN(w, h) / 2);
-
-    for (int t = 0; t < thick; t++)
-    {
-        int xi = x - t;
-        int yi = y - t;
-        int wi = w + 2 * t;
-        int hi = h + 2 * t;
-        int ri = MIN(r + t, MIN(wi, hi) / 2);
-
-        draw_line(xi + ri, yi,      xi + wi - ri - 1, yi,              color);
-        draw_line(xi + ri, yi + hi - 1, xi + wi - ri - 1, yi + hi - 1, color);
-        draw_line(xi,      yi + ri, xi,              yi + hi - ri - 1, color);
-        draw_line(xi + wi - 1, yi + ri, xi + wi - 1, yi + hi - ri - 1, color);
-
-        draw_circle(xi + ri,           yi + ri,           ri, color);
-        draw_circle(xi + wi - ri - 1,  yi + ri,           ri, color);
-        draw_circle(xi + ri,           yi + hi - ri - 1,  ri, color);
-        draw_circle(xi + wi - ri - 1,  yi + hi - ri - 1,  ri, color);
-    }
-}
-
-/* Square icon tile: filled rounded square with centered glyph. */
-static void grid_icon_square_frame(int cx, int cy, int size, int fill_c, int stroke_c)
-{
-    int hs = size / 2;
-    grid_fill_round_rect(cx - hs, cy - hs, size, size, size / 6, fill_c);
-    grid_stroke_round_rect(cx - hs, cy - hs, size, size, size / 6, stroke_c, 2);
-}
-
-static void grid_icon_exposure(int cx, int cy, int size)
-{
-    grid_icon_square_frame(cx, cy, size, COLOR_GRAY(24), COLOR_ORANGE);
-
-    int inner = size * 55 / 100;
-    int is = inner / 2;
-    grid_stroke_round_rect(cx - is, cy - is, inner, inner, inner / 5, COLOR_YELLOW, 1);
-
-    int dot = MAX(4, size / 10);
-    fill_circle(cx, cy, dot, COLOR_WHITE);
-}
-
-static void grid_icon_overlays(int cx, int cy, int size)
-{
-    grid_icon_square_frame(cx, cy, size, COLOR_GRAY(14), COLOR_GREEN1);
-
-    int pad = size / 5;
-    int sx = cx - size / 2 + pad;
-    int sy = cy - size / 2 + pad;
-    int sw = size - 2 * pad;
-    int sh = size - 2 * pad;
-    bmp_fill(COLOR_ALMOST_BLACK, sx, sy, sw, sh);
-
-    for (int d = -sh; d < sw + sh; d += MAX(8, size / 7))
-        draw_line(sx + d, sy, sx + d - sh, sy + sh, COLOR_GREEN2);
-}
-
-static void grid_icon_movie(int cx, int cy, int size)
-{
-    grid_icon_square_frame(cx, cy, size, COLOR_GRAY(18), COLOR_RED);
-
-    int hs = size * 30 / 100;
-    for (int dy = -hs; dy <= hs; dy++)
-    {
-        int y = cy + dy;
-        int xl = cx - hs / 2;
-        int xr = (dy <= 0)
-            ? cx - hs / 2 + (hs + dy)
-            : cx + hs / 2 - dy;
-        if (xl <= xr)
-            draw_line(xl, y, xr, y, COLOR_WHITE);
-    }
-}
-
-static void grid_icon_custom(int cx, int cy, int size)
-{
-    grid_icon_square_frame(cx, cy, size, COLOR_GRAY(20), COLOR_BLUE);
-
-    int track_w = size * 65 / 100;
-    int tx = cx - track_w / 2;
-    int row_h = MAX(10, size / 6);
-    int y0 = cy - row_h;
-
-    for (int row = 0; row < 3; row++)
-    {
-        int ty = y0 + row * row_h;
-        bmp_fill(COLOR_GRAY(40), tx, ty + 3, track_w, 4);
-        int knob = tx + track_w * (row + 1) / 4 - 3;
-        grid_fill_round_rect(knob, ty, 6, 10, 2, COLOR_LIGHT_BLUE);
-    }
-}
-
+/* Exposure = +/- Expo, Monitoring = Overlay waveform, Movie = camera, Settings = wrench. */
 static const grid_tile_t grid_tiles[GRID_COUNT] =
 {
-    { "Exposure",   "Expo",     grid_icon_exposure },
-    { "Monitoring", "Overlay",  grid_icon_overlays },
-    { "Movie",      "Movie",    grid_icon_movie },
-    { "Settings",   "Settings", grid_icon_custom },
+    { "Exposure",   "Expo",     ICON_ML_EXPO    },
+    { "Monitoring", "Overlay",  ICON_ML_OVERLAY },
+    { "Movie",      "Movie",    ICON_ML_MOVIE   },
+    { "Settings",   "Settings", ICON_ML_PREFS   },
 };
 
 static void grid_layout(int *ox, int *oy, int *cw, int *ch)
 {
-    /* Margin == gap on each axis: 2 cells + 3 equal spaces fill the screen. */
     *cw = (720 - 3 * GRID_SPACE) / GRID_COLS;
     *ch = (480 - 3 * GRID_SPACE) / GRID_ROWS;
     *ox = GRID_SPACE;
@@ -167,6 +70,16 @@ static void grid_cell_rect(int idx, int *x, int *y, int *w, int *h)
     *y = oy + row * (ch + GRID_SPACE);
     *w = cw;
     *h = ch;
+}
+
+static void grid_draw_ml_icon(int icon, int cx, int cy)
+{
+    int iw = bfnt_char_get_width(icon);
+    /* ML tab glyphs are ~40 px tall including padding used in menus_display. */
+    int ih = 40;
+    int x = cx - iw / 2;
+    int y = cy - ih / 2;
+    bfnt_draw_char(icon, x, y, COLOR_CYAN, NO_BG_ERASE);
 }
 
 int menu_grid_is_active(void)   { return grid_active; }
@@ -206,9 +119,8 @@ void menu_grid_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
+    int fnt = FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE);
     int label_h = fontspec_font(FONT_CANON)->height;
-    int label_gap = 12;
-    int bottom_pad = 14;
     int b = GRID_SEL_BORDER;
 
     for (int i = 0; i < GRID_COUNT; i++)
@@ -218,24 +130,23 @@ void menu_grid_draw(void)
         int selected = (i == grid_sel);
         int r = MIN(GRID_RADIUS, MIN(w, h) / 2);
 
-        /* Orange ring = outer rounded fill, then grey punched on top (same geometry). */
         if (selected)
             grid_fill_round_rect(x - b, y - b, w + 2 * b, h + 2 * b, r + b, COLOR_ORANGE);
 
         grid_fill_round_rect(x, y, w, h, r, COLOR_GRAY(20));
 
-        int icon_zone_h = h - label_h - bottom_pad - label_gap;
-        int icon_cy = y + icon_zone_h / 2;
-        int icon_size = MIN(MIN(w, h) * 42 / 100, icon_zone_h * 72 / 100);
-        icon_size = MIN(icon_size, 64);
-        icon_size = MAX(icon_size, 40);
-        grid_tiles[i].draw(x + w / 2, icon_cy, icon_size);
-
-        int label_w = strlen(grid_tiles[i].label) * fontspec_font(FONT_CANON)->width;
+        /* Shared bottom baseline for all four labels. */
+        int label_y = y + h - GRID_LABEL_PAD - label_h;
+        int label_w = bmp_string_width(FONT_CANON, (char *) grid_tiles[i].label);
         int label_x = x + (w - label_w) / 2;
-        int label_y = y + h - bottom_pad - label_h;
-        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE),
-            label_x, label_y, "%s", grid_tiles[i].label);
+
+        /* Icon centered in the remaining space above the label. */
+        int icon_zone_top = y + 10;
+        int icon_zone_bot = label_y - GRID_ICON_GAP;
+        int icon_cy = (icon_zone_top + icon_zone_bot) / 2;
+        grid_draw_ml_icon(grid_tiles[i].icon, x + w / 2, icon_cy);
+
+        bmp_printf(fnt, label_x, label_y, "%s", grid_tiles[i].label);
     }
 }
 
@@ -285,7 +196,6 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw)
         return 0;
 
     case BGMT_MENU:
-        /* MENU from grid closes ML menu — handled in menu.c */
         return 1;
 
     default:

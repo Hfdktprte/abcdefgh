@@ -626,6 +626,9 @@ static struct menu_entry isoless_menu[] =
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",
         .help2 = "With some clever post, you get less shadow noise (more DR).",
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#endif
         .submenu_width = 710,
         .children =  (struct menu_entry[]) {
             {

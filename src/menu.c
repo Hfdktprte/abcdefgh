@@ -236,6 +236,8 @@ static int can_be_turned_off(struct menu_entry * entry)
 #define IMPLICIT_MY_MENU_HIDING(entry) \
     (junkie_mode && HAS_STARRED_FLAG(entry))
 
+static void entry_default_display_info(struct menu_entry * entry, struct menu_display_info * info);
+
 static int is_visible(struct menu_entry * entry)
 {
     return 

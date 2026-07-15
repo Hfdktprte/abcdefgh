@@ -5302,27 +5302,82 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
 
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
-static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2; for 1x3/3x3 */
+static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
 static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
 
-/* 1x1 fixed Aspect→res→FPS combos (Preset always Highest). */
-static int slim_1x1_combo = 3; /* default 16:9 2560x1440 */
-static const int slim_1x1_res_map[5]  = { 0, 1, 2, 3, 4 }; /* 2.5K, 2.8K, 3K, 1440p, 1280p */
-static const int slim_1x1_fps_mask[5] = { 0x7, 0x3, 0x1, 0x3, 0x3 }; /* bits: 24/25/30 */
-static const char * const slim_1x1_ar_labels[5] = {
-    "2.33:1", "2.35:1", "2.35:1", "16:9", "3:2"
-};
-static const int slim_1x1_wh[5][2] = {
-    { 2520, 1080 },
-    { 2880, 1226 },
-    { 3072, 1308 },
-    { 2560, 1440 },
-    { 1920, 1280 },
+/* 1x1 Aspect Ratio UI: 0=2.33:1, 1=2.35:1, 2=16:9, 3=3:2 */
+static int slim_1x1_ar = 2; /* default 16:9 */
+static const char * const slim_1x1_ar_labels[4] = {
+    "2.33:1", "2.35:1", "16:9", "3:2"
 };
 
 static void slim_crop_apply_mode(void);
 static void slim_crop_apply_unified_preset(void);
 static void slim_crop_clamp_fps(void);
+
+/* How many Preset choices are selectable right now (1 → row should be greyed). */
+static int slim_preset_choice_count(void)
+{
+    if (slim_mode_ui == 3)
+        return 1; /* LV: Highest only */
+    if (slim_mode_ui == 0)
+    {
+        /* 1x1: only 2.35:1 has Higher + Highest */
+        return (slim_1x1_ar == 1) ? 2 : 1;
+    }
+    /* 1x3 / 3x3: Highest / Higher / Medium */
+    return 3;
+}
+
+/* Map 1x1 AR (+ Preset for 2.35:1) → res index, WxH, FPS mask. */
+static void slim_1x1_resolve(int *res_idx, int *w, int *h, int *fps_mask)
+{
+    slim_1x1_ar = COERCE(slim_1x1_ar, 0, 3);
+
+    if (slim_1x1_ar == 0)
+    {
+        /* 2.33:1 → 2520x1080 @ 24/25/30 — Highest only */
+        *res_idx = 0;
+        *w = 2520; *h = 1080;
+        *fps_mask = 0x7;
+        slim_unified_preset = 0;
+    }
+    else if (slim_1x1_ar == 1)
+    {
+        /* 2.35:1 — Higher=2880x1226 @24/25; Highest=3072x1308 @24 */
+        if (slim_unified_preset > 1)
+            slim_unified_preset = 0;
+        if (slim_unified_preset == 1)
+        {
+            *res_idx = 1; /* 2.8K Higher */
+            *w = 2880; *h = 1226;
+            *fps_mask = 0x3;
+        }
+        else
+        {
+            slim_unified_preset = 0;
+            *res_idx = 2; /* 3K Highest */
+            *w = 3072; *h = 1308;
+            *fps_mask = 0x1;
+        }
+    }
+    else if (slim_1x1_ar == 2)
+    {
+        /* 16:9 → 2560x1440 @ 24/25 — Highest only */
+        *res_idx = 3;
+        *w = 2560; *h = 1440;
+        *fps_mask = 0x3;
+        slim_unified_preset = 0;
+    }
+    else
+    {
+        /* 3:2 → 1920x1280 @ 24/25 — Highest only */
+        *res_idx = 4;
+        *w = 1920; *h = 1280;
+        *fps_mask = 0x3;
+        slim_unified_preset = 0;
+    }
+}
 
 static void slim_crop_sync_from_backend(void)
 {
@@ -5334,15 +5389,32 @@ static void slim_crop_sync_from_backend(void)
     else if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         slim_mode_ui = 0;
-        slim_unified_preset = 0;
         switch (crop_preset_1x1_res_menu)
         {
-            case 0: slim_1x1_combo = 0; break;
-            case 1: slim_1x1_combo = 1; break;
-            case 2: slim_1x1_combo = 2; break;
-            case 3: slim_1x1_combo = 3; break;
-            case 4: slim_1x1_combo = 4; break;
-            default: slim_1x1_combo = 3; break;
+            case 0: /* 2.5K */
+                slim_1x1_ar = 0;
+                slim_unified_preset = 0;
+                break;
+            case 1: /* 2.8K Higher */
+                slim_1x1_ar = 1;
+                slim_unified_preset = 1;
+                break;
+            case 2: /* 3K Highest */
+                slim_1x1_ar = 1;
+                slim_unified_preset = 0;
+                break;
+            case 3: /* 1440p */
+                slim_1x1_ar = 2;
+                slim_unified_preset = 0;
+                break;
+            case 4: /* 1280p */
+                slim_1x1_ar = 3;
+                slim_unified_preset = 0;
+                break;
+            default:
+                slim_1x1_ar = 2;
+                slim_unified_preset = 0;
+                break;
         }
     }
     else if (CROP_PRESET_MENU == CROP_PRESET_1X3)
@@ -5363,6 +5435,11 @@ static void slim_crop_sync_from_backend(void)
 
 static void slim_crop_apply_unified_preset(void)
 {
+    if (slim_mode_ui == 0)
+    {
+        /* Apply via slim_1x1_resolve in slim_crop_apply_mode. */
+        return;
+    }
     slim_unified_preset = COERCE(slim_unified_preset, 0, 2);
     if (slim_mode_ui == 1 || CROP_PRESET_MENU == CROP_PRESET_1X3)
         crop_preset_1x3_res_menu = slim_unified_preset;
@@ -5386,9 +5463,10 @@ static void slim_crop_apply_mode(void)
         crop_preset_index = slim_mode_ui + 1; /* 1x1 / 1x3 / 3x3 */
         if (slim_mode_ui == 0)
         {
-            slim_1x1_combo = COERCE(slim_1x1_combo, 0, 4);
-            crop_preset_1x1_res_menu = slim_1x1_res_map[slim_1x1_combo];
-            slim_unified_preset = 0;
+            int res_idx, w, h, fps_mask;
+            slim_1x1_resolve(&res_idx, &w, &h, &fps_mask);
+            crop_preset_1x1_res_menu = res_idx;
+            (void)w; (void)h; (void)fps_mask;
         }
         else
             slim_crop_apply_unified_preset();
@@ -5449,9 +5527,9 @@ static void slim_crop_expected_res(int *w, int *h)
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
-        int c = COERCE(slim_1x1_combo, 0, 4);
-        *w = slim_1x1_wh[c][0];
-        *h = slim_1x1_wh[c][1];
+        int res_idx, fps_mask;
+        slim_1x1_resolve(&res_idx, w, h, &fps_mask);
+        (void)res_idx; (void)fps_mask;
         return;
     }
 
@@ -5490,7 +5568,12 @@ static int slim_crop_fps_mask(void)
     }
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X1)
-        return slim_1x1_fps_mask[COERCE(slim_1x1_combo, 0, 4)];
+    {
+        int res_idx, w, h, fps_mask;
+        slim_1x1_resolve(&res_idx, &w, &h, &fps_mask);
+        (void)res_idx; (void)w; (void)h;
+        return fps_mask;
+    }
 
     if (CROP_PRESET_MENU == CROP_PRESET_3X3)
         return 0x1 | 0x2 | 0x4;
@@ -5529,9 +5612,18 @@ static MENU_UPDATE_FUNC(slim_crop_mode_update)
 
 static MENU_SELECT_FUNC(slim_crop_preset_select)
 {
-    /* 1x1 and LV: Preset locked to Highest. */
-    if (slim_mode_ui == 0 || slim_mode_ui == 3)
+    int n = slim_preset_choice_count();
+    if (n <= 1)
         return;
+
+    if (slim_mode_ui == 0 && slim_1x1_ar == 1)
+    {
+        /* 1x1 2.35:1 — toggle Highest (0) ↔ Higher (1) */
+        slim_unified_preset = (slim_unified_preset == 0) ? 1 : 0;
+        slim_crop_apply_mode();
+        return;
+    }
+
     slim_unified_preset = MOD(slim_unified_preset + delta, 3);
     slim_crop_apply_unified_preset();
     slim_crop_clamp_fps();
@@ -5540,15 +5632,29 @@ static MENU_SELECT_FUNC(slim_crop_preset_select)
 static MENU_UPDATE_FUNC(slim_crop_preset_update)
 {
     slim_crop_sync_from_backend();
-    if (slim_mode_ui == 0 || slim_mode_ui == 3)
+
+    if (slim_mode_ui == 0 && slim_1x1_ar == 1)
+    {
+        /* Keep only Highest / Higher for 2.35:1 */
+        if (slim_unified_preset > 1)
+            slim_unified_preset = 0;
+        MENU_SET_VALUE("%s", slim_unified_preset == 1 ? "Higher" : "Highest");
+        MENU_SET_ENABLED(1);
+        return;
+    }
+
+    if (slim_preset_choice_count() <= 1)
     {
         slim_unified_preset = 0;
         MENU_SET_VALUE("Highest");
+        MENU_SET_ENABLED(0); /* locked — greyed */
         return;
     }
+
     MENU_SET_VALUE("%s",
         slim_unified_preset == 0 ? "Highest" :
         slim_unified_preset == 1 ? "Higher" : "Medium");
+    MENU_SET_ENABLED(1);
 }
 
 static MENU_UPDATE_FUNC(slim_crop_ar_update)
@@ -5556,14 +5662,17 @@ static MENU_UPDATE_FUNC(slim_crop_ar_update)
     if (slim_mode_ui == 3)
     {
         MENU_SET_VALUE("3:2");
+        MENU_SET_ENABLED(0); /* LV: Aspect locked */
         return;
     }
     if (slim_mode_ui == 0)
     {
-        slim_1x1_combo = COERCE(slim_1x1_combo, 0, 4);
-        MENU_SET_VALUE("%s", slim_1x1_ar_labels[slim_1x1_combo]);
+        slim_1x1_ar = COERCE(slim_1x1_ar, 0, 3);
+        MENU_SET_VALUE("%s", slim_1x1_ar_labels[slim_1x1_ar]);
+        MENU_SET_ENABLED(1);
         return;
     }
+    MENU_SET_ENABLED(1);
 }
 
 static MENU_SELECT_FUNC(slim_crop_ar_select)
@@ -5573,7 +5682,12 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
 
     if (slim_mode_ui == 0)
     {
-        slim_1x1_combo = MOD(slim_1x1_combo + delta, 5);
+        slim_1x1_ar = MOD(slim_1x1_ar + delta, 4);
+        /* Entering 2.35:1 defaults to Higher unless already Highest/Higher. */
+        if (slim_1x1_ar == 1 && slim_unified_preset > 1)
+            slim_unified_preset = 1;
+        if (slim_1x1_ar != 1)
+            slim_unified_preset = 0;
         slim_crop_apply_mode();
         return;
     }

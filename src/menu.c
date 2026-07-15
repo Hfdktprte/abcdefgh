@@ -173,21 +173,21 @@ static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
         && streq(entry->name, "White Balance");
 }
 
-/* Circular outlined L/R arrow for WB inline value adjust. dir: -1 left, +1 right */
-static void slim_draw_circled_arrow(int cx, int cy, int dir, int color)
+/* Filled triangular L/R arrow (camera-style). dir: -1 left tip, +1 right tip. */
+static void slim_draw_filled_arrow(int tip_x, int cy, int dir, int height, int color)
 {
-    /* True circle (equal rx/ry in BMP pixels); r=10 → diameter 21 */
-    const int r = 10;
-    draw_circle(cx, cy, r, color);
-    draw_circle(cx, cy, r - 1, color);
-
-    /* Chevron centered on the same origin as the circle */
-    int tip = cx + dir * 4;
-    int base = cx - dir * 3;
-    draw_line(base, cy - 5, tip, cy, color);
-    draw_line(base, cy + 5, tip, cy, color);
-    draw_line(base + dir, cy - 5, tip + dir, cy, color);
-    draw_line(base + dir, cy + 5, tip + dir, cy, color);
+    int half = MAX(height / 2, 1);
+    int depth = MAX((height * 6) / 10, 2); /* width of triangle */
+    for (int dy = -half; dy <= half; dy++)
+    {
+        int span = depth * (half - ABS(dy)) / half;
+        if (span <= 0 && dy != 0)
+            continue;
+        if (dir > 0) /* ► tip on the right */
+            draw_line(tip_x - span, cy + dy, tip_x, cy + dy, color);
+        else /* ◄ tip on the left */
+            draw_line(tip_x, cy + dy, tip_x + span, cy + dy, color);
+    }
 }
 #endif
 
@@ -2759,6 +2759,9 @@ entry_print(
     
 #ifdef CONFIG_SLIM_MENUS
     int wb_expo_style = entry_is_wb_expo_style(entry, in_submenu);
+    /* Reclaim icon column so label starts where the left box used to be. */
+    if (wb_expo_style)
+        x -= MENU_OFFSET;
 #endif
 
     int use_small_font = 0;
@@ -2863,17 +2866,21 @@ skip_name:
         fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
     }
 
-    int draw_circled_arrows =
+    /* Dial arrows always visible on WB Expo row; color follows selection. */
+    int draw_tri_arrows =
         wb_expo_style &&
-        entry->selected &&
         info->value[0] &&
         !menu_lv_transparent_mode;
-    /* Circle diameter = 2*r+1 with r=10 in slim_draw_circled_arrow */
-    const int circ_d = 21;
-    int arrow_w = draw_circled_arrows ? circ_d : 0;
-    int arrow_pad = draw_circled_arrows ? 6 : 0;
+    int arrow_color = COLOR_WHITE;
+    if (draw_tri_arrows && entry->selected && !customize_mode && !junkie_mode &&
+        info->warning_level != MENU_WARN_NOT_WORKING && info->enabled != 0)
+        arrow_color = COLOR_ORANGE;
+    int fonth = fontspec_font(fnt)->height;
+    int tri_h = MAX(fonth - 6, 10); /* ~same height as value glyphs */
+    int arrow_w = draw_tri_arrows ? (tri_h * 6) / 10 + 1 : 0;
+    int arrow_pad = draw_tri_arrows ? 5 : 0;
 #else
-    int draw_circled_arrows = 0;
+    int draw_tri_arrows = 0;
     int arrow_w = 0;
     int arrow_pad = 0;
 #endif
@@ -2890,7 +2897,7 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    int end = w + val_width + (draw_circled_arrows ? 2 * (arrow_w + arrow_pad) : 0);
+    int end = w + val_width + (draw_tri_arrows ? 2 * (arrow_w + arrow_pad) : 0);
     int wmax = x_end - x;
 
     // right-justified info field?
@@ -2925,12 +2932,12 @@ skip_name:
 
     int x_value = xval;
 #ifdef CONFIG_SLIM_MENUS
-    /* Vertical optical center of FONT_LARGE digits (slightly above geometric mid). */
-    int value_cy = y + y_font_offset + (fontspec_font(fnt)->height * 9) / 20;
-    if (draw_circled_arrows)
+    int value_cy = y + y_font_offset + (fonth * 9) / 20;
+    if (draw_tri_arrows)
     {
-        slim_draw_circled_arrow(xval + circ_d / 2, value_cy, -1, COLOR_ORANGE);
-        x_value = xval + circ_d + arrow_pad;
+        /* Tip of left ◄ sits at left of reserved arrow column */
+        slim_draw_filled_arrow(xval, value_cy, -1, tri_h, arrow_color);
+        x_value = xval + arrow_w + arrow_pad;
     }
 #endif
 
@@ -2943,9 +2950,10 @@ skip_name:
     );
 
 #ifdef CONFIG_SLIM_MENUS
-    if (draw_circled_arrows)
+    if (draw_tri_arrows)
     {
-        slim_draw_circled_arrow(x_value + val_width + arrow_pad + circ_d / 2, value_cy, 1, COLOR_ORANGE);
+        /* Tip of right ► after value */
+        slim_draw_filled_arrow(x_value + val_width + arrow_pad + arrow_w, value_cy, 1, tri_h, arrow_color);
     }
 #endif
     

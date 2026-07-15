@@ -5825,7 +5825,7 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         int ar = COERCE(crop_preset_ar_menu, 0, 4);
         if (ar < 4)
         {
-            static const char * hfr[] = { "46.300", "50", "54", "55.6" };
+            static const char * hfr[] = { "46.800", "50", "54", "55.6" };
             MENU_SET_VALUE("%s", hfr[ar]);
             MENU_SET_ENABLED(0);
             return;

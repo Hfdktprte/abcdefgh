@@ -16,6 +16,9 @@
 extern void peaking_benchmark();
 extern void menu_benchmark();
 
+/* Declared before card_bench.c include so the run can clear it when done. */
+static int card_bench_ui = 0;
+
 /* fixme: how to use multiple files without exporting a bunch of symbols from the module? */
 #include "card_bench.c"
 #include "mem_bench.c"
@@ -165,7 +168,6 @@ static void twocard_init()
 
 /* Card Benchmark Off/On on Settings panel (EOS M slim).
  * Turning On via L/R starts Quick R/W (1 min) without SET. */
-static int card_bench_ui = 0;
 
 static MENU_SELECT_FUNC(slim_card_bench_select)
 {

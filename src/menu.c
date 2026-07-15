@@ -3767,8 +3767,21 @@ menu_display(
     int D = 2*dy - dx;
 
     int scroll_pos = menu->scroll_pos; // how many menu entries to skip
+#ifdef CONFIG_SLIM_MENUS
+    if (pos < 1)
+    {
+        /* Selected row not counted as visible — do not scroll off-screen. */
+        scroll_pos = 0;
+    }
+    else
+    {
+        scroll_pos = MAX(scroll_pos, pos - num_visible);
+        scroll_pos = MIN(scroll_pos, pos - 1);
+    }
+#else
     scroll_pos = MAX(scroll_pos, pos - num_visible);
     scroll_pos = MIN(scroll_pos, pos - 1);
+#endif
     menu->scroll_pos = scroll_pos;
     
     for(int i=0;i<scroll_pos;i++){
@@ -5043,7 +5056,13 @@ void menu_entry_move(
 
     {
 #ifdef CONFIG_SLIM_MENUS
-        int max_skip = get_menu_visible_count(menu) + 2;
+        /* Placeholder matching leaves shidden duplicates after the last visible
+         * row — max_skip must cover every linked entry or selection lands on a
+         * hidden item (orange highlight vanishes until the next Down). */
+        struct menu_entry * start = entry;
+        int max_skip = 0;
+        for (struct menu_entry * e = menu->children; e; e = e->next)
+            max_skip++;
         int skipped = 0;
 #endif
         do
@@ -5073,6 +5092,10 @@ void menu_entry_move(
 #ifdef CONFIG_SLIM_MENUS
         /* Skip hidden and locked/grey rows — only land on adjustable items. */
         while ((!entry_is_slim_navigable(entry)) && skipped < max_skip && menu_has_visible_items(menu));
+
+        /* Never leave selection on a non-navigable row (highlight would vanish). */
+        if (!entry_is_slim_navigable(entry))
+            entry = start;
 #else
         while (!is_visible(entry) && menu_has_visible_items(menu)); /* skip hidden items */
 #endif

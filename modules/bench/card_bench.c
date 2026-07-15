@@ -118,6 +118,9 @@ static void card_benchmark_run(int full_test)
     take_screenshot("bench%d.ppm", SCREENSHOT_BMP);
     msleep(3000);
     canon_gui_enable_front_buffer(0);
+
+    /* Settings → Card Benchmark: auto-return to OFF when finished. */
+    card_bench_ui = 0;
 }
 
 static void card_benchmark_task_quick()

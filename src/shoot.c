@@ -4220,11 +4220,12 @@ static struct menu_entry expo_menus[] = {
         .name = "White Balance",
         .update    = kelvin_wbs_display,
         .select     = kelvin_toggle,
-        .help  = "Dial L/R adjusts Kelvin. SET opens advanced White Balance options.",
-        .help2 = "Advanced: WBShift, RGB multipliers, Push-button WB...",
 #ifdef CONFIG_SLIM_MENUS
+        .help  = "Dial L/R adjusts Kelvin white balance.",
         .edit_mode = EM_INLINE_ADJUST,
 #else
+        .help  = "Dial L/R adjusts Kelvin. SET opens advanced White Balance options.",
+        .help2 = "Advanced: WBShift, RGB multipliers, Push-button WB...",
         .edit_mode = EM_SHOW_LIVEVIEW,
 #endif
         .submenu_width = 700,
@@ -4335,7 +4336,11 @@ static struct menu_entry expo_menus[] = {
         .select     = iso_toggle,
         .help  = "Adjust and fine-tune ISO. Also displays APEX Sv value.",
         .help2 = "Advanced: digital ISO tweaks, HTP, ISO 50, ISO 800.000...",
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#else
         .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
         
         .submenu_width = 650,
 
@@ -4431,7 +4436,11 @@ static struct menu_entry expo_menus[] = {
         .select     = shutter_toggle,
         .icon_type  = IT_PERCENT,
         .help = "Fine-tune shutter value. Displays APEX Tv or degrees equiv.",
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#else
         .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
     },
     #endif
     #ifdef FEATURE_EXPO_APERTURE
@@ -4442,7 +4451,11 @@ static struct menu_entry expo_menus[] = {
         .icon_type  = IT_PERCENT,
         .help = "Adjust aperture. Also displays APEX aperture (Av) in stops.",
         .depends_on = DEP_CHIPPED_LENS,
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#else
         .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
     },
     #endif
     #if defined(FEATURE_PICSTYLE) && !defined(CONFIG_SLIM_MENUS)

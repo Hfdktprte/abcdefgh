@@ -162,15 +162,20 @@ static int entry_is_inline_adjustable(struct menu_entry * entry)
     return 0;
 }
 
-/* Expo top-level White Balance row only — custom selection chrome (not other menus). */
-static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
+/* Expo top-level rows with EM_INLINE_ADJUST — custom selection chrome (not other menus). */
+static int entry_is_expo_inline_style(struct menu_entry * entry, int in_submenu)
 {
-    return entry
-        && !in_submenu
-        && entry->children
-        && (entry->edit_mode & EM_INLINE_ADJUST)
-        && entry->name
-        && streq(entry->name, "White Balance");
+    if (!entry || in_submenu || !(entry->edit_mode & EM_INLINE_ADJUST))
+        return 0;
+    if (entry->parent_menu && entry->parent_menu->name && streq(entry->parent_menu->name, "Expo"))
+        return 1;
+    if (!entry->name)
+        return 0;
+    return streq(entry->name, "White Balance")
+        || streq(entry->name, "ISO")
+        || streq(entry->name, "Shutter")
+        || streq(entry->name, "Aperture")
+        || streq(entry->name, "Dual ISO");
 }
 
 /* Filled ◄ — tip points left (narrow on left, flat base on right). */
@@ -2768,17 +2773,19 @@ entry_print(
         fnt = MENU_FONT_GRAY;
     
 #ifdef CONFIG_SLIM_MENUS
-    int wb_expo_style = entry_is_wb_expo_style(entry, in_submenu);
+    int expo_inline_style = entry_is_expo_inline_style(entry, in_submenu);
     /* Reclaim icon column so label starts where the left box used to be. */
-    if (wb_expo_style)
+    if (expo_inline_style)
         x -= MENU_OFFSET;
+    /* No Av/Tv/Sv / secondary text beside values */
+    info->rinfo[0] = 0;
 #endif
 
     int use_small_font = 0;
     int x_font_offset = 0;
 #ifdef CONFIG_SLIM_MENUS
     /* Canon Gothic is taller (~40) than FONT_LARGE (~32); center in the row. */
-    int y_font_offset = wb_expo_style
+    int y_font_offset = expo_inline_style
         ? (h - (int)fontspec_font(FONT_CANON)->height) / 2
         : (h - (int)font_large.height) / 2;
 #else
@@ -2851,7 +2858,7 @@ entry_print(
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    if (wb_expo_style && !customize_mode && !junkie_mode &&
+    if (expo_inline_style && !customize_mode && !junkie_mode &&
         info->warning_level != MENU_WARN_NOT_WORKING)
     {
         /* Canon Gothic — native camera UI font (smoother than RBF bitmap fonts). */
@@ -2879,8 +2886,8 @@ skip_name:
         fnt = (fnt & ~FONT_MASK) | FONT_MED_LARGE;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Expo White Balance: Canon font for the whole row (~camera UI size/weight). */
-    if (wb_expo_style && !customize_mode && !junkie_mode &&
+    /* Expo inline rows: Canon font for the whole row (~camera UI size/weight). */
+    if (expo_inline_style && !customize_mode && !junkie_mode &&
         info->warning_level != MENU_WARN_NOT_WORKING &&
         info->enabled != 0)
     {
@@ -2888,9 +2895,9 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows always visible on WB Expo row; color follows selection. Order: ◄ value ► */
+    /* Dial arrows always visible on Expo inline rows; color follows selection. Order: ◄ value ► */
     int draw_tri_arrows =
-        wb_expo_style &&
+        expo_inline_style &&
         info->value[0] &&
         !menu_lv_transparent_mode;
     int arrow_color = COLOR_WHITE;
@@ -2928,7 +2935,12 @@ skip_name:
     if (rlen) wmax -= rlen + char_width + 35;
     
     // no right info? then make sure there's room for the Q symbol
-    else if (entry->children && !in_submenu && !menu_lv_transparent_mode && (entry->priv || entry->select))
+    else if (entry->children && !in_submenu && !menu_lv_transparent_mode && (entry->priv || entry->select)
+#ifdef CONFIG_SLIM_MENUS
+        /* White Balance has no Q> — do not reserve space for it */
+        && !(expo_inline_style && entry->name && streq(entry->name, "White Balance"))
+#endif
+        )
     {
         wmax -= 35;
     }
@@ -3015,22 +3027,16 @@ skip_name:
     else if (entry->children && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* WB Expo: Q> in same Canon font / color as label and value */
-        if (wb_expo_style)
-        {
-            bmp_printf(
-                fnt,
-                720 - bmp_string_width(fnt, "Q>") - 8,
-                y + y_font_offset,
-                "Q>"
-            );
-        }
-        else
+        /* White Balance only: no Q> (user does not want that submenu via Q). */
+        int hide_q = expo_inline_style && entry->name && streq(entry->name, "White Balance");
+        if (!hide_q)
 #endif
-        if (entry->selected)
-            submenu_key_hint(720-40, y + y_icon_offset, COLOR_WHITE, COLOR_BLACK, ICON_ML_Q_FORWARD);
-        else
-            submenu_key_hint(720-35, y + y_icon_offset, 40, COLOR_BLACK, ICON_ML_FORWARD);
+        {
+            if (entry->selected)
+                submenu_key_hint(720-40, y + y_icon_offset, COLOR_WHITE, COLOR_BLACK, ICON_ML_Q_FORWARD);
+            else
+                submenu_key_hint(720-35, y + y_icon_offset, 40, COLOR_BLACK, ICON_ML_FORWARD);
+        }
     }
 
     if (my_menu && my_menu->selected && streq(my_menu->name, "Recent") && !junkie_mode)
@@ -3056,7 +3062,7 @@ skip_name:
     {
 #ifdef CONFIG_SLIM_MENUS
         /* WB Expo: no blue/cyan left bar, no blue row highlight — text-only selection */
-        if (!(wb_expo_style && !customize_mode && !junkie_mode))
+        if (!(expo_inline_style && !customize_mode && !junkie_mode))
 #endif
         {
             int color_left = 45;
@@ -3077,6 +3083,10 @@ skip_name:
     }
 
     // display help
+#ifdef CONFIG_SLIM_MENUS
+    /* Slim Expo UI: no bottom help/description text for any menu item. */
+    if (0)
+#endif
     if (entry->selected && !menu_lv_transparent_mode)
     {
         char help1_buf[MENU_MAX_HELP_LEN];
@@ -3164,8 +3174,8 @@ skip_name:
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Expo WB: never draw the left icon meter / selection-looking box */
-    if (wb_expo_style)
+    /* Expo inline rows: never draw the left icon meter / selection-looking box */
+    if (expo_inline_style)
         return;
 #endif
 
@@ -3672,7 +3682,7 @@ menu_display(
             int row_h = font_large.height + local_spacing;
 #ifdef CONFIG_SLIM_MENUS
             /* Taller Expo White Balance row (~2× default row height for Canon Gothic). */
-            if (entry_is_wb_expo_style(entry, IS_SUBMENU(menu)))
+            if (entry_is_expo_inline_style(entry, IS_SUBMENU(menu)))
                 row_h = MAX(row_h, font_large.height * 2 + local_spacing);
 #endif
             int ok = menu_entry_process(menu, entry, x, y, row_h, only_selected);
@@ -4592,6 +4602,12 @@ void menu_entry_select(
 
         if (menu_lv_transparent_mode) { menu_lv_transparent_mode = 0; }
 #ifdef CONFIG_SLIM_MENUS
+        else if (entry->name && streq(entry->name, "White Balance")
+            && (entry->edit_mode & EM_INLINE_ADJUST))
+        {
+            /* White Balance: Q must not open the advanced submenu */
+            entry_used = 1;
+        }
         else if (IS_BOOL(entry) && !entry->children)
         {
             /* flat ON/OFF overlay toggles: ignore Q and touch */
@@ -4633,11 +4649,23 @@ void menu_entry_select(
         }
         else if (entry->edit_mode & EM_INLINE_ADJUST)
         {
-            /* Dial adjusts value on this row; SET opens advanced submenu when present. */
+            /* Dial adjusts value on this row. */
             edit_mode = 0;
             menu_lv_transparent_mode = 0;
-            if (entry->children)
+            /* White Balance: no advanced submenu (Kelvin dial only). */
+            if (entry->name && streq(entry->name, "White Balance"))
             {
+                /* SET does nothing — use dial */
+            }
+            else if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
+            {
+                /* Dual ISO etc: SET toggles ON/OFF; Q still opens submenu */
+                menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
+                entry_used = 1;
+            }
+            else if (entry->children)
+            {
+                /* ISO etc: SET opens advanced submenu */
                 if (!submenu_level)
                     menu_toggle_submenu();
                 entry_used = 1;
@@ -5261,6 +5289,9 @@ int handle_ml_menu_touch(struct event * event)
 #ifdef CONFIG_SLIM_MENUS
         {
             struct menu_entry * entry = get_selected_menu_entry(0);
+            /* White Balance: ignore touch so it cannot open the WB submenu. */
+            if (entry && entry->name && streq(entry->name, "White Balance"))
+                return 0;
             if (entry && IS_BOOL(entry) && !entry->children)
                 return 0;
         }

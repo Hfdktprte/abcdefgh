@@ -112,13 +112,16 @@ static int crop_preset_fps = 0;
 #define Framerate_25   (crop_preset_fps == 1)
 #define Framerate_30   (crop_preset_fps == 2)
 
-/* customized buttons variables */
-CONFIG_INT("crop.button_SET",       SET_button, 6);
+/* customized buttons variables
+ * EOS M slim defaults (also forced every boot in crop_rec_init):
+ *   SET = Zoom x10, U/D = ISO, L/R = Aperture; INFO off so main dial keeps shutter.
+ */
+CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
-CONFIG_INT("crop.button_INFO",      INFO_button, 6);
+CONFIG_INT("crop.button_INFO",      INFO_button, 0);
 CONFIG_INT("crop.arrows_U_D",       Arrows_U_D, 1);
 CONFIG_INT("crop.more_hacks",       more_hacks, 1);
-static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 0);
+static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 2);
 
 enum crop_preset {
     CROP_PRESET_OFF = 0,
@@ -334,13 +337,31 @@ static void set_lv_af_mode(int lv_af_mode)
 static int reciso = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(reciso) isoless_recovery_iso;
 
+/* Main dial (EOS M: WHEEL_LEFT/RIGHT) → shutter. Clockwise = faster. */
+static int slim_handle_main_dial_shutter(unsigned int key)
+{
+    if (key == MODULE_KEY_WHEEL_RIGHT)
+    {
+        shutter_toggle(0, 1);
+        return 1;
+    }
+    if (key == MODULE_KEY_WHEEL_LEFT)
+    {
+        shutter_toggle(0, -1);
+        return 1;
+    }
+    return 0;
+}
+
 /* customize buttons and buttons shortcuts, FIXME: implement these as feature in ML core? */
 static unsigned int photo_keypress_cbr(unsigned int key)
 {
     
     if (lv && !gui_menu_shown() && !is_movie_mode())
     {
-        
+        if (slim_handle_main_dial_shutter(key))
+            return 0;
+
         extern int kill_canon_gui_mode;
         /* Quick x10 mode */
 
@@ -6907,6 +6928,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     {
         if (CROP_PRESET_MENU && patch_active && !gui_menu_shown())
         {
+            if (slim_handle_main_dial_shutter(key))
+                return 0;
+
             /* Quick x10 mode */
             if (lv_dispsize == 5 && !RECORDING)
             {
@@ -7771,6 +7795,12 @@ static unsigned int crop_rec_init()
         slim_crop_apply_bit_depth();
         more_hacks = 1;
         shutter_range = 1; /* Full range — menu hidden */
+
+        /* Restore control defaults every boot/flash (overrides crop_rec.cfg). */
+        SET_button  = 1; /* Zoom x10 */
+        Arrows_U_D  = 1; /* ISO */
+        Arrows_L_R  = 2; /* Aperture (inactive without electronic lens) */
+        INFO_button = 0; /* OFF — leave main dial for shutter */
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));

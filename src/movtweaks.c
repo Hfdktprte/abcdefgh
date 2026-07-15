@@ -1072,6 +1072,8 @@ struct menu_entry expo_override_menus[] = {
 void movie_tweak_menu_init()
 {
 #ifdef CONFIG_SLIM_MENUS
+    /* Keep dial free for shutter — never leave shutter lock on after boot. */
+    shutter_lock = 0;
     menu_add( "Expo", movie_tweaks_menus, COUNT(movie_tweaks_menus) );
 #else
     menu_add( "Movie", movie_tweaks_menus, COUNT(movie_tweaks_menus) );

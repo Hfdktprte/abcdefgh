@@ -2427,10 +2427,15 @@ static void submenu_key_hint(int x, int y, int fg, int bg, int chr)
 
 static void menu_clean_footer()
 {
+#ifdef CONFIG_SLIM_MENUS
+    /* Slim: no reserved help/description strip — menu uses full height. */
+    return;
+#else
     int h = 50;
     if (is_menu_active("Help")) h = font_med.height * 3 + 2;
     int bgu = MENU_BG_COLOR_HEADER_FOOTER;
     bmp_fill(bgu, 0, 480-h, 720, h);
+#endif
 }
 
 static int check_default_warnings(struct menu_entry * entry, char* warning)
@@ -2922,11 +2927,11 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    /* Secondary text painted immediately after arrows (e.g. shutter angle) */
+    /* Secondary text painted immediately after arrows (e.g. shutter angle with °) */
     int adj_rinfo_w = 0;
 #ifdef CONFIG_SLIM_MENUS
     if (draw_tri_arrows && info->rinfo[0])
-        adj_rinfo_w = bmp_string_width(fnt, info->rinfo) + arrow_pad;
+        adj_rinfo_w = bmp_string_width(FONT_LARGE, info->rinfo) + arrow_pad;
 #endif
     int end = w + val_width + (draw_tri_arrows ? 2 * (arrow_w + arrow_pad) : 0) + adj_rinfo_w;
     int wmax = x_end - x;
@@ -2984,17 +2989,22 @@ skip_name:
     );
 
 #ifdef CONFIG_SLIM_MENUS
-    int x_after_value = x_value + val_width;
     if (draw_tri_arrows)
     {
-        x_after_value = x_value + val_width + arrow_pad + arrow_w;
+        int x_after_value = x_value + val_width + arrow_pad + arrow_w;
         slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
-        /* e.g. shutter angle immediately after ► */
+        /* e.g. shutter angle immediately after ► — use FONT_LARGE so SYM_DEGREE (°) renders
+         * (FONT_CANON/bfnt has no ML \x83 glyph, so ° vanished when painted in Canon font). */
         if (info->rinfo[0])
         {
+            int rfg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
+            if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
+                rfg = entry->selected ? COLOR_ORANGE : COLOR_GRAY(50);
+            int rfont = FONT(FONT_LARGE, rfg, COLOR_BLACK);
+            int ry = y + (h - (int)font_large.height) / 2;
             bmp_printf(
-                fnt,
-                x_after_value + arrow_pad, y + y_font_offset,
+                rfont,
+                x_after_value + arrow_pad, ry,
                 "%s",
                 info->rinfo
             );
@@ -3161,6 +3171,7 @@ skip_name:
     }
 
     // if there's a warning message set, display it
+#ifndef CONFIG_SLIM_MENUS
     if (entry->selected && info->warning[0])
     {
         int warn_color = 
@@ -3173,6 +3184,7 @@ skip_name:
         bmp_fill(MENU_BG_COLOR_HEADER_FOOTER, 10, warn_y, 720, font_med.height);
         print_help_line(warn_color, 10, warn_y, info->warning);
     }
+#endif
     
     /* from now on, we'll draw the icon only, which should be shifted */
     x += x_font_offset;
@@ -3612,6 +3624,11 @@ menu_display(
     int pos = get_menu_selected_pos(menu);
     int num_visible = get_menu_visible_count(menu);
     int target_height = menu->submenu_height ? menu->submenu_height - 54 : 370;
+#ifdef CONFIG_SLIM_MENUS
+    /* Former help footer (~50px) is unused — extend the item list into it. */
+    if (!menu->submenu_height)
+        target_height = 430;
+#endif
     if (is_menu_active("Help")) target_height -= 20;
     if (is_menu_active("Focus")) target_height -= 70;
     int natural_height = num_visible * font_large.height;
@@ -4662,14 +4679,15 @@ void menu_entry_select(
             /* Dial adjusts value on this row. */
             edit_mode = 0;
             menu_lv_transparent_mode = 0;
-            /* White Balance: no advanced submenu (Kelvin dial only). */
-            if (entry->name && streq(entry->name, "White Balance"))
+            /* White Balance / Dual ISO: SET does nothing — dial only. */
+            if (entry->name && (streq(entry->name, "White Balance")
+                || streq(entry->name, "Dual ISO")))
             {
                 /* SET does nothing — use dial */
             }
             else if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
             {
-                /* Dual ISO etc: SET toggles ON/OFF */
+                /* Bool with children: SET toggles ON/OFF */
                 menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
                 entry_used = 1;
             }

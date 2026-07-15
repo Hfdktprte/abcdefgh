@@ -3438,8 +3438,50 @@ extern MENU_UPDATE_FUNC(hdmi_force_display);
 extern MENU_UPDATE_FUNC(display_gain_print);
 extern int display_gain_menu_index;
 
+#ifdef CONFIG_SLIM_MENUS
+/* Custom panel: Digic Peaking Off/On (On = slightly sharper) + Screen Layout. */
+static MENU_UPDATE_FUNC(slim_digic_peaking_update)
+{
+    if (preview_peaking > 1)
+        preview_peaking = 1;
+}
+
+static struct menu_entry custom_display_menus[] = {
+    #ifdef FEATURE_DIGIC_FOCUS_PEAKING
+    {
+        .name = "Digic Peaking",
+        .priv = &preview_peaking,
+        .min = 0,
+        .max = 1,
+        .update = slim_digic_peaking_update,
+        .choices = CHOICES("OFF", "ON"),
+        .help  = "Focus peaking via DIGIC. ON uses the slightly sharper filter.",
+        .depends_on = DEP_LIVEVIEW,
+    },
+    #endif
+    #ifdef FEATURE_SCREEN_LAYOUT
+    {
+        .name = "Screen Layout",
+        .priv = &screen_layout_menu_index,
+        .max = 4,
+        .update = screen_layout_update,
+        .select = screen_layout_toggle,
+        .choices = CHOICES(
+            "3:2 Display",
+            "16:10 HDMI",
+            "16:9 HDMI",
+            "Bottom 3:2",
+            "Bottom 16:9"
+        ),
+        .help = "Position of top/bottom bars, useful for external displays.",
+        .depends_on = DEP_LIVEVIEW,
+    },
+    #endif
+};
+#endif /* CONFIG_SLIM_MENUS */
+
 static struct menu_entry display_menus[] = {
-            #ifdef FEATURE_DIGIC_FOCUS_PEAKING
+            #if defined(FEATURE_DIGIC_FOCUS_PEAKING) && !defined(CONFIG_SLIM_MENUS)
             {
                 .name = "LV DIGIC peaking",
                 .priv = &preview_peaking,
@@ -3619,7 +3661,7 @@ static struct menu_entry display_menus[] = {
                     .help = "Workarounds for disabling Canon graphics elements."
                 },
             #endif
-            #ifdef FEATURE_SCREEN_LAYOUT
+            #if defined(FEATURE_SCREEN_LAYOUT) && !defined(CONFIG_SLIM_MENUS)
                 {
                     .name = "Screen Layout",
                     .priv = &screen_layout_menu_index,
@@ -3912,6 +3954,10 @@ static struct menu_entry play_menus[] = {
 
 static void tweak_init()
 {
+#ifdef CONFIG_SLIM_MENUS
+    menu_add("Custom", custom_display_menus, COUNT(custom_display_menus));
+    menu_add("Display", display_menus, COUNT(display_menus));
+#else
     menu_add( "Prefs", play_menus, COUNT(play_menus) );
     
     #ifdef FEATURE_LV_ZOOM_SETTINGS
@@ -3922,7 +3968,7 @@ static void tweak_init()
     menu_add( "Prefs", key_menus, COUNT(key_menus) );
     menu_add( "Prefs", tweak_menus, COUNT(tweak_menus) );
     menu_add( "Display", display_menus, COUNT(display_menus) );
-
+#endif
 }
 
 INIT_FUNC(__FILE__, tweak_init);

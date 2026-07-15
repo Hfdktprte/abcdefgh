@@ -243,7 +243,7 @@ static const grid_tile_t grid_tiles[GRID_COUNT] =
     { "Exposure",  "Expo",    grid_icon_exposure },
     { "Monitoring",  "Overlay", grid_icon_overlays },
     { "Movie",     "Movie",   grid_icon_movie },
-    { "Custom",    "Prefs",   grid_icon_custom },
+    { "Custom",    "Custom",  grid_icon_custom },
 };
 
 static void grid_cell_rect(int idx, int *x, int *y, int *w, int *h)

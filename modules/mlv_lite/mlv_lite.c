@@ -94,6 +94,9 @@ extern int WEAK_FUNC(updowntoggle) Arrows_U_D;
 
 static int morehack = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(morehack) more_hacks;
+/* Core mirror of sd_uhs overclock (custom_menu.c) for Custom-panel greying. */
+static int slim_sd_oc_default = 3;
+extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
 
 static int infotoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(infotoggle) INFO_button;
@@ -4293,6 +4296,33 @@ static MENU_UPDATE_FUNC(small_hacks_update)
     }
 }
 
+/* Custom panel (EOS M slim): Small Hacks Off/On/More; greyed when SD Overclock is OFF. */
+static MENU_UPDATE_FUNC(slim_small_hacks_update)
+{
+    small_hacks_update(entry, info);
+    if (!slim_sd_overclock)
+    {
+        MENU_SET_ENABLED(0);
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
+    }
+}
+
+static struct menu_entry slim_small_hacks_menu[] =
+{
+    {
+        .name     = "Small Hacks",
+        .priv     = &small_hacks,
+        .max      = 2,
+        .update   = slim_small_hacks_update,
+        .choices  = CHOICES("OFF", "ON", "More"),
+        .help     = "Disable some tasks to increase write speed.",
+        .help2    = "\n"
+                    "Slow down Canon GUI, disable auto exposure, white balance...\n"
+                    "+ Suspend white balance and exposure task. Locks WB/Exposure!\n",
+    },
+};
+
+
 static struct menu_entry raw_video_menu[] =
 {
     {
@@ -5006,6 +5036,13 @@ static unsigned int raw_rec_init()
 
         /* hack: force proper alignment in menu */
         raw_video_menu->children->parent_menu->split_pos = 15;
+    }
+    else
+    {
+        /* Flat Small Hacks on Custom panel */
+        if (small_hacks > 2)
+            small_hacks = 2;
+        menu_add("Custom", slim_small_hacks_menu, COUNT(slim_small_hacks_menu));
     }
 
     lvinfo_add_items (info_items, COUNT(info_items));

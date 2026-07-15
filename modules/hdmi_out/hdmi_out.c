@@ -146,6 +146,14 @@ static MENU_UPDATE_FUNC(hdmi_update)
 
 static MENU_UPDATE_FUNC(output_resolution_update)
 {
+    /* Slim Custom panel: lock when HDMI Output is OFF. */
+    if (is_camera("EOSM", "2.0.2") && !hdmi_patch_enabled)
+    {
+        MENU_SET_ENABLED(0);
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "HDMI Output is disabled.");
+        return;
+    }
+
     if (hdmi_output_patch_status != HDMI_NOT_PATCHED)
     {
         if (EDID_HDMI_INFO->dwVideoCode != 0) // Not LCD, HDMI is connected
@@ -160,6 +168,31 @@ static MENU_UPDATE_FUNC(output_resolution_update)
         }
     }
 }
+
+/* Flat Custom-panel HDMI rows (EOS M slim). */
+static struct menu_entry hdmi_out_menu_custom[] =
+{
+    {
+        .name       = "HDMI Output",
+        .select     = hdmi_output_toggle,
+        .update     = hdmi_update,
+        .max        = 1,
+        .priv       = &hdmi_patch_enabled,
+        .choices    = CHOICES("OFF", "ON"),
+        .help       = "Change HDMI output settings.",
+    },
+    {
+        .name       = "HDMI Resolution",
+        .update     = output_resolution_update,
+        .choices    = CHOICES("480p", "1080i 50Hz", "1080i 60Hz"),
+        .max        = 2,
+        .priv       = &output_resolution,
+        .help       = "Select an output resolution for HDMI displays.",
+        .help2      = "480p: 720x480 output.\n"
+                      "1080i 50Hz: 1920x1080i @ 50Hz output.\n"
+                      "1080i 60Hz: 1920x1080i @ 60Hz output.",
+    },
+};
 
 static struct menu_entry hdmi_out_menu[] =
 {
@@ -295,7 +328,10 @@ static unsigned int hdmi_out_init()
 
     if (Set_HDMI_Code)
     {
-        menu_add("Display", hdmi_out_menu, COUNT(hdmi_out_menu));
+        if (is_camera("EOSM", "2.0.2"))
+            menu_add("Custom", hdmi_out_menu_custom, COUNT(hdmi_out_menu_custom));
+        else
+            menu_add("Display", hdmi_out_menu, COUNT(hdmi_out_menu));
     }
     else
     {

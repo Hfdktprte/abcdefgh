@@ -129,6 +129,7 @@ ML_SRC_OBJS = \
 	bmp.o \
 	rbf_font.o \
 	movie_menu_raw_only.o \
+	custom_menu.o \
 	config.o \
 	stdio.o \
 	$(ML_BITRATE_OBJ) \

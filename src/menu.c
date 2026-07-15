@@ -159,7 +159,6 @@ static const char * slim_menu_display_name(const char * name)
     if (!name) return "";
     if (streq(name, "Expo")) return "Exposure";
     if (streq(name, "Overlay")) return "Monitoring";
-    if (streq(name, "Prefs")) return "Custom";
     return name;
 }
 
@@ -258,7 +257,9 @@ static int is_visible(struct menu_entry * entry)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* Locked/grey rows (enabled==0, non-bool) stay visible but are not navigable. */
+/* Locked/grey rows stay visible but are not navigable.
+ * Non-bools: enabled==0. Bools: only when update marks NOT_WORKING
+ * (e.g. HDMI Resolution / SD children greyed by a parent OFF). */
 static int entry_is_slim_locked_grey(struct menu_entry * entry)
 {
     if (!entry)
@@ -270,6 +271,8 @@ static int entry_is_slim_locked_grey(struct menu_entry * entry)
         entry->update(entry, &info);
 
     if (info.enabled == 0 && !IS_BOOL(entry))
+        return 1;
+    if (info.warning_level == MENU_WARN_NOT_WORKING)
         return 1;
     return 0;
 }
@@ -309,7 +312,6 @@ static struct menu * get_selected_toplevel_menu();
 static void menu_make_sure_selection_is_valid();
 static void config_menu_reload_flags();
 static int guess_submenu_enabled(struct menu_entry * entry);
-static void entry_default_display_info(struct menu_entry * entry, struct menu_display_info * info);
 static void menu_draw_icon(int x, int y, int type, intptr_t arg, int warn); // private
 static struct menu_entry * entry_find_by_name(const char* name, const char* entry_name);
 static struct menu_entry * get_selected_menu_entry(struct menu * menu);
@@ -1532,22 +1534,13 @@ void menu_add(
 #ifdef CONFIG_SLIM_MENUS
     if (streq(name, "File Manager"))
         return;
+    /* Prefs panel removed — Custom panel replaces it. */
+    if (streq(name, "Prefs"))
+        return;
     if (streq(name, "Debug"))
     {
-        /* Slim Debug tab: bench module only */
-        int allowed = 0;
-        for (int i = 0; i < count; i++)
-        {
-            if (MENU_IS_EOL(&new_entry[i]))
-                break;
-            if (streq(new_entry[i].name, "Benchmarks"))
-            {
-                allowed = 1;
-                break;
-            }
-        }
-        if (!allowed)
-            return;
+        /* Slim Debug tab: unused (Card Benchmark lives on Custom). */
+        return;
     }
 #endif
 
@@ -2939,11 +2932,12 @@ skip_name:
     }
 
     /* Dial arrows around the adjustable value — keep for bool OFF; hide when
-     * the row is locked/greyed (enabled==0 non-bool, e.g. fixed Preset). */
+     * the row is locked/greyed (enabled==0 non-bool, or WARN_NOT_WORKING). */
     int draw_tri_arrows =
         slim_style &&
         entry_is_inline_adjustable(entry) &&
         info->value[0] &&
+        info->warning_level != MENU_WARN_NOT_WORKING &&
         (info->enabled != 0 || IS_BOOL(entry)) &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
@@ -5958,7 +5952,11 @@ menu_init( void )
     menu_find_by_name( "Focus",     ICON_ML_FOCUS   );
 #endif
     menu_find_by_name( "Display",   ICON_ML_DISPLAY );
+#ifdef CONFIG_SLIM_MENUS
+    menu_find_by_name( "Custom",    ICON_ML_PREFS   );
+#else
     menu_find_by_name( "Prefs",     ICON_ML_PREFS   );
+#endif
     menu_find_by_name( "Scripts",   ICON_ML_SCRIPT  );
     menu_find_by_name( "Games",     ICON_ML_GAMES  );
     menu_find_by_name( "Modules",   ICON_ML_MODULES );

@@ -2782,6 +2782,43 @@ int handle_transparent_overlay(struct event * event)
 
 static CONFIG_INT("electronic.level", electronic_level, 0);
 
+#ifdef CONFIG_SLIM_MENUS
+/* Movie tab: simple On/Off Global Draw. OFF kills overlays while recording. */
+static int slim_global_draw_ui;
+
+static void slim_global_draw_sync(void)
+{
+    slim_global_draw_ui = global_draw ? 1 : 0;
+}
+
+static MENU_SELECT_FUNC(slim_global_draw_select)
+{
+    menu_numeric_toggle(&slim_global_draw_ui, delta, 0, 1);
+    /* 1 = LiveView overlays (ZEBRAS_IN_LIVEVIEW); 0 = off while recording/idle LV. */
+    global_draw = slim_global_draw_ui ? 1 : 0;
+}
+
+static MENU_UPDATE_FUNC(slim_global_draw_update)
+{
+    slim_global_draw_sync();
+    MENU_SET_ENABLED(1);
+}
+
+static struct menu_entry movie_global_draw_menu[] = {
+    {
+        .name      = "Global Draw",
+        .priv      = &slim_global_draw_ui,
+        .max       = 1,
+        .select    = slim_global_draw_select,
+        .update    = slim_global_draw_update,
+        .choices   = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "ML overlays (zebra, histogram…). OFF disables them while recording.",
+    },
+};
+#endif
+
 struct menu_entry zebra_menus[] = {
     #ifdef FEATURE_GLOBAL_DRAW
 #ifndef CONFIG_SLIM_MENUS
@@ -4714,8 +4751,10 @@ int handle_overlays_playback(struct event * event)
 static void zebra_init()
 {
 #ifdef CONFIG_SLIM_MENUS
-    /* Slim Monitoring: Global Draw is hidden — keep overlays always enabled. */
-    global_draw = 3;
+    /* Prefer config for Global Draw; map any non-zero to ON for Movie UI. */
+    if (global_draw > 1)
+        global_draw = 1;
+    slim_global_draw_sync();
     zebra_raw_underexposure = 0;
     #ifdef FEATURE_RAW_ZEBRAS
     raw_zebra_enable = 1;
@@ -4726,6 +4765,9 @@ static void zebra_init()
 #endif
     precompute_yuv2rgb();
     menu_add( "Overlay", zebra_menus, COUNT(zebra_menus) );
+#ifdef CONFIG_SLIM_MENUS
+    menu_add( "Movie", movie_global_draw_menu, COUNT(movie_global_draw_menu) );
+#endif
     menu_add( "Debug", livev_dbg_menus, COUNT(livev_dbg_menus) );
     //~ menu_add( "Movie", movie_menus, COUNT(movie_menus) );
     //~ menu_add( "Config", cfg_menus, COUNT(cfg_menus) );

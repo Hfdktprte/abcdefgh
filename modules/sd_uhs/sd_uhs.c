@@ -32,8 +32,12 @@ static uint32_t sdr_240MHz2[]    = {        0x3,        0x3,                    
 static uint32_t uhs_vals[COUNT(uhs_regs)];  /* current values */
 static int sd_setup_mode_enable = 0;
 static int turned_on = 0;
-static CONFIG_INT("sd.sd_overclock", sd_overclock, 3);
+CONFIG_INT("sd.sd_overclock", sd_overclock, 3);
 static CONFIG_INT("sd.sd_access_mode", access_mode, 1);
+
+/* Core mirror for Custom-panel greying (mlv_lite / crop_rec). */
+static int slim_sd_oc_default = 3;
+extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
 
 /* CID info hook, should work on all DIGIC 5 models */
 unsigned int MID;
@@ -414,6 +418,8 @@ static void sd_overclock_task()
 
 static MENU_UPDATE_FUNC(sd_uhs_update)
 {
+    slim_sd_overclock = sd_overclock;
+
     /* Simple method to check if Canon safe mode get triggered (switched to 48 MHz / 21 MB/s) */
     /* Safe mode get triggered when a SD card doesn't accpet our overclocking configuration or 
      * if there is an instabilty with the overclocking setting.                               */
@@ -433,16 +439,25 @@ static MENU_UPDATE_FUNC(sd_uhs_update)
     }
 }
 
+static MENU_UPDATE_FUNC(sd_access_mode_update)
+{
+    if (!sd_overclock)
+    {
+        MENU_SET_ENABLED(0);
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
+    }
+}
+
 static MENU_UPDATE_FUNC(MID_display)
 {
     MENU_SET_VALUE("%#02x", MID);
-    
+
     /* https://www.cameramemoryspeed.com/sd-memory-card-faq/reading-sd-card-cid-serial-psn-internal-numbers/ */
     if (MID == 0x01)
     {
         MENU_SET_WARNING(MENU_WARN_INFO, "Manufactured by Panasonic.");
     }
-    
+
     if (MID == 0x02)
     {
         MENU_SET_WARNING(MENU_WARN_INFO, "Manufactured by Toshiba.");
@@ -609,6 +624,31 @@ static struct menu_entry sd_uhs_menu[] =
     },
 };
 
+/* Flat Custom-panel SD rows (EOS M slim). Access Mode defaults to SDR104. */
+static struct menu_entry sd_uhs_menu_custom[] =
+{
+    {
+        .name   = "SD Overclock",
+        .priv   = &sd_overclock,
+        .update = sd_uhs_update,
+        .max    = 3,
+        .choices = CHOICES("OFF", "160 MHz", "192 MHz", "240 MHz (H)"),
+        .help   = "Choose a preset then restart the camera.",
+        .help2  = "\n"
+                  " \n"
+                  " \n"
+                  "(H): Hybrid clock speed. Will use 240MHz for Write, 192MHz for Read.\n",
+    },
+    {
+        .name       = "SD Access Mode",
+        .priv       = &access_mode,
+        .update     = sd_access_mode_update,
+        .max        = 1,
+        .choices    = CHOICES("SDR50", "SDR104"),
+        .help       = "SDR104 is required above 100 MHz. Some cards prefer SDR50.",
+    },
+};
+
 static unsigned int sd_uhs_init()
 {
     if (is_camera("5D3", "*"))
@@ -627,8 +667,12 @@ static unsigned int sd_uhs_init()
         sd_uhs_menu[0].help2   = sd_choices_help2_others;
     }
 
-    if (!is_camera("EOSM", "2.0.2"))
+    if (is_camera("EOSM", "2.0.2"))
+        menu_add("Custom", sd_uhs_menu_custom, COUNT(sd_uhs_menu_custom));
+    else
         menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));
+
+    slim_sd_overclock = sd_overclock;
     
     if (is_camera("5D3", "1.1.3"))
     {

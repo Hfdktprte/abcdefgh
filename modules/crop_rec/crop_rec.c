@@ -5300,6 +5300,30 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
  * Frame Rate cycles only valid rates; Bit Depth stays 14/12/10 always.
  * Module builds lack CONFIG_SLIM_MENUS — gate with is_EOSM. */
 
+/* Core mirror of sd_uhs overclock (custom_menu.c) for Custom-panel greying. */
+static int slim_sd_oc_default = 3;
+extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
+
+static MENU_UPDATE_FUNC(slim_more_hacks_update)
+{
+    if (!slim_sd_overclock)
+    {
+        MENU_SET_ENABLED(0);
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
+    }
+}
+
+static struct menu_entry slim_more_hacks_menu[] = {
+    {
+        .name     = "More Hacks",
+        .max      = 1,
+        .choices  = CHOICES("OFF", "Allow"),
+        .priv     = &more_hacks,
+        .update   = slim_more_hacks_update,
+        .help     = "Allow More hacks even when other settings would block them.",
+    },
+};
+
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
@@ -7762,6 +7786,7 @@ static unsigned int crop_rec_init()
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
+        menu_add("Custom", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
     }

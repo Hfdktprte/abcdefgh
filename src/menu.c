@@ -2912,12 +2912,13 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows around the adjustable value — always on for adjustable rows
-     * (including OFF). Do not hide when enabled==0 / bool OFF. */
+    /* Dial arrows around the adjustable value — keep for bool OFF; hide when
+     * the row is locked/greyed (enabled==0 non-bool, e.g. fixed Preset). */
     int draw_tri_arrows =
         slim_style &&
         entry_is_inline_adjustable(entry) &&
         info->value[0] &&
+        (info->enabled != 0 || IS_BOOL(entry)) &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;

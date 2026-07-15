@@ -600,6 +600,39 @@ static MENU_UPDATE_FUNC(isoless_overlap_update)
 
 static MENU_UPDATE_FUNC(isoless_update)
 {
+#ifdef CONFIG_SLIM_MENUS
+    /* Absolute recovery ISO indices: 200 / 400 / 800 / 1600 */
+    static const int slim_rec[] = { 1, 2, 3, 4 };
+    int i;
+
+    /* Snap recovery onto the four slim choices (200 / 400 / 800 / 1600). */
+    for (i = 0; i < 4; i++)
+        if (slim_rec[i] == isoless_recovery_iso)
+            break;
+    if (i >= 4)
+        isoless_recovery_iso = 2; /* 400 */
+
+    int primary = 100;
+    if (lens_info.iso)
+        primary = raw2iso(lens_info.iso_equiv_raw);
+    else if (lens_info.iso_analog_raw)
+        primary = raw2iso(lens_info.iso_analog_raw / 8 * 8);
+
+    int recovery = raw2iso(72 + isoless_recovery_iso * 8);
+
+    if (!isoless_hdr)
+        MENU_SET_VALUE("OFF");
+    else
+        MENU_SET_VALUE("%d/%d", primary, recovery);
+
+    if (isoless_hdr)
+        isoless_check(entry, info);
+
+    /* No grey ON/OFF disc; keep Canon / arrow chrome active. */
+    MENU_SET_ICON(0, 0);
+    MENU_SET_ENABLED(1);
+    return;
+#else
     if (!isoless_hdr)
         return;
 
@@ -615,13 +648,49 @@ static MENU_UPDATE_FUNC(isoless_update)
     int dr_improvement = dual_iso_get_dr_improvement() / 10;
     
     MENU_SET_RINFO("DR+%d.%d", dr_improvement/10, dr_improvement%10);
+#endif
 }
+
+#ifdef CONFIG_SLIM_MENUS
+/* Dial cycles recovery ISO only: primary/200, primary/400, primary/800, primary/1600.
+ * Primary always mirrors the main Expo ISO selection. SET still toggles Dual ISO ON/OFF. */
+static MENU_SELECT_FUNC(isoless_slim_select)
+{
+    static const int slim_rec[] = { 1, 2, 3, 4 }; /* CMOS indices for 200..1600 */
+    int i, cur;
+
+    (void)priv;
+
+    if (!isoless_hdr)
+    {
+        /* Coming from OFF: enable and pick first / last depending on dial direction. */
+        isoless_hdr = 1;
+        isoless_recovery_iso = (delta > 0) ? slim_rec[0] : slim_rec[3];
+        return;
+    }
+
+    cur = isoless_recovery_iso;
+    for (i = 0; i < 4; i++)
+        if (slim_rec[i] == cur)
+            break;
+    if (i >= 4)
+        i = (delta > 0) ? 0 : 3;
+    else
+        i = MOD(i + delta, 4);
+
+    isoless_recovery_iso = slim_rec[i];
+}
+#endif
 
 static struct menu_entry isoless_menu[] =
 {
     {
         .name = "Dual ISO",
         .priv = &isoless_hdr,
+#ifdef CONFIG_SLIM_MENUS
+        .select = isoless_slim_select,
+        .icon_type = IT_ACTION,
+#endif
         .update = isoless_update,
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",

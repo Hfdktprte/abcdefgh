@@ -162,20 +162,11 @@ static int entry_is_inline_adjustable(struct menu_entry * entry)
     return 0;
 }
 
-/* Expo top-level rows with EM_INLINE_ADJUST — custom selection chrome (not other menus). */
-static int entry_is_expo_inline_style(struct menu_entry * entry, int in_submenu)
+/* Slim redesigned chrome: Canon font, orange selection, dial arrows — all menus. */
+static int entry_is_slim_style(struct menu_entry * entry, int in_submenu)
 {
-    if (!entry || in_submenu || !(entry->edit_mode & EM_INLINE_ADJUST))
-        return 0;
-    if (entry->parent_menu && entry->parent_menu->name && streq(entry->parent_menu->name, "Expo"))
-        return 1;
-    if (!entry->name)
-        return 0;
-    return streq(entry->name, "White Balance")
-        || streq(entry->name, "ISO")
-        || streq(entry->name, "Shutter")
-        || streq(entry->name, "Aperture")
-        || streq(entry->name, "Dual ISO");
+    (void)in_submenu;
+    return entry != 0;
 }
 
 /* Filled ◄ — tip points left (narrow on left, flat base on right). */
@@ -2773,19 +2764,20 @@ entry_print(
         fnt = MENU_FONT_GRAY;
     
 #ifdef CONFIG_SLIM_MENUS
-    int expo_inline_style = entry_is_expo_inline_style(entry, in_submenu);
-    /* Reclaim icon column so label starts where the left box used to be. */
-    if (expo_inline_style)
+    int slim_style = entry_is_slim_style(entry, in_submenu);
+    /* Reclaim icon column so label starts where the left meter used to be. */
+    if (slim_style)
         x -= MENU_OFFSET;
-    /* No Av/Tv/Sv / secondary text beside values */
-    info->rinfo[0] = 0;
+    /* Drop Av/Tv/Sv/DR+ side text; Shutter keeps ° in rinfo (drawn after arrows). */
+    if (!(entry->name && streq(entry->name, "Shutter")))
+        info->rinfo[0] = 0;
 #endif
 
     int use_small_font = 0;
     int x_font_offset = 0;
 #ifdef CONFIG_SLIM_MENUS
     /* Canon Gothic is taller (~40) than FONT_LARGE (~32); center in the row. */
-    int y_font_offset = expo_inline_style
+    int y_font_offset = slim_style
         ? (h - (int)fontspec_font(FONT_CANON)->height) / 2
         : (h - (int)font_large.height) / 2;
 #else
@@ -2858,11 +2850,12 @@ entry_print(
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    if (expo_inline_style && !customize_mode && !junkie_mode &&
-        info->warning_level != MENU_WARN_NOT_WORKING)
+    if (slim_style && !customize_mode && !junkie_mode)
     {
         /* Canon Gothic — native camera UI font (smoother than RBF bitmap fonts). */
-        int fg = (entry->selected && info->enabled != 0) ? COLOR_ORANGE : COLOR_WHITE;
+        int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
+        if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
+            fg = COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 #endif
@@ -2886,24 +2879,27 @@ skip_name:
         fnt = (fnt & ~FONT_MASK) | FONT_MED_LARGE;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Expo inline rows: Canon font for the whole row (~camera UI size/weight). */
-    if (expo_inline_style && !customize_mode && !junkie_mode &&
-        info->warning_level != MENU_WARN_NOT_WORKING &&
-        info->enabled != 0)
+    /* Slim chrome: Canon font for the whole row (~camera UI size/weight). */
+    if (slim_style && !customize_mode && !junkie_mode)
     {
         int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
+        if (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0)
+            fg = entry->selected ? COLOR_ORANGE : COLOR_GRAY(50);
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows always visible on Expo inline rows; color follows selection. Order: ◄ value ► */
+    /* Dial arrows around the adjustable value; color follows selection. Order: ◄ value ► */
     int draw_tri_arrows =
-        expo_inline_style &&
+        slim_style &&
         info->value[0] &&
-        !menu_lv_transparent_mode;
+        !menu_lv_transparent_mode &&
+        !customize_mode &&
+        !junkie_mode;
     int arrow_color = COLOR_WHITE;
-    if (draw_tri_arrows && entry->selected && !customize_mode && !junkie_mode &&
-        info->warning_level != MENU_WARN_NOT_WORKING && info->enabled != 0)
+    if (draw_tri_arrows && entry->selected)
         arrow_color = COLOR_ORANGE;
+    if (draw_tri_arrows && (info->warning_level == MENU_WARN_NOT_WORKING || info->enabled == 0) && !entry->selected)
+        arrow_color = COLOR_GRAY(50);
     int fonth = fontspec_font(fnt)->height;
     int tri_h = MAX(fonth - 4, 18); /* match value glyph height */
     int arrow_w = draw_tri_arrows ? (tri_h * 6) / 10 + 1 : 0;
@@ -2926,24 +2922,27 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    int end = w + val_width + (draw_tri_arrows ? 2 * (arrow_w + arrow_pad) : 0);
+    /* Secondary text painted immediately after arrows (e.g. shutter angle) */
+    int adj_rinfo_w = 0;
+#ifdef CONFIG_SLIM_MENUS
+    if (draw_tri_arrows && info->rinfo[0])
+        adj_rinfo_w = bmp_string_width(fnt, info->rinfo) + arrow_pad;
+#endif
+    int end = w + val_width + (draw_tri_arrows ? 2 * (arrow_w + arrow_pad) : 0) + adj_rinfo_w;
     int wmax = x_end - x;
 
-    // right-justified info field?
-    int rlen = bmp_string_width(fnt, info->rinfo);
+    // right-justified info field? (skipped when rinfo sits next to dial arrows)
+    int rlen = (draw_tri_arrows && info->rinfo[0]) ? 0 : bmp_string_width(fnt, info->rinfo);
     int rinfo_x = x_end - rlen - 35;
     if (rlen) wmax -= rlen + char_width + 35;
     
+#ifndef CONFIG_SLIM_MENUS
     // no right info? then make sure there's room for the Q symbol
-    else if (entry->children && !in_submenu && !menu_lv_transparent_mode && (entry->priv || entry->select)
-#ifdef CONFIG_SLIM_MENUS
-        /* White Balance has no Q> — do not reserve space for it */
-        && !(expo_inline_style && entry->name && streq(entry->name, "White Balance"))
-#endif
-        )
+    else if (entry->children && !in_submenu && !menu_lv_transparent_mode && (entry->priv || entry->select))
     {
         wmax -= 35;
     }
+#endif
     
     if (end > wmax)
         w -= (end - wmax);
@@ -2970,7 +2969,7 @@ skip_name:
     int value_cy = y + y_font_offset + (fonth * 9) / 20;
     if (draw_tri_arrows)
     {
-        /* ◄ 5500K ► — tip of left arrow at outer left, tip of right at outer right */
+        /* ◄ value ► — tip of left arrow at outer left, tip of right at outer right */
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
         x_value = xval + arrow_w + arrow_pad;
     }
@@ -2985,9 +2984,21 @@ skip_name:
     );
 
 #ifdef CONFIG_SLIM_MENUS
+    int x_after_value = x_value + val_width;
     if (draw_tri_arrows)
     {
-        slim_draw_arrow_right(x_value + val_width + arrow_pad + arrow_w, value_cy, tri_h, arrow_color);
+        x_after_value = x_value + val_width + arrow_pad + arrow_w;
+        slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
+        /* e.g. shutter angle immediately after ► */
+        if (info->rinfo[0])
+        {
+            bmp_printf(
+                fnt,
+                x_after_value + arrow_pad, y + y_font_offset,
+                "%s",
+                info->rinfo
+            );
+        }
     }
 #endif
     
@@ -3002,7 +3013,11 @@ skip_name:
     }
 
     // print right-justified info, if any
-    if (info->rinfo[0])
+    if (info->rinfo[0]
+#ifdef CONFIG_SLIM_MENUS
+        && !(draw_tri_arrows)
+#endif
+        )
     {
         bmp_printf(
             MENU_FONT_GRAY,
@@ -3014,6 +3029,7 @@ skip_name:
 
     int y_icon_offset = (h - 32) / 2 - 1;
 
+#ifndef CONFIG_SLIM_MENUS
     if (entry->icon_type == IT_SUBMENU )
     {
         // Forward sign for submenus that open with SET
@@ -3026,18 +3042,14 @@ skip_name:
     }
     else if (entry->children && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
     {
-#ifdef CONFIG_SLIM_MENUS
-        /* White Balance only: no Q> (user does not want that submenu via Q). */
-        int hide_q = expo_inline_style && entry->name && streq(entry->name, "White Balance");
-        if (!hide_q)
-#endif
-        {
-            if (entry->selected)
-                submenu_key_hint(720-40, y + y_icon_offset, COLOR_WHITE, COLOR_BLACK, ICON_ML_Q_FORWARD);
-            else
-                submenu_key_hint(720-35, y + y_icon_offset, 40, COLOR_BLACK, ICON_ML_FORWARD);
-        }
+        if (entry->selected)
+            submenu_key_hint(720-40, y + y_icon_offset, COLOR_WHITE, COLOR_BLACK, ICON_ML_Q_FORWARD);
+        else
+            submenu_key_hint(720-35, y + y_icon_offset, 40, COLOR_BLACK, ICON_ML_FORWARD);
     }
+#else
+    (void)y_icon_offset;
+#endif
 
     if (my_menu && my_menu->selected && streq(my_menu->name, "Recent") && !junkie_mode)
     {
@@ -3061,8 +3073,8 @@ skip_name:
     if (entry->selected)
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* WB Expo: no blue/cyan left bar, no blue row highlight — text-only selection */
-        if (!(expo_inline_style && !customize_mode && !junkie_mode))
+        /* Slim: no blue/cyan left bar, no blue row highlight — text-only selection */
+        if (!(slim_style && !customize_mode && !junkie_mode))
 #endif
         {
             int color_left = 45;
@@ -3174,8 +3186,8 @@ skip_name:
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Expo inline rows: never draw the left icon meter / selection-looking box */
-    if (expo_inline_style)
+    /* Slim chrome: never draw left icon meter / ON-OFF disc */
+    if (slim_style)
         return;
 #endif
 
@@ -3681,9 +3693,9 @@ menu_display(
             // display current entry
             int row_h = font_large.height + local_spacing;
 #ifdef CONFIG_SLIM_MENUS
-            /* Taller Expo White Balance row (~2× default row height for Canon Gothic). */
-            if (entry_is_expo_inline_style(entry, IS_SUBMENU(menu)))
-                row_h = MAX(row_h, font_large.height * 2 + local_spacing);
+            /* Taller rows for Canon Gothic. */
+            if (entry_is_slim_style(entry, IS_SUBMENU(menu)))
+                row_h = MAX(row_h, (int)fontspec_font(FONT_CANON)->height + local_spacing + 8);
 #endif
             int ok = menu_entry_process(menu, entry, x, y, row_h, only_selected);
             
@@ -4602,18 +4614,12 @@ void menu_entry_select(
 
         if (menu_lv_transparent_mode) { menu_lv_transparent_mode = 0; }
 #ifdef CONFIG_SLIM_MENUS
-        else if (entry->name && streq(entry->name, "White Balance")
-            && (entry->edit_mode & EM_INLINE_ADJUST))
+        else
         {
-            /* White Balance: Q must not open the advanced submenu */
+            /* Slim: no Q submenu / touch-Q path — physical dials + SET/PLAY only. */
             entry_used = 1;
         }
-        else if (IS_BOOL(entry) && !entry->children)
-        {
-            /* flat ON/OFF overlay toggles: ignore Q and touch */
-            entry_used = 1;
-        }
-#endif
+#else
         else if (edit_mode)
         {
             edit_mode = 0;
@@ -4634,6 +4640,10 @@ void menu_entry_select(
          // submenu with a single entry? promote it as pickbox
         if (submenu_level && promotable_to_pickbox)
             edit_mode = 1;
+#endif
+#ifdef CONFIG_SLIM_MENUS
+        (void)promotable_to_pickbox;
+#endif
     }
     else if (mode == 3) // SET
     {
@@ -4659,7 +4669,7 @@ void menu_entry_select(
             }
             else if (IS_BOOL(entry) && IS_ML_PTR(entry->priv))
             {
-                /* Dual ISO etc: SET toggles ON/OFF; Q still opens submenu */
+                /* Dual ISO etc: SET toggles ON/OFF */
                 menu_numeric_toggle_fast(entry->priv, 1, entry->min, entry->max, entry->unit, entry->edit_mode, 0);
                 entry_used = 1;
             }
@@ -5287,20 +5297,19 @@ int handle_ml_menu_touch(struct event * event)
     switch (button_code) {
         case BGMT_TOUCH_1_FINGER:
 #ifdef CONFIG_SLIM_MENUS
-        {
-            struct menu_entry * entry = get_selected_menu_entry(0);
-            /* White Balance: ignore touch so it cannot open the WB submenu. */
-            if (entry && entry->name && streq(entry->name, "White Balance"))
-                return 0;
-            if (entry && IS_BOOL(entry) && !entry->children)
-                return 0;
-        }
-#endif
+            /* Slim: no touch interaction on any menu item. */
+            return 0;
+#else
             fake_simple_button(BGMT_Q);
             return 0;
+#endif
         case BGMT_TOUCH_2_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+            return 0;
+#else
             fake_simple_button(BGMT_TRASH);
             return 0;
+#endif
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
             return 0;

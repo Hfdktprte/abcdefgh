@@ -5903,30 +5903,8 @@ handle_ml_menu_keys(struct event * event)
 
 #ifdef CONFIG_SLIM_MENUS
     case BGMT_PLAY:
-        /* PLAY always backs out of advanced submenus (e.g. White Balance). */
-        if (menu_help_active) { menu_help_active = 0; break; }
-        if (submenu_level)
-        {
-            menu_close_submenu();
-            menu_needs_full_redraw = 1;
-        }
-        else if (menu_grid_is_launched())
-        {
-            menu_grid_return();
-            menu_needs_full_redraw = 1;
-        }
-        else
-        {
-            /* Top level: same as Q (open submenu / secondary action) for non-inline rows;
-             * for inline rows with children, PLAY is reserved as Back and does nothing here. */
-            struct menu_entry * e = get_selected_menu_entry(menu);
-            if (!(e && (e->edit_mode & EM_INLINE_ADJUST) && e->children))
-            {
-                menu_entry_select( menu, 2 );
-                menu_needs_full_redraw = 1;
-            }
-        }
-        break;
+        /* PLAY is for viewing clips on the Recording screen only — inert in any menu. */
+        return 0;
 #endif
 
     default:

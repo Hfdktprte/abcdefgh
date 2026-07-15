@@ -5775,7 +5775,7 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
 
     if (slim_mode_ui == 3 || (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu == 5))
     {
-        MENU_SET_VALUE("3 fps");
+        MENU_SET_VALUE("3");
         MENU_SET_ENABLED(0);
         return;
     }
@@ -5785,12 +5785,12 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         && COERCE(crop_preset_1x3_res_menu, 0, 2) == 0
         && crop_preset_ar_menu == 0)
     {
-        MENU_SET_VALUE("22.250 fps");
+        MENU_SET_VALUE("22.250");
         MENU_SET_ENABLED(0);
         return;
     }
 
-    static const char * labels[] = { "23.976 fps", "25 fps", "30 fps" };
+    static const char * labels[] = { "23.976", "25", "30" };
     MENU_SET_VALUE("%s", labels[COERCE(crop_preset_fps_menu, 0, 2)]);
 
     /* Only one valid rate → show it greyed (read-only). */
@@ -5865,7 +5865,7 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .select     = slim_crop_fps_select,
         .update     = slim_crop_fps_update,
         .max        = 2,
-        .choices    = CHOICES("23.976 fps", "25 fps", "30 fps"),
+        .choices    = CHOICES("23.976", "25", "30"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Frame rates supported by the current configuration.",

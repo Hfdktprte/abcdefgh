@@ -12,9 +12,10 @@
 #define GRID_COLS       2
 #define GRID_ROWS       2
 #define GRID_COUNT      (GRID_COLS * GRID_ROWS)
-#define GRID_PAD        36   /* equal margin from all screen edges */
-#define GRID_GAP        28   /* equal gap between cells */
-#define GRID_RADIUS     16   /* same corner radius for fill and selection border */
+/* One spacing value: left = mid = right = top = between = bottom. */
+#define GRID_SPACE      40
+#define GRID_RADIUS     36   /* soft modern card corners */
+#define GRID_SEL_BORDER 6    /* orange ring thickness outside the grey fill */
 
 static int grid_active = 0;
 static int grid_launched = 0;
@@ -45,8 +46,28 @@ static void grid_fill_round_rect(int x, int y, int w, int h, int r, int color)
 
 static void grid_stroke_round_rect(int x, int y, int w, int h, int r, int color, int thick)
 {
+    /* True circular corners (same as fill) — not chamfer diagonals. */
+    if (w <= 0 || h <= 0) return;
+    r = MIN(r, MIN(w, h) / 2);
+
     for (int t = 0; t < thick; t++)
-        bmp_draw_rect_chamfer(color, x - t, y - t, w + 2 * t, h + 2 * t, r, t > 0);
+    {
+        int xi = x - t;
+        int yi = y - t;
+        int wi = w + 2 * t;
+        int hi = h + 2 * t;
+        int ri = MIN(r + t, MIN(wi, hi) / 2);
+
+        draw_line(xi + ri, yi,      xi + wi - ri - 1, yi,              color);
+        draw_line(xi + ri, yi + hi - 1, xi + wi - ri - 1, yi + hi - 1, color);
+        draw_line(xi,      yi + ri, xi,              yi + hi - ri - 1, color);
+        draw_line(xi + wi - 1, yi + ri, xi + wi - 1, yi + hi - ri - 1, color);
+
+        draw_circle(xi + ri,           yi + ri,           ri, color);
+        draw_circle(xi + wi - ri - 1,  yi + ri,           ri, color);
+        draw_circle(xi + ri,           yi + hi - ri - 1,  ri, color);
+        draw_circle(xi + wi - ri - 1,  yi + hi - ri - 1,  ri, color);
+    }
 }
 
 /* Square icon tile: filled rounded square with centered glyph. */
@@ -127,27 +148,25 @@ static const grid_tile_t grid_tiles[GRID_COUNT] =
     { "Settings",   "Settings", grid_icon_custom },
 };
 
-static void grid_layout(int *ox, int *oy, int *cell)
+static void grid_layout(int *ox, int *oy, int *cw, int *ch)
 {
-    int inner_w = 720 - 2 * GRID_PAD - GRID_GAP;
-    int inner_h = 480 - 2 * GRID_PAD - GRID_GAP;
-    *cell = MIN(inner_w / GRID_COLS, inner_h / GRID_ROWS);
-    int gw = GRID_COLS * *cell + GRID_GAP;
-    int gh = GRID_ROWS * *cell + GRID_GAP;
-    *ox = (720 - gw) / 2;
-    *oy = (480 - gh) / 2;
+    /* Margin == gap on each axis: 2 cells + 3 equal spaces fill the screen. */
+    *cw = (720 - 3 * GRID_SPACE) / GRID_COLS;
+    *ch = (480 - 3 * GRID_SPACE) / GRID_ROWS;
+    *ox = GRID_SPACE;
+    *oy = GRID_SPACE;
 }
 
 static void grid_cell_rect(int idx, int *x, int *y, int *w, int *h)
 {
-    int ox, oy, cell;
-    grid_layout(&ox, &oy, &cell);
+    int ox, oy, cw, ch;
+    grid_layout(&ox, &oy, &cw, &ch);
     int col = idx % GRID_COLS;
     int row = idx / GRID_COLS;
-    *x = ox + col * (cell + GRID_GAP);
-    *y = oy + row * (cell + GRID_GAP);
-    *w = cell;
-    *h = cell;
+    *x = ox + col * (cw + GRID_SPACE);
+    *y = oy + row * (ch + GRID_SPACE);
+    *w = cw;
+    *h = ch;
 }
 
 int menu_grid_is_active(void)   { return grid_active; }
@@ -190,21 +209,24 @@ void menu_grid_draw(void)
     int label_h = fontspec_font(FONT_CANON)->height;
     int label_gap = 12;
     int bottom_pad = 14;
+    int b = GRID_SEL_BORDER;
 
     for (int i = 0; i < GRID_COUNT; i++)
     {
         int x, y, w, h;
         grid_cell_rect(i, &x, &y, &w, &h);
         int selected = (i == grid_sel);
+        int r = MIN(GRID_RADIUS, MIN(w, h) / 2);
 
-        grid_fill_round_rect(x, y, w, h, GRID_RADIUS, COLOR_GRAY(20));
-
+        /* Orange ring = outer rounded fill, then grey punched on top (same geometry). */
         if (selected)
-            grid_stroke_round_rect(x, y, w, h, GRID_RADIUS, COLOR_ORANGE, 3);
+            grid_fill_round_rect(x - b, y - b, w + 2 * b, h + 2 * b, r + b, COLOR_ORANGE);
+
+        grid_fill_round_rect(x, y, w, h, r, COLOR_GRAY(20));
 
         int icon_zone_h = h - label_h - bottom_pad - label_gap;
         int icon_cy = y + icon_zone_h / 2;
-        int icon_size = MIN(w * 42 / 100, icon_zone_h * 72 / 100);
+        int icon_size = MIN(MIN(w, h) * 42 / 100, icon_zone_h * 72 / 100);
         icon_size = MIN(icon_size, 64);
         icon_size = MAX(icon_size, 40);
         grid_tiles[i].draw(x + w / 2, icon_cy, icon_size);

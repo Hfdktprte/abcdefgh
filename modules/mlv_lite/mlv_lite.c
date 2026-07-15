@@ -94,9 +94,6 @@ extern int WEAK_FUNC(updowntoggle) Arrows_U_D;
 
 static int morehack = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(morehack) more_hacks;
-/* Core mirror of sd_uhs overclock (custom_menu.c) for Custom-panel greying. */
-static int slim_sd_oc_default = 3;
-extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
 
 static int infotoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(infotoggle) INFO_button;
@@ -4296,24 +4293,14 @@ static MENU_UPDATE_FUNC(small_hacks_update)
     }
 }
 
-/* Custom panel (EOS M slim): Small Hacks Off/On/More; greyed when SD Overclock is OFF. */
-static MENU_UPDATE_FUNC(slim_small_hacks_update)
-{
-    small_hacks_update(entry, info);
-    if (!slim_sd_overclock)
-    {
-        MENU_SET_ENABLED(0);
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
-    }
-}
-
+/* Settings panel (EOS M slim): Small Hacks Off/On/More. */
 static struct menu_entry slim_small_hacks_menu[] =
 {
     {
         .name     = "Small Hacks",
         .priv     = &small_hacks,
         .max      = 2,
-        .update   = slim_small_hacks_update,
+        .update   = small_hacks_update,
         .choices  = CHOICES("OFF", "ON", "More"),
         .edit_mode = EM_INLINE_ADJUST,
         .help     = "Disable some tasks to increase write speed.",

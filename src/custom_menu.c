@@ -8,9 +8,6 @@
 
 #ifdef CONFIG_SLIM_MENUS
 
-/* Mirrored from sd_uhs for cross-module Settings-panel greying (no menu_sem). */
-int slim_sd_overclock = 3;
-
 /* Order of Settings panel rows. Entries fill these placeholders by name. */
 static struct menu_entry custom_menu_placeholders[] =
 {

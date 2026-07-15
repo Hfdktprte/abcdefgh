@@ -35,10 +35,6 @@ static int turned_on = 0;
 CONFIG_INT("sd.sd_overclock", sd_overclock, 3);
 static CONFIG_INT("sd.sd_access_mode", access_mode, 1);
 
-/* Core mirror for Custom-panel greying (mlv_lite / crop_rec). */
-static int slim_sd_oc_default = 3;
-extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
-
 /* CID info hook, should work on all DIGIC 5 models */
 unsigned int MID;
 unsigned int OID;
@@ -418,8 +414,6 @@ static void sd_overclock_task()
 
 static MENU_UPDATE_FUNC(sd_uhs_update)
 {
-    slim_sd_overclock = sd_overclock;
-
     /* Simple method to check if Canon safe mode get triggered (switched to 48 MHz / 21 MB/s) */
     /* Safe mode get triggered when a SD card doesn't accpet our overclocking configuration or 
      * if there is an instabilty with the overclocking setting.                               */
@@ -436,15 +430,6 @@ static MENU_UPDATE_FUNC(sd_uhs_update)
                 MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Safe mode was triggered, try lower frequency or different access mode.");
             }
         }
-    }
-}
-
-static MENU_UPDATE_FUNC(sd_access_mode_update)
-{
-    if (!sd_overclock)
-    {
-        MENU_SET_ENABLED(0);
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
     }
 }
 
@@ -643,7 +628,6 @@ static struct menu_entry sd_uhs_menu_custom[] =
     {
         .name       = "SD Access Mode",
         .priv       = &access_mode,
-        .update     = sd_access_mode_update,
         .max        = 1,
         .choices    = CHOICES("SDR50", "SDR104"),
         .edit_mode  = EM_INLINE_ADJUST,
@@ -673,8 +657,6 @@ static unsigned int sd_uhs_init()
         menu_add("Settings", sd_uhs_menu_custom, COUNT(sd_uhs_menu_custom));
     else
         menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));
-
-    slim_sd_overclock = sd_overclock;
     
     if (is_camera("5D3", "1.1.3"))
     {

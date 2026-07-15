@@ -185,7 +185,7 @@ static struct menu_entry slim_card_bench_menu[] =
         .choices  = CHOICES("OFF", "ON"),
         .edit_mode = EM_INLINE_ADJUST,
         .help     = "Quick R/W benchmark (1 min). Turning ON starts it immediately.",
-        .help2    = "Uses a 16MB buffer and a 1GB temp file.",
+        .help2    = "Leaves LiveView for PLAY on LCD (blank black) to cut overhead.",
     },
 };
 

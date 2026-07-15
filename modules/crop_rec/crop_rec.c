@@ -5300,26 +5300,12 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
  * Frame Rate cycles only valid rates; Bit Depth stays 14/12/10 always.
  * Module builds lack CONFIG_SLIM_MENUS — gate with is_EOSM. */
 
-/* Core mirror of sd_uhs overclock (custom_menu.c) for Custom-panel greying. */
-static int slim_sd_oc_default = 3;
-extern int WEAK_FUNC(slim_sd_oc_default) slim_sd_overclock;
-
-static MENU_UPDATE_FUNC(slim_more_hacks_update)
-{
-    if (!slim_sd_overclock)
-    {
-        MENU_SET_ENABLED(0);
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "SD Overclock is disabled.");
-    }
-}
-
 static struct menu_entry slim_more_hacks_menu[] = {
     {
         .name     = "More Hacks",
         .max      = 1,
         .choices  = CHOICES("OFF", "Allow"),
         .priv     = &more_hacks,
-        .update   = slim_more_hacks_update,
         .edit_mode = EM_INLINE_ADJUST,
         .help     = "Allow More hacks even when other settings would block them.",
     },

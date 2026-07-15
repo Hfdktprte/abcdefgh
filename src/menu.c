@@ -255,6 +255,29 @@ static int is_visible(struct menu_entry * entry)
        ;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+/* Locked/grey rows (enabled==0, non-bool) stay visible but are not navigable. */
+static int entry_is_slim_locked_grey(struct menu_entry * entry)
+{
+    if (!entry)
+        return 1;
+
+    struct menu_display_info info;
+    entry_default_display_info(entry, &info);
+    if (entry->update)
+        entry->update(entry, &info);
+
+    if (info.enabled == 0 && !IS_BOOL(entry))
+        return 1;
+    return 0;
+}
+
+static int entry_is_slim_navigable(struct menu_entry * entry)
+{
+    return is_visible(entry) && !entry_is_slim_locked_grey(entry);
+}
+#endif
+
 static int g_submenu_width = 0;
 //~ #define g_submenu_width 720
 static int redraw_flood_stop = 0;
@@ -284,6 +307,7 @@ static struct menu * get_selected_toplevel_menu();
 static void menu_make_sure_selection_is_valid();
 static void config_menu_reload_flags();
 static int guess_submenu_enabled(struct menu_entry * entry);
+static void entry_default_display_info(struct menu_entry * entry, struct menu_display_info * info);
 static void menu_draw_icon(int x, int y, int type, intptr_t arg, int warn); // private
 static struct menu_entry * entry_find_by_name(const char* name, const char* entry_name);
 static struct menu_entry * get_selected_menu_entry(struct menu * menu);
@@ -5021,28 +5045,42 @@ void menu_entry_move(
     // Deslect the current one
     entry->selected = 0;
 
-    do
     {
-        if( direction < 0 )
+#ifdef CONFIG_SLIM_MENUS
+        int max_skip = get_menu_visible_count(menu) + 2;
+        int skipped = 0;
+#endif
+        do
         {
-            // First and moving up?
-            if( entry->prev ){
-                entry = entry->prev;
-            }else {
-                // Go to the last one
-                while( entry->next ) entry = entry->next;
+            if( direction < 0 )
+            {
+                // First and moving up?
+                if( entry->prev ){
+                    entry = entry->prev;
+                }else {
+                    // Go to the last one
+                    while( entry->next ) entry = entry->next;
+                }
+            } else {
+                // Last and moving down?
+                if( entry->next ){
+                    entry = entry->next;
+                }else {
+                    // Go to the first one
+                    while( entry->prev ) entry = entry->prev;
+                }
             }
-        } else {
-            // Last and moving down?
-            if( entry->next ){
-                entry = entry->next;
-            }else {
-                // Go to the first one
-                while( entry->prev ) entry = entry->prev;
-            }
+#ifdef CONFIG_SLIM_MENUS
+            skipped++;
+#endif
         }
+#ifdef CONFIG_SLIM_MENUS
+        /* Skip hidden and locked/grey rows — only land on adjustable items. */
+        while ((!entry_is_slim_navigable(entry)) && skipped < max_skip && menu_has_visible_items(menu));
+#else
+        while (!is_visible(entry) && menu_has_visible_items(menu)); /* skip hidden items */
+#endif
     }
-    while (!is_visible(entry) && menu_has_visible_items(menu)); /* skip hidden items */
 
     // Select the new one, which might be the same as the old one
     entry->selected = 1;
@@ -5087,8 +5125,17 @@ static void menu_make_sure_selection_is_valid()
         menu_entry_move(menu, -1);
         menu_entry_move(menu, 1);
     }
+#ifdef CONFIG_SLIM_MENUS
+    else if (entry->selected && entry_is_slim_locked_grey(entry))
+    {
+        /* Mode change may have locked the current row — step to next adjustable. */
+        menu_entry_move(menu, 1);
+        entry = get_selected_menu_entry(menu);
+        if (entry && entry_is_slim_locked_grey(entry))
+            menu_entry_move(menu, -1);
+    }
+#endif
 }
-
 
 /*static void menu_select_current(int reverse)
 {

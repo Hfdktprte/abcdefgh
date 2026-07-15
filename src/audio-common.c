@@ -4,6 +4,9 @@
 #include "raw.h"
 #include "zebra.h"
 #include "ml-cbr.h"
+#ifdef CONFIG_SLIM_MENUS
+#include "menu-grid.h"
+#endif
 
 int sound_recording_enabled_canon()
 {
@@ -342,6 +345,10 @@ static int audio_meters_are_drawn_common()
         
     if (gui_menu_shown())
     {
+#ifdef CONFIG_SLIM_MENUS
+        if (menu_grid_is_active())
+            return 0;
+#endif
         return is_menu_active("Audio");
     }
     else

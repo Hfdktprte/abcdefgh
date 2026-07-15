@@ -3,7 +3,6 @@
 #include <menu.h>
 #include <bmp.h>
 #include <lvinfo.h>
-#include "slim_rec_hud.h"
 
 #define MAX_ITEMS 64
 #define MIN_SPACING 24
@@ -566,12 +565,6 @@ void lvinfo_align_and_display(struct lvinfo_item * items[], int count, int bar_x
 EXCLUDES(lvinfo_sem)
 void lvinfo_display(int top, int bottom)
 {
-#ifdef CONFIG_SLIM_REC_HUD
-    /* Movie mode: replace default LV info bars with cinema recording HUD */
-    if (slim_rec_hud_display())
-        return;
-#endif
-
     take_semaphore(lvinfo_sem, 0);
 
     static int refresh_timer = INT_MIN;

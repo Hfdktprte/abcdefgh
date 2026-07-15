@@ -170,7 +170,6 @@ ML_SRC_OBJS = \
 	screenshot.o \
 	fileprefix.o \
 	lvinfo.o \
-	slim_rec_hud.o \
 	builtin-enforcing.o \
 	powersave.o \
 	ml-cbr.o \

@@ -161,6 +161,39 @@ static int entry_is_inline_adjustable(struct menu_entry * entry)
         return 1;
     return 0;
 }
+
+/* Expo top-level White Balance row only — custom selection chrome (not other menus). */
+static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
+{
+    return entry
+        && !in_submenu
+        && entry->children
+        && (entry->edit_mode & EM_INLINE_ADJUST)
+        && entry->name
+        && streq(entry->name, "White Balance");
+}
+
+/* Circular outlined L/R arrow for WB inline value adjust. dir: -1 left, +1 right */
+static void slim_draw_circled_arrow(int cx, int cy, int dir, int color)
+{
+    const int r = 11;
+    draw_circle(cx, cy, r, color);
+    draw_circle(cx, cy, r - 1, color);
+    if (dir > 0)
+    {
+        draw_line(cx - 4, cy - 5, cx + 3, cy, color);
+        draw_line(cx - 4, cy + 5, cx + 3, cy, color);
+        draw_line(cx - 3, cy - 5, cx + 4, cy, color);
+        draw_line(cx - 3, cy + 5, cx + 4, cy, color);
+    }
+    else
+    {
+        draw_line(cx + 4, cy - 5, cx - 3, cy, color);
+        draw_line(cx + 4, cy + 5, cx - 3, cy, color);
+        draw_line(cx + 3, cy - 5, cx - 4, cy, color);
+        draw_line(cx + 3, cy + 5, cx - 4, cy, color);
+    }
+}
 #endif
 
 #define HAS_SINGLE_ITEM_SUBMENU(entry) ((entry)->children && !(entry)->children[0].next && !(entry)->children[0].prev && !MENU_IS_EOL(entry->children))
@@ -2729,6 +2762,10 @@ entry_print(
     if (submenu_level && !in_submenu)
         fnt = MENU_FONT_GRAY;
     
+#ifdef CONFIG_SLIM_MENUS
+    int wb_expo_style = entry_is_wb_expo_style(entry, in_submenu);
+#endif
+
     int use_small_font = 0;
     int x_font_offset = 0;
     int y_font_offset = (h - (int)font_large.height) / 2;
@@ -2784,12 +2821,6 @@ entry_print(
                 new_name[max_len] = 0;
             }
 
-#ifdef CONFIG_SLIM_MENUS
-            if (entry->selected && !customize_mode && !junkie_mode &&
-                info->warning_level != MENU_WARN_NOT_WORKING)
-                fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
-#endif
-
             bmp_printf(
                 fnt,
                 x, y + y_font_offset,
@@ -2805,9 +2836,8 @@ entry_print(
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    if (entry->selected && !customize_mode && !junkie_mode &&
-        info->warning_level != MENU_WARN_NOT_WORKING &&
-        !(submenu_level && !in_submenu))
+    if (wb_expo_style && entry->selected && !customize_mode && !junkie_mode &&
+        info->warning_level != MENU_WARN_NOT_WORKING)
         fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
 #endif
 
@@ -2830,24 +2860,24 @@ skip_name:
         fnt = (fnt & ~FONT_MASK) | FONT_MED_LARGE;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Selected row: orange text highlight (background stays black). */
-    if (entry->selected && !customize_mode && !junkie_mode &&
+    /* Expo White Balance only: orange text selection (no blue bar / outline). */
+    if (wb_expo_style && entry->selected && !customize_mode && !junkie_mode &&
         info->warning_level != MENU_WARN_NOT_WORKING &&
-        info->enabled != 0 &&
-        !(submenu_level && !in_submenu))
+        info->enabled != 0)
     {
         fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
     }
 
-    int draw_inline_arrows =
+    int draw_circled_arrows =
+        wb_expo_style &&
         entry->selected &&
-        entry_is_inline_adjustable(entry) &&
         info->value[0] &&
         !menu_lv_transparent_mode;
-    int arrow_w = draw_inline_arrows ? bfnt_char_get_width(ICON_ML_FORWARD) : 0;
-    int arrow_pad = draw_inline_arrows ? 2 : 0;
+    const int circ_d = 24; /* diameter of circled arrow */
+    int arrow_w = draw_circled_arrows ? circ_d : 0;
+    int arrow_pad = draw_circled_arrows ? 6 : 0;
 #else
-    int draw_inline_arrows = 0;
+    int draw_circled_arrows = 0;
     int arrow_w = 0;
     int arrow_pad = 0;
 #endif
@@ -2864,7 +2894,7 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
-    int end = w + val_width + (draw_inline_arrows ? 2 * (arrow_w + arrow_pad) : 0);
+    int end = w + val_width + (draw_circled_arrows ? 2 * (arrow_w + arrow_pad) : 0);
     int wmax = x_end - x;
 
     // right-justified info field?
@@ -2899,13 +2929,11 @@ skip_name:
 
     int x_value = xval;
 #ifdef CONFIG_SLIM_MENUS
-    if (draw_inline_arrows)
+    if (draw_circled_arrows)
     {
-        /* < value > with ICON_ML_FORWARD (same arrow as Q>). */
-        bfnt_draw_char_hflip(
-            ICON_ML_FORWARD, xval, y + y_font_offset - 5,
-            COLOR_ORANGE, NO_BG_ERASE);
-        x_value = xval + arrow_w + arrow_pad;
+        int cy = y + y_font_offset + fontspec_font(fnt)->height / 2;
+        slim_draw_circled_arrow(xval + circ_d / 2, cy, -1, COLOR_ORANGE);
+        x_value = xval + circ_d + arrow_pad;
     }
 #endif
 
@@ -2918,11 +2946,10 @@ skip_name:
     );
 
 #ifdef CONFIG_SLIM_MENUS
-    if (draw_inline_arrows)
+    if (draw_circled_arrows)
     {
-        bfnt_draw_char(
-            ICON_ML_FORWARD, x_value + val_width + arrow_pad, y + y_font_offset - 5,
-            COLOR_ORANGE, NO_BG_ERASE);
+        int cy = y + y_font_offset + fontspec_font(fnt)->height / 2;
+        slim_draw_circled_arrow(x_value + val_width + arrow_pad + circ_d / 2, cy, 1, COLOR_ORANGE);
     }
 #endif
     
@@ -2961,8 +2988,19 @@ skip_name:
     }
     else if (entry->children && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
     {
-        // Q sign for selected item, if submenu opens with Q
-        // Discrete placeholder for non-selected item
+#ifdef CONFIG_SLIM_MENUS
+        /* WB Expo: Q> in same FONT_LARGE orange as label/value */
+        if (wb_expo_style && entry->selected)
+        {
+            bmp_printf(
+                fnt,
+                720 - bmp_string_width(fnt, "Q>") - 8,
+                y + y_font_offset,
+                "Q>"
+            );
+        }
+        else
+#endif
         if (entry->selected)
             submenu_key_hint(720-40, y + y_icon_offset, COLOR_WHITE, COLOR_BLACK, ICON_ML_Q_FORWARD);
         else
@@ -2991,16 +3029,8 @@ skip_name:
     if (entry->selected)
     {
 #ifdef CONFIG_SLIM_MENUS
-        if (!customize_mode && !junkie_mode)
-        {
-            /* Orange outline around name + value only; no blue left bar / row fill. */
-            int outline_right = x_value + val_width;
-            if (draw_inline_arrows)
-                outline_right += arrow_pad + arrow_w;
-            int outline_w = MAX(outline_right - xl + 6, bmp_string_width(fnt, info->name) + 8);
-            bmp_draw_rect(COLOR_ORANGE, xl, y + 2, outline_w, h - 5);
-        }
-        else
+        /* WB Expo: selection is orange text only — skip blue chrome */
+        if (!(wb_expo_style && !customize_mode && !junkie_mode))
 #endif
         {
             int color_left = 45;

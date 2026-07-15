@@ -1,5 +1,5 @@
 /** \file
- * Slim Custom panel — explicit order via placeholders.
+ * Slim Settings panel — explicit order via placeholders.
  * Module/core entries fill placeholders by name.
  */
 #include "dryos.h"
@@ -8,16 +8,14 @@
 
 #ifdef CONFIG_SLIM_MENUS
 
-/* Mirrored from sd_uhs for cross-module Custom-panel greying (no menu_sem). */
+/* Mirrored from sd_uhs for cross-module Settings-panel greying (no menu_sem). */
 int slim_sd_overclock = 3;
 
-/* Order of Custom panel rows. Entries fill these placeholders by name. */
+/* Order of Settings panel rows. Entries fill these placeholders by name. */
 static struct menu_entry custom_menu_placeholders[] =
 {
     { .name = "Digic Peaking",       .placeholder = 1 },
     { .name = "Screen Layout",       .placeholder = 1 },
-    { .name = "Crop Factor Display", .placeholder = 1 },
-    { .name = "Focus Distance Units",.placeholder = 1 },
     { .name = "HDMI Output",         .placeholder = 1 },
     { .name = "HDMI Resolution",     .placeholder = 1 },
     { .name = "SD Overclock",        .placeholder = 1 },
@@ -29,7 +27,7 @@ static struct menu_entry custom_menu_placeholders[] =
 
 static void custom_menu_init(void)
 {
-    menu_add("Custom", custom_menu_placeholders, COUNT(custom_menu_placeholders));
+    menu_add("Settings", custom_menu_placeholders, COUNT(custom_menu_placeholders));
 }
 
 INIT_FUNC(__FILE__, custom_menu_init);

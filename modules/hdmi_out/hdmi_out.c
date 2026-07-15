@@ -146,7 +146,7 @@ static MENU_UPDATE_FUNC(hdmi_update)
 
 static MENU_UPDATE_FUNC(output_resolution_update)
 {
-    /* Slim Custom panel: lock when HDMI Output is OFF. */
+    /* Slim Settings panel: lock when HDMI Output is OFF. */
     if (is_camera("EOSM", "2.0.2") && !hdmi_patch_enabled)
     {
         MENU_SET_ENABLED(0);
@@ -169,7 +169,7 @@ static MENU_UPDATE_FUNC(output_resolution_update)
     }
 }
 
-/* Flat Custom-panel HDMI rows (EOS M slim). */
+/* Flat Settings-panel HDMI rows (EOS M slim). */
 static struct menu_entry hdmi_out_menu_custom[] =
 {
     {
@@ -179,6 +179,7 @@ static struct menu_entry hdmi_out_menu_custom[] =
         .max        = 1,
         .priv       = &hdmi_patch_enabled,
         .choices    = CHOICES("OFF", "ON"),
+        .edit_mode  = EM_INLINE_ADJUST,
         .help       = "Change HDMI output settings.",
     },
     {
@@ -187,6 +188,7 @@ static struct menu_entry hdmi_out_menu_custom[] =
         .choices    = CHOICES("480p", "1080i 50Hz", "1080i 60Hz"),
         .max        = 2,
         .priv       = &output_resolution,
+        .edit_mode  = EM_INLINE_ADJUST,
         .help       = "Select an output resolution for HDMI displays.",
         .help2      = "480p: 720x480 output.\n"
                       "1080i 50Hz: 1920x1080i @ 50Hz output.\n"
@@ -329,7 +331,7 @@ static unsigned int hdmi_out_init()
     if (Set_HDMI_Code)
     {
         if (is_camera("EOSM", "2.0.2"))
-            menu_add("Custom", hdmi_out_menu_custom, COUNT(hdmi_out_menu_custom));
+            menu_add("Settings", hdmi_out_menu_custom, COUNT(hdmi_out_menu_custom));
         else
             menu_add("Display", hdmi_out_menu, COUNT(hdmi_out_menu));
     }

@@ -598,37 +598,97 @@ static MENU_UPDATE_FUNC(isoless_overlap_update)
     MENU_SET_VALUE("%d.%d EV", overlap/10, overlap%10);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+/* Recovery ISO (numeric) steps above the Expo ISO primary. Caps at 1600. */
+static const int slim_dual_recs[] = { 200, 400, 800, 1600 };
+
+static int slim_dual_primary_iso(void)
+{
+    if (lens_info.iso)
+        return raw2iso(lens_info.iso_equiv_raw);
+    if (lens_info.iso_analog_raw)
+        return raw2iso(lens_info.iso_analog_raw / 8 * 8);
+    return 100;
+}
+
+/* Absolute CMOS index for 200/400/800/1600 (isoless_recovery_iso >= 0 mode). */
+static int slim_dual_rec_to_index(int rec_iso)
+{
+    switch (rec_iso)
+    {
+        case 200:  return 1;
+        case 400:  return 2;
+        case 800:  return 3;
+        case 1600: return 4;
+        default:   return 2;
+    }
+}
+
+static int slim_dual_next_rec_above(int primary)
+{
+    unsigned i;
+    for (i = 0; i < COUNT(slim_dual_recs); i++)
+        if (slim_dual_recs[i] > primary)
+            return slim_dual_recs[i];
+    return 0;
+}
+
+static int slim_dual_next_rec_after(int primary, int cur_rec)
+{
+    unsigned i;
+    for (i = 0; i < COUNT(slim_dual_recs); i++)
+        if (slim_dual_recs[i] > cur_rec && slim_dual_recs[i] > primary)
+            return slim_dual_recs[i];
+    return 0; /* none → OFF */
+}
+#endif
+
 static MENU_UPDATE_FUNC(isoless_update)
 {
 #ifdef CONFIG_SLIM_MENUS
-    /* Absolute recovery ISO indices: 200 / 400 / 800 / 1600 */
-    static const int slim_rec[] = { 1, 2, 3, 4 };
-    int i;
+    static int last_primary = -1;
+    int primary = slim_dual_primary_iso();
+    int recovery;
 
-    /* Snap recovery onto the four slim choices (200 / 400 / 800 / 1600). */
-    for (i = 0; i < 4; i++)
-        if (slim_rec[i] == isoless_recovery_iso)
-            break;
-    if (i >= 4)
-        isoless_recovery_iso = 2; /* 400 */
+    /* When main ISO changes while Dual ISO is on, retarget first number and snap
+     * recovery to the next full-stop above the new primary. */
+    if (isoless_hdr && primary != last_primary)
+    {
+        int next = slim_dual_next_rec_above(primary);
+        if (!next)
+            isoless_hdr = 0;
+        else
+            isoless_recovery_iso = slim_dual_rec_to_index(next);
+    }
+    last_primary = primary;
 
-    int primary = 100;
-    if (lens_info.iso)
-        primary = raw2iso(lens_info.iso_equiv_raw);
-    else if (lens_info.iso_analog_raw)
-        primary = raw2iso(lens_info.iso_analog_raw / 8 * 8);
-
-    int recovery = raw2iso(72 + isoless_recovery_iso * 8);
+    /* Keep recovery valid (> primary and in the slim set). */
+    if (isoless_hdr)
+    {
+        recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
+        if (recovery <= primary ||
+            (recovery != 200 && recovery != 400 && recovery != 800 && recovery != 1600))
+        {
+            int next = slim_dual_next_rec_above(primary);
+            if (!next)
+                isoless_hdr = 0;
+            else
+            {
+                isoless_recovery_iso = slim_dual_rec_to_index(next);
+                recovery = next;
+            }
+        }
+    }
 
     if (!isoless_hdr)
         MENU_SET_VALUE("OFF");
     else
+    {
+        recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
         MENU_SET_VALUE("%d/%d", primary, recovery);
-
-    if (isoless_hdr)
         isoless_check(entry, info);
+    }
 
-    /* No grey ON/OFF disc; keep Canon / arrow chrome active. */
     MENU_SET_ICON(0, 0);
     MENU_SET_ENABLED(1);
     return;
@@ -652,42 +712,35 @@ static MENU_UPDATE_FUNC(isoless_update)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* Dial: primary/200 → /400 → /800 → /1600 → OFF → /200 … (primary from main ISO only). */
+/* Right-arrow only: OFF → primary/next → … → /1600 → OFF. Left is handled in menu.c (row nav). */
 static MENU_SELECT_FUNC(isoless_slim_select)
 {
-    static const int slim_rec[] = { 1, 2, 3, 4 }; /* CMOS indices for 200..1600 */
-    int i;
+    int primary = slim_dual_primary_iso();
+    int cur, next;
 
     (void)priv;
 
+    /* Ignore reverse dial — left arrow moves the menu selection instead. */
+    if (delta < 0)
+        return;
+
     if (!isoless_hdr)
     {
-        /* OFF → enable at first or last recovery depending on dial direction */
-        isoless_hdr = 1;
-        isoless_recovery_iso = (delta > 0) ? slim_rec[0] : slim_rec[3];
+        next = slim_dual_next_rec_above(primary);
+        if (next)
+        {
+            isoless_hdr = 1;
+            isoless_recovery_iso = slim_dual_rec_to_index(next);
+        }
         return;
     }
 
-    for (i = 0; i < 4; i++)
-        if (slim_rec[i] == isoless_recovery_iso)
-            break;
-    if (i >= 4)
-        i = 0;
-
-    if (delta > 0)
-    {
-        if (i >= 3)
-            isoless_hdr = 0; /* /1600 → OFF */
-        else
-            isoless_recovery_iso = slim_rec[i + 1];
-    }
+    cur = raw2iso(72 + isoless_recovery_iso_index() * 8);
+    next = slim_dual_next_rec_after(primary, cur);
+    if (!next)
+        isoless_hdr = 0;
     else
-    {
-        if (i <= 0)
-            isoless_hdr = 0; /* /200 → OFF */
-        else
-            isoless_recovery_iso = slim_rec[i - 1];
-    }
+        isoless_recovery_iso = slim_dual_rec_to_index(next);
 }
 #endif
 

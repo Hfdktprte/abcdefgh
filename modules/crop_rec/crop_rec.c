@@ -5300,7 +5300,7 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
  * Module builds lack CONFIG_SLIM_MENUS — gate with is_EOSM. */
 
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2; default Higher */
-static int slim_bit_depth_ui = 1;   /* 0=14 1=12 2=10 → bit_depth_analog 0/1/3 */
+static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
 
 static void slim_crop_sync_from_backend(void)
 {
@@ -5315,9 +5315,9 @@ static void slim_crop_sync_from_backend(void)
         else slim_unified_preset = 2;
     }
 
-    if (OUTPUT_14BIT) slim_bit_depth_ui = 0;
+    if (OUTPUT_10BIT || OUTPUT_11BIT) slim_bit_depth_ui = 0;
     else if (OUTPUT_12BIT) slim_bit_depth_ui = 1;
-    else slim_bit_depth_ui = 2; /* 11-bit or 10-bit → show as 10 */
+    else slim_bit_depth_ui = 2; /* 14-bit */
 }
 
 static void slim_crop_apply_unified_preset(void)
@@ -5336,7 +5336,7 @@ static void slim_crop_apply_unified_preset(void)
 
 static void slim_crop_apply_bit_depth(void)
 {
-    static const int map[] = { 0, 1, 3 }; /* 14, 12, 10 */
+    static const int map[] = { 3, 1, 0 }; /* 10, 12, 14 */
     slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 2);
     bit_depth_analog = map[slim_bit_depth_ui];
 }
@@ -5554,7 +5554,9 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
 
 static MENU_SELECT_FUNC(slim_crop_bit_select)
 {
-    slim_bit_depth_ui = MOD(slim_bit_depth_ui + delta, 3);
+    /* Both L and R advance the same way: 10 → 12 → 14 → 10. */
+    (void)delta;
+    slim_bit_depth_ui = MOD(slim_bit_depth_ui + 1, 3);
     slim_crop_apply_bit_depth();
 }
 
@@ -5562,8 +5564,8 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
 {
     slim_crop_sync_from_backend();
     MENU_SET_VALUE("%s",
-        slim_bit_depth_ui == 0 ? "14 Bit" :
-        slim_bit_depth_ui == 1 ? "12 Bit" : "10 Bit");
+        slim_bit_depth_ui == 0 ? "10 Bit" :
+        slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
     /* Never gate Bit Depth on lossless / other settings. */
 }
 
@@ -5626,7 +5628,7 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .select     = slim_crop_bit_select,
         .update     = slim_crop_bit_update,
         .max        = 2,
-        .choices    = CHOICES("14 Bit", "12 Bit", "10 Bit"),
+        .choices    = CHOICES("10 Bit", "12 Bit", "14 Bit"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Lossless RAW bit depth. Always available.",

@@ -173,31 +173,30 @@ static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
         && streq(entry->name, "White Balance");
 }
 
-/* Filled ◄ — tip is the leftmost pixel at x_left. */
-static void slim_draw_arrow_left(int x_left, int cy, int height, int color)
+/* Filled ◄ — tip points left (narrow on left, flat base on right). */
+static void slim_draw_arrow_left(int tip_x, int cy, int height, int color)
 {
     int half = MAX(height / 2, 1);
     int depth = MAX((height * 6) / 10, 2);
+    int base_x = tip_x + depth;
     for (int dy = -half; dy <= half; dy++)
     {
-        int span = depth * (half - ABS(dy)) / half;
-        if (span < 1)
-            span = 1;
-        draw_line(x_left, cy + dy, x_left + span, cy + dy, color);
+        /* At row center tip is at tip_x; edges pull inward toward the base. */
+        int x0 = tip_x + depth * ABS(dy) / half;
+        draw_line(x0, cy + dy, base_x, cy + dy, color);
     }
 }
 
-/* Filled ► — tip is the rightmost pixel at x_right. */
-static void slim_draw_arrow_right(int x_right, int cy, int height, int color)
+/* Filled ► — tip points right (flat base on left, narrow on right). */
+static void slim_draw_arrow_right(int tip_x, int cy, int height, int color)
 {
     int half = MAX(height / 2, 1);
     int depth = MAX((height * 6) / 10, 2);
+    int base_x = tip_x - depth;
     for (int dy = -half; dy <= half; dy++)
     {
-        int span = depth * (half - ABS(dy)) / half;
-        if (span < 1)
-            span = 1;
-        draw_line(x_right - span, cy + dy, x_right, cy + dy, color);
+        int x1 = tip_x - depth * ABS(dy) / half;
+        draw_line(base_x, cy + dy, x1, cy + dy, color);
     }
 }
 #endif
@@ -2959,7 +2958,7 @@ skip_name:
     int value_cy = y + y_font_offset + (fonth * 9) / 20;
     if (draw_tri_arrows)
     {
-        /* ◄ value ►  — left-pointing tip on the left */
+        /* ◄ 5500K ► — tip of left arrow at outer left, tip of right at outer right */
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
         x_value = xval + arrow_w + arrow_pad;
     }
@@ -2976,7 +2975,6 @@ skip_name:
 #ifdef CONFIG_SLIM_MENUS
     if (draw_tri_arrows)
     {
-        /* right-pointing tip on the right of the value */
         slim_draw_arrow_right(x_value + val_width + arrow_pad + arrow_w, value_cy, tri_h, arrow_color);
     }
 #endif

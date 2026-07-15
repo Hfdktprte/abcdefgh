@@ -215,9 +215,6 @@ static MENU_UPDATE_FUNC(slim_cropmarks_update)
     if (n > 4 && (streq(name + n - 4, ".BMP") || streq(name + n - 4, ".bmp")))
         name[n - 4] = 0;
     MENU_SET_VALUE("%s", name);
-
-    if (cropmark_movieonly && !is_movie_mode())
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Cropmarks are configured only for movie mode");
 }
 #endif
 
@@ -231,7 +228,6 @@ static struct menu_entry cropmarks_menu[] = {
         .max = 1,
         .help = "Cropmarks or custom grids for framing.",
         .help2 = "Dial L/R: OFF, then each available cropmark, wrap to OFF.",
-        .depends_on = DEP_GLOBAL_DRAW,
     },
 #else
     {

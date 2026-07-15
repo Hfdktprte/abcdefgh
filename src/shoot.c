@@ -4517,7 +4517,6 @@ static struct menu_entry expo_menus[] = {
     },
 #ifdef CONFIG_SLIM_MENUS
     MENU_PLACEHOLDER("Shutter tuning"),
-    MENU_PLACEHOLDER("Shutter lock"),
 #endif
     #endif
     #ifdef FEATURE_EXPO_APERTURE

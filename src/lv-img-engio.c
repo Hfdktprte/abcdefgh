@@ -903,7 +903,11 @@ static struct menu_entry lv_img_menu[] =
     .min = -500,
     .max = 500,
     .icon_type = IT_PERCENT_LOG_OFF,
+#ifdef CONFIG_SLIM_MENUS
+    .edit_mode = EM_INLINE_ADJUST,
+#else
     .edit_mode = EM_SHOW_LIVEVIEW,
+#endif
     .help = "Fine-tune shutter speed in approx 20-microsecond increments.",
     .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
     },

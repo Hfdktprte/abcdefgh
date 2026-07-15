@@ -971,6 +971,10 @@ static struct menu_entry movie_tweaks_menus[] =
         .name = "Shutter lock",
         .priv = &shutter_lock,
         .max = 1,
+#ifdef CONFIG_SLIM_MENUS
+        .choices = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+#endif
         .help   = "Lock shutter value in movie mode (change from Expo only).",
         .help2  = "Tip: it prevents you from changing it by mistake.",
         .depends_on = DEP_MOVIE_MODE,

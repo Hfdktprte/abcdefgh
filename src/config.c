@@ -883,6 +883,9 @@ static struct menu_entry cfg_menusmovie[] =
         .choices = (const char **) config_preset_choices,
         .select = config_preset_toggle,
         .update = config_preset_update,
+#ifdef CONFIG_SLIM_MENUS
+        .edit_mode = EM_INLINE_ADJUST,
+#endif
         .help = "Choose a configuration preset and start customize(restart needed)."
     },
 };

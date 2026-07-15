@@ -5446,23 +5446,6 @@ static void slim_crop_clamp_fps(void)
     crop_preset_fps_menu = 0;
 }
 
-static MENU_UPDATE_FUNC(slim_crop_parent_update)
-{
-    slim_crop_sync_from_backend();
-    slim_crop_apply_unified_preset();
-    slim_crop_clamp_fps();
-
-    if (CROP_PRESET_MENU == CROP_PRESET_OFF)
-    {
-        MENU_SET_VALUE("OFF");
-        return;
-    }
-
-    int w, h;
-    slim_crop_expected_res(&w, &h);
-    MENU_SET_VALUE("%dx%d", w, h);
-}
-
 static MENU_SELECT_FUNC(slim_crop_mode_select)
 {
     crop_preset_index = MOD(crop_preset_index + delta, 4);
@@ -5584,70 +5567,65 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
 static struct menu_entry crop_rec_menu_eosm[] =
 {
     {
-        .name       = "Crop Mode",
-        .update     = slim_crop_parent_update,
-        .icon_type  = IT_SUBMENU,
+        .name       = "Mode",
+        .priv       = &crop_preset_index,
+        .select     = slim_crop_mode_select,
+        .update     = slim_crop_mode_update,
+        .max        = 3,
+        .choices    = CHOICES("OFF", "1x1", "1x3", "3x3"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
-        .help       = "Mode, Aspect and Preset set RAW size; pick FPS and Bit Depth.",
-        .children = (struct menu_entry[]) {
-            {
-                .name       = "Mode",
-                .priv       = &crop_preset_index,
-                .select     = slim_crop_mode_select,
-                .update     = slim_crop_mode_update,
-                .max        = 3,
-                .choices    = CHOICES("OFF", "1x1", "1x3", "3x3"),
-                .edit_mode  = EM_INLINE_ADJUST,
-                .help       = "Crop / binning mode.",
-            },
-            {
-                .name       = "Aspect Ratio",
-                .priv       = &crop_preset_ar_menu,
-                .select     = slim_crop_ar_select,
-                .update     = slim_crop_ar_update,
-                .max        = 4,
-                .choices    = CHOICES("16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"),
-                .edit_mode  = EM_INLINE_ADJUST,
-                .help       = "Aspect ratio for the selected Mode and Preset.",
-            },
-            {
-                .name       = "Preset",
-                .priv       = &slim_unified_preset,
-                .select     = slim_crop_preset_select,
-                .update     = slim_crop_preset_update,
-                .max        = 2,
-                .choices    = CHOICES("Highest", "Higher", "Medium"),
-                .edit_mode  = EM_INLINE_ADJUST,
-                .help       = "Resolution tier. Highest / Higher / Medium.",
-            },
-            {
-                .name       = "Resolution",
-                .update     = slim_crop_res_update,
-                .help       = "RAW resolution from Mode, Aspect Ratio and Preset (read-only).",
-            },
-            {
-                .name       = "Frame Rate",
-                .priv       = &crop_preset_fps_menu,
-                .select     = slim_crop_fps_select,
-                .update     = slim_crop_fps_update,
-                .max        = 2,
-                .choices    = CHOICES("23.976 fps", "25 fps", "30 fps"),
-                .edit_mode  = EM_INLINE_ADJUST,
-                .help       = "Frame rates supported by the current configuration.",
-            },
-            {
-                .name       = "Bit Depth",
-                .priv       = &slim_bit_depth_ui,
-                .select     = slim_crop_bit_select,
-                .update     = slim_crop_bit_update,
-                .max        = 2,
-                .choices    = CHOICES("14-bit", "12-bit", "10-bit"),
-                .edit_mode  = EM_INLINE_ADJUST,
-                .help       = "Lossless RAW bit depth. Always available.",
-            },
-            MENU_EOL,
-        },
+        .help       = "Crop / binning mode.",
+    },
+    {
+        .name       = "Aspect Ratio",
+        .priv       = &crop_preset_ar_menu,
+        .select     = slim_crop_ar_select,
+        .update     = slim_crop_ar_update,
+        .max        = 4,
+        .choices    = CHOICES("16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"),
+        .edit_mode  = EM_INLINE_ADJUST,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "Aspect ratio for the selected Mode and Preset.",
+    },
+    {
+        .name       = "Preset",
+        .priv       = &slim_unified_preset,
+        .select     = slim_crop_preset_select,
+        .update     = slim_crop_preset_update,
+        .max        = 2,
+        .choices    = CHOICES("Highest", "Higher", "Medium"),
+        .edit_mode  = EM_INLINE_ADJUST,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "Resolution tier. Highest / Higher / Medium.",
+    },
+    {
+        .name       = "Resolution",
+        .update     = slim_crop_res_update,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "RAW resolution from Mode, Aspect Ratio and Preset (read-only).",
+    },
+    {
+        .name       = "Frame Rate",
+        .priv       = &crop_preset_fps_menu,
+        .select     = slim_crop_fps_select,
+        .update     = slim_crop_fps_update,
+        .max        = 2,
+        .choices    = CHOICES("23.976 fps", "25 fps", "30 fps"),
+        .edit_mode  = EM_INLINE_ADJUST,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "Frame rates supported by the current configuration.",
+    },
+    {
+        .name       = "Bit Depth",
+        .priv       = &slim_bit_depth_ui,
+        .select     = slim_crop_bit_select,
+        .update     = slim_crop_bit_update,
+        .max        = 2,
+        .choices    = CHOICES("14-bit", "12-bit", "10-bit"),
+        .edit_mode  = EM_INLINE_ADJUST,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .help       = "Lossless RAW bit depth. Always available.",
     },
 };
 
@@ -7554,11 +7532,10 @@ static unsigned int crop_rec_init()
         slim_crop_apply_unified_preset();
         slim_crop_clamp_fps();
         more_hacks = 1;
+        shutter_range = 1; /* Full range — menu hidden */
 
-        /* New single-screen Crop Mode — do not add the legacy nested tree / extras. */
+        /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
-        menu_add("Movie", customize_buttons_menu, COUNT(customize_buttons_menu));
-        menu_add("Movie", movie_menu_shutter_range, COUNT(movie_menu_shutter_range));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
     }

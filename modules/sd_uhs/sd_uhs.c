@@ -627,16 +627,8 @@ static unsigned int sd_uhs_init()
         sd_uhs_menu[0].help2   = sd_choices_help2_others;
     }
 
-    if (is_camera("EOSM", "2.0.2"))
-    {
-        for (struct menu_entry * e = sd_uhs_menu[0].children; !MENU_IS_EOL(e); e++)
-        {
-            if (streq(e->name, "Show CID info"))
-                e->shidden = 1;
-        }
-    }
-    
-    menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));
+    if (!is_camera("EOSM", "2.0.2"))
+        menu_add("Movie", sd_uhs_menu, COUNT(sd_uhs_menu));
     
     if (is_camera("5D3", "1.1.3"))
     {

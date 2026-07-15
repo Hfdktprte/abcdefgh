@@ -32,7 +32,6 @@ static struct menu_entry movie_menu_raw_toggle[] =
     { .name = "Frame Rate",           .placeholder = 1 },
     { .name = "Bit Depth",            .placeholder = 1 },
     { .name = "Sound recording",      .placeholder = 1 },
-    { .name = "Custom modes",         .placeholder = 1 },
     { .name = "Shutter lock",         .placeholder = 1 },
     { .name = "Shutter fine-tuning",  .placeholder = 1 },
 #else

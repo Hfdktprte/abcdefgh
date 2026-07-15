@@ -5448,7 +5448,10 @@ static void slim_crop_clamp_fps(void)
 
 static MENU_SELECT_FUNC(slim_crop_mode_select)
 {
-    crop_preset_index = MOD(crop_preset_index + delta, 4);
+    /* Cycle recording modes only (never OFF). Indices 1..3 → 1x1 / 1x3 / 3x3. */
+    int idx = COERCE(crop_preset_index, 1, 3);
+    idx = 1 + MOD(idx - 1 + delta, 3);
+    crop_preset_index = idx;
     slim_crop_sync_from_backend();
     slim_crop_apply_unified_preset();
     slim_crop_clamp_fps();
@@ -5456,8 +5459,8 @@ static MENU_SELECT_FUNC(slim_crop_mode_select)
 
 static MENU_UPDATE_FUNC(slim_crop_mode_update)
 {
-    (void)entry;
-    (void)info;
+    if (crop_preset_index < 1 || crop_preset_index > 3)
+        crop_preset_index = 1;
 }
 
 static MENU_SELECT_FUNC(slim_crop_preset_select)
@@ -5559,8 +5562,8 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
 {
     slim_crop_sync_from_backend();
     MENU_SET_VALUE("%s",
-        slim_bit_depth_ui == 0 ? "14-bit" :
-        slim_bit_depth_ui == 1 ? "12-bit" : "10-bit");
+        slim_bit_depth_ui == 0 ? "14 Bit" :
+        slim_bit_depth_ui == 1 ? "12 Bit" : "10 Bit");
     /* Never gate Bit Depth on lossless / other settings. */
 }
 
@@ -5571,8 +5574,9 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .priv       = &crop_preset_index,
         .select     = slim_crop_mode_select,
         .update     = slim_crop_mode_update,
+        .min        = 1,
         .max        = 3,
-        .choices    = CHOICES("OFF", "1x1", "1x3", "3x3"),
+        .choices    = CHOICES("1x1", "1x3", "3x3"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Crop / binning mode.",
@@ -5622,7 +5626,7 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .select     = slim_crop_bit_select,
         .update     = slim_crop_bit_update,
         .max        = 2,
-        .choices    = CHOICES("14-bit", "12-bit", "10-bit"),
+        .choices    = CHOICES("14 Bit", "12 Bit", "10 Bit"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Lossless RAW bit depth. Always available.",
@@ -7529,6 +7533,9 @@ static unsigned int crop_rec_init()
     if (is_EOSM)
     {
         slim_crop_sync_from_backend();
+        /* Slim Movie: never leave Mode on OFF. */
+        if (crop_preset_index < 1 || crop_preset_index > 3)
+            crop_preset_index = 1;
         slim_crop_apply_unified_preset();
         slim_crop_clamp_fps();
         more_hacks = 1;

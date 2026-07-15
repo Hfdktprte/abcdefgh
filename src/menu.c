@@ -173,20 +173,31 @@ static int entry_is_wb_expo_style(struct menu_entry * entry, int in_submenu)
         && streq(entry->name, "White Balance");
 }
 
-/* Filled triangular L/R arrow (camera-style). dir: -1 left tip, +1 right tip. */
-static void slim_draw_filled_arrow(int tip_x, int cy, int dir, int height, int color)
+/* Filled ◄ — tip is the leftmost pixel at x_left. */
+static void slim_draw_arrow_left(int x_left, int cy, int height, int color)
 {
     int half = MAX(height / 2, 1);
-    int depth = MAX((height * 6) / 10, 2); /* width of triangle */
+    int depth = MAX((height * 6) / 10, 2);
     for (int dy = -half; dy <= half; dy++)
     {
         int span = depth * (half - ABS(dy)) / half;
-        if (span <= 0 && dy != 0)
-            continue;
-        if (dir > 0) /* ► tip on the right */
-            draw_line(tip_x - span, cy + dy, tip_x, cy + dy, color);
-        else /* ◄ tip on the left */
-            draw_line(tip_x, cy + dy, tip_x + span, cy + dy, color);
+        if (span < 1)
+            span = 1;
+        draw_line(x_left, cy + dy, x_left + span, cy + dy, color);
+    }
+}
+
+/* Filled ► — tip is the rightmost pixel at x_right. */
+static void slim_draw_arrow_right(int x_right, int cy, int height, int color)
+{
+    int half = MAX(height / 2, 1);
+    int depth = MAX((height * 6) / 10, 2);
+    for (int dy = -half; dy <= half; dy++)
+    {
+        int span = depth * (half - ABS(dy)) / half;
+        if (span < 1)
+            span = 1;
+        draw_line(x_right - span, cy + dy, x_right, cy + dy, color);
     }
 }
 #endif
@@ -2766,7 +2777,14 @@ entry_print(
 
     int use_small_font = 0;
     int x_font_offset = 0;
+#ifdef CONFIG_SLIM_MENUS
+    /* Canon Gothic is taller (~40) than FONT_LARGE (~32); center in the row. */
+    int y_font_offset = wb_expo_style
+        ? (h - (int)fontspec_font(FONT_CANON)->height) / 2
+        : (h - (int)font_large.height) / 2;
+#else
     int y_font_offset = (h - (int)font_large.height) / 2;
+#endif
     
     int not_at_home = 
             !entry->parent_menu->selected &&     /* is it in some dynamic menu? (not in its original place) */
@@ -2834,9 +2852,13 @@ entry_print(
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    if (wb_expo_style && entry->selected && !customize_mode && !junkie_mode &&
+    if (wb_expo_style && !customize_mode && !junkie_mode &&
         info->warning_level != MENU_WARN_NOT_WORKING)
-        fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
+    {
+        /* Canon Gothic — native camera UI font (smoother than RBF bitmap fonts). */
+        int fg = (entry->selected && info->enabled != 0) ? COLOR_ORANGE : COLOR_WHITE;
+        fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
+    }
 #endif
 
     bmp_printf(
@@ -2858,15 +2880,16 @@ skip_name:
         fnt = (fnt & ~FONT_MASK) | FONT_MED_LARGE;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Expo White Balance only: orange text selection (no blue bar / outline). */
-    if (wb_expo_style && entry->selected && !customize_mode && !junkie_mode &&
+    /* Expo White Balance: Canon font for the whole row (~camera UI size/weight). */
+    if (wb_expo_style && !customize_mode && !junkie_mode &&
         info->warning_level != MENU_WARN_NOT_WORKING &&
         info->enabled != 0)
     {
-        fnt = FONT(fnt, COLOR_ORANGE, COLOR_BLACK);
+        int fg = entry->selected ? COLOR_ORANGE : COLOR_WHITE;
+        fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows always visible on WB Expo row; color follows selection. */
+    /* Dial arrows always visible on WB Expo row; color follows selection. Order: ◄ value ► */
     int draw_tri_arrows =
         wb_expo_style &&
         info->value[0] &&
@@ -2876,9 +2899,9 @@ skip_name:
         info->warning_level != MENU_WARN_NOT_WORKING && info->enabled != 0)
         arrow_color = COLOR_ORANGE;
     int fonth = fontspec_font(fnt)->height;
-    int tri_h = MAX(fonth - 6, 10); /* ~same height as value glyphs */
+    int tri_h = MAX(fonth - 4, 18); /* match value glyph height */
     int arrow_w = draw_tri_arrows ? (tri_h * 6) / 10 + 1 : 0;
-    int arrow_pad = draw_tri_arrows ? 5 : 0;
+    int arrow_pad = draw_tri_arrows ? 8 : 0;
 #else
     int draw_tri_arrows = 0;
     int arrow_w = 0;
@@ -2932,11 +2955,12 @@ skip_name:
 
     int x_value = xval;
 #ifdef CONFIG_SLIM_MENUS
+    /* Optical center of FONT_CANON glyphs */
     int value_cy = y + y_font_offset + (fonth * 9) / 20;
     if (draw_tri_arrows)
     {
-        /* Tip of left ◄ sits at left of reserved arrow column */
-        slim_draw_filled_arrow(xval, value_cy, -1, tri_h, arrow_color);
+        /* ◄ value ►  — left-pointing tip on the left */
+        slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
         x_value = xval + arrow_w + arrow_pad;
     }
 #endif
@@ -2952,8 +2976,8 @@ skip_name:
 #ifdef CONFIG_SLIM_MENUS
     if (draw_tri_arrows)
     {
-        /* Tip of right ► after value */
-        slim_draw_filled_arrow(x_value + val_width + arrow_pad + arrow_w, value_cy, 1, tri_h, arrow_color);
+        /* right-pointing tip on the right of the value */
+        slim_draw_arrow_right(x_value + val_width + arrow_pad + arrow_w, value_cy, tri_h, arrow_color);
     }
 #endif
     
@@ -2993,8 +3017,8 @@ skip_name:
     else if (entry->children && !SUBMENU_OR_EDIT && !menu_lv_transparent_mode)
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* WB Expo: Q> in same FONT_LARGE orange as label/value */
-        if (wb_expo_style && entry->selected)
+        /* WB Expo: Q> in same Canon font / color as label and value */
+        if (wb_expo_style)
         {
             bmp_printf(
                 fnt,
@@ -3647,14 +3671,20 @@ menu_display(
             }
             
             // display current entry
-            int ok = menu_entry_process(menu, entry, x, y, font_large.height + local_spacing, only_selected);
+            int row_h = font_large.height + local_spacing;
+#ifdef CONFIG_SLIM_MENUS
+            /* Taller Expo White Balance row (~2× default row height for Canon Gothic). */
+            if (entry_is_wb_expo_style(entry, IS_SUBMENU(menu)))
+                row_h = MAX(row_h, font_large.height * 2 + local_spacing);
+#endif
+            int ok = menu_entry_process(menu, entry, x, y, row_h, only_selected);
             
             // entry asked for custom draw? stop here
             if (!ok)
                 goto end;
             
             // move down for next item
-            y += font_large.height + local_spacing;
+            y += row_h;
             
             i++;
         }

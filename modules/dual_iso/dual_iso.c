@@ -598,8 +598,9 @@ static MENU_UPDATE_FUNC(isoless_overlap_update)
     MENU_SET_VALUE("%d.%d EV", overlap/10, overlap%10);
 }
 
-#ifdef CONFIG_SLIM_MENUS
-/* Second-ISO steps used by slim Dual ISO (must be > main ISO). */
+/* Dual ISO Expo row: ◄ second ISO or OFF ► only. First ISO always follows main ISO menu.
+ * Dial L/R cycles OFF and full-stop seconds strictly above primary (200/400/800/1600).
+ * Note: this module is built without platform features.h, so do not gate on CONFIG_SLIM_MENUS. */
 static const int slim_dual_recs[] = { 200, 400, 800, 1600 };
 
 static int slim_dual_primary_iso(void)
@@ -623,7 +624,6 @@ static int slim_dual_rec_to_index(int rec_iso)
     }
 }
 
-/* Count valid second ISOs strictly above primary (from slim_dual_recs). */
 static int slim_dual_valid_count(int primary)
 {
     unsigned i, n = 0;
@@ -692,12 +692,10 @@ static void slim_dual_set_cycle_pos(int primary, int pos)
     isoless_hdr = 0;
 }
 
-/* When main ISO changes, keep second ISO if still valid; else first step above primary. */
+/* Main ISO changed: keep second if still above primary; else first step above (or OFF). */
 static void slim_dual_sync_primary(int primary)
 {
-    int n = slim_dual_valid_count(primary);
-
-    if (n <= 0)
+    if (slim_dual_valid_count(primary) <= 0)
     {
         isoless_hdr = 0;
         return;
@@ -719,11 +717,9 @@ static void slim_dual_sync_primary(int primary)
 
     slim_dual_set_cycle_pos(primary, 1);
 }
-#endif
 
 static MENU_UPDATE_FUNC(isoless_update)
 {
-#ifdef CONFIG_SLIM_MENUS
     static int last_primary = -1;
     int primary = slim_dual_primary_iso();
     int n = slim_dual_valid_count(primary);
@@ -737,12 +733,11 @@ static MENU_UPDATE_FUNC(isoless_update)
 
     MENU_SET_ICON(0, 0);
     MENU_SET_ENABLED(1);
+    MENU_SET_RINFO(""); /* no combo / DR text — only the dial value */
 
     if (n <= 0 || !isoless_hdr)
     {
-        /* ISO 1600 etc: only OFF — no combination text */
         MENU_SET_VALUE("OFF");
-        MENU_SET_RINFO("");
         return;
     }
 
@@ -750,67 +745,43 @@ static MENU_UPDATE_FUNC(isoless_update)
     if (recovery <= primary)
     {
         slim_dual_set_cycle_pos(primary, 1);
+        if (!isoless_hdr)
+        {
+            MENU_SET_VALUE("OFF");
+            return;
+        }
         recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
     }
 
-    /* ◄second► outside: primary/second */
     MENU_SET_VALUE("%d", recovery);
-    MENU_SET_RINFO("%d/%d", primary, recovery);
-    isoless_check(entry, info);
-    return;
-#else
-    if (!isoless_hdr)
-        return;
-
-    int iso1 = 72 + isoless_recovery_iso_index() * 8;
-    int iso2 = (lens_info.iso_analog_raw)/8*8;
-
-    MENU_SET_VALUE("%d/%d", raw2iso(iso2), raw2iso(iso1));
-
-    isoless_check(entry, info);
-    if (info->warning_level >= MENU_WARN_ADVICE)
-        return;
-    
-    int dr_improvement = dual_iso_get_dr_improvement() / 10;
-    
-    MENU_SET_RINFO("DR+%d.%d", dr_improvement/10, dr_improvement%10);
-#endif
 }
 
-#ifdef CONFIG_SLIM_MENUS
-/* Left/right cycle: OFF ↔ valid second ISOs above main ISO (continuous). */
+/* Left/right: OFF ↔ second ISOs above main ISO (wraps). */
 static MENU_SELECT_FUNC(isoless_slim_select)
 {
     int primary = slim_dual_primary_iso();
     int n = slim_dual_valid_count(primary);
-    int pos;
 
     (void)priv;
 
     if (n <= 0)
-        return; /* e.g. ISO 1600: arrows inert, stays OFF */
+        return;
 
-    pos = slim_dual_cycle_pos(primary);
-    slim_dual_set_cycle_pos(primary, pos + delta);
+    slim_dual_set_cycle_pos(primary, slim_dual_cycle_pos(primary) + delta);
 }
-#endif
 
 static struct menu_entry isoless_menu[] =
 {
     {
         .name = "Dual ISO",
         .priv = &isoless_hdr,
-#ifdef CONFIG_SLIM_MENUS
         .select = isoless_slim_select,
         .icon_type = IT_ACTION,
-#endif
         .update = isoless_update,
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",
         .help2 = "With some clever post, you get less shadow noise (more DR).",
-#ifdef CONFIG_SLIM_MENUS
         .edit_mode = EM_INLINE_ADJUST,
-#endif
         .submenu_width = 710,
         .children =  (struct menu_entry[]) {
             {

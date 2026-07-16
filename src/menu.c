@@ -2473,6 +2473,12 @@ static void menu_clean_footer()
 static int check_default_warnings(struct menu_entry * entry, char* warning)
 {
     warning[0] = 0;
+#ifdef CONFIG_EOSM
+    /* 3x3 preview work can briefly clear lv while still in movie LV. */
+    int lv_active = lv || (gui_menu_shown() && is_movie_mode());
+#else
+    int lv_active = lv;
+#endif
     
     /* all submenu entries depend on the master entry, if any */
     if (IS_SUBMENU(entry->parent_menu))
@@ -2496,7 +2502,7 @@ static int check_default_warnings(struct menu_entry * entry, char* warning)
         snprintf(warning, MENU_MAX_WARNING_LEN, "This feature only works in movie mode.");
     else if (DEPENDS_ON(DEP_PHOTO_MODE) && is_movie_mode())
         snprintf(warning, MENU_MAX_WARNING_LEN, "This feature only works in photo mode.");
-    else if (DEPENDS_ON(DEP_LIVEVIEW) && !lv)
+    else if (DEPENDS_ON(DEP_LIVEVIEW) && !lv_active)
         snprintf(warning, MENU_MAX_WARNING_LEN, "This feature only works in LiveView.");
     else if (DEPENDS_ON(DEP_NOT_LIVEVIEW) && lv)
         snprintf(warning, MENU_MAX_WARNING_LEN, "This feature does not work in LiveView.");
@@ -2545,7 +2551,7 @@ static int check_default_warnings(struct menu_entry * entry, char* warning)
             snprintf(warning, MENU_MAX_WARNING_LEN, "This feature works best in movie mode.");
         else if (WORKS_BEST_IN(DEP_PHOTO_MODE) && is_movie_mode())
             snprintf(warning, MENU_MAX_WARNING_LEN, "This feature works best in photo mode.");
-        else if (WORKS_BEST_IN(DEP_LIVEVIEW) && !lv)
+        else if (WORKS_BEST_IN(DEP_LIVEVIEW) && !lv_active)
             snprintf(warning, MENU_MAX_WARNING_LEN, "This feature works best in LiveView.");
         else if (WORKS_BEST_IN(DEP_NOT_LIVEVIEW) && lv)
             snprintf(warning, MENU_MAX_WARNING_LEN, "This feature works best outside LiveView.");
@@ -5338,10 +5344,25 @@ void menu_benchmark()
     NotifyBox(20000, "Elapsed time: %d ms", t1 - t0);
 }
 
+#ifdef CONFIG_EOSM
+/* GUIMODE_ML_MENU uses lv; in 3x3 lv can flicker and switch Canon to mode 2/99. */
+static int ml_menu_canon_guimode(void)
+{
+    if (RECORDING_H264) return 99;
+    if (gui_menu_shown() && is_movie_mode()) return 93;
+    return GUIMODE_ML_MENU;
+}
+#endif
+
 static int menu_ensure_canon_dialog()
 {
 #ifndef CONFIG_VXWORKS
+#ifdef CONFIG_EOSM
+    int ml_guimode = ml_menu_canon_guimode();
+    if (CURRENT_GUI_MODE != ml_guimode && CURRENT_GUI_MODE != GUIMODE_PLAY)
+#else
     if (CURRENT_GUI_MODE != GUIMODE_ML_MENU && CURRENT_GUI_MODE != GUIMODE_PLAY)
+#endif
     {
         if (redraw_flood_stop)
         {
@@ -5355,10 +5376,18 @@ static int menu_ensure_canon_dialog()
     // apparently it's the MPU that decides to turn off the underlying Canon dialog
     // so we have to keep poking it to stay awake
     static int last_refresh = 0;
+#ifdef CONFIG_EOSM
+    if (gui_menu_shown() && should_run_polling_action(2000, &last_refresh))
+    {
+        int mode = ml_menu_canon_guimode();
+        if (mode) SetGUIRequestMode(mode);
+    }
+#else
     if (lv && should_run_polling_action(2000, &last_refresh))
     {
         SetGUIRequestMode(GUIMODE_ML_MENU);
     }
+#endif
 #endif
 
 #endif
@@ -6062,7 +6091,11 @@ static void start_redraw_flood()
 static void piggyback_canon_menu()
 {
 #ifdef GUIMODE_ML_MENU
+#ifdef CONFIG_EOSM
+    int new_gui_mode = ml_menu_canon_guimode();
+#else
     int new_gui_mode = GUIMODE_ML_MENU;
+#endif
     if (!new_gui_mode) return;
     if (sensor_cleaning) return;
     if (gui_state == GUISTATE_MENUDISP) return;
@@ -6241,8 +6274,14 @@ menu_task( void* unused )
             if (menu_shown)
             {
                 /* should we still display the menu? */
+#ifdef CONFIG_EOSM
+                int shooting_mode_changed = (initial_mode != shooting_mode)
+                    && !(lv && is_movie_mode());
+#else
+                int shooting_mode_changed = (initial_mode != shooting_mode);
+#endif
                 if (sensor_cleaning ||
-                    initial_mode != shooting_mode ||
+                    shooting_mode_changed ||
                     gui_state == GUISTATE_MENUDISP ||
                     (!DISPLAY_IS_ON && CURRENT_GUI_MODE != GUIMODE_PLAY))
                 {
@@ -6683,6 +6722,9 @@ int handle_ml_menu_erase(struct event * event)
     if (dofpreview) return 1; // don't open menu when DOF preview is locked
     
     if (event->param == BGMT_TRASH ||
+        #ifdef CONFIG_EOSM
+        event->param == BGMT_MENU ||
+        #endif
         #ifdef CONFIG_TOUCHSCREEN
         event->param == BGMT_TOUCH_2_FINGER ||
         #endif
@@ -6690,7 +6732,7 @@ int handle_ml_menu_erase(struct event * event)
     {
 #ifdef CONFIG_EOSM
         /* crop_rec preview work can keep gui_state busy in movie LV (especially 3x3). */
-        if (lv && is_movie_mode())
+        if (lv && is_movie_mode() && !gui_menu_shown())
         {
             give_semaphore( gui_sem );
             return 0;

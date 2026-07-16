@@ -4726,6 +4726,7 @@ static void zebra_init()
     hist_type = 2;
     hist_log = 0;
     hist_meter = 0;
+    hist_warn = 1; /* slim has no Clip warning menu; dots always follow histogram */
 #endif
     precompute_yuv2rgb();
     menu_add( "Overlay", zebra_menus, COUNT(zebra_menus) );

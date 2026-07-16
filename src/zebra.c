@@ -4221,70 +4221,6 @@ void update_lv_fps() // to be called every 10 seconds
 }
 #endif
 
-#if defined(CONFIG_SLIM_MENUS) && (defined(FEATURE_HISTOGRAM) || defined(FEATURE_WAVEFORM))
-static int slim_overlay_data_ready = 0;
-
-static void slim_overlay_build(void)
-{
-    if (!get_global_draw()) return;
-    if (menu_active_and_not_hidden()) return;
-    if (!can_use_raw_overlays() || !raw_overlay_calibration_ready()) return;
-    if (!hist_draw && !waveform_draw) return;
-
-    #ifdef FEATURE_HISTOGRAM
-    if (hist_draw && RAW_HISTOGRAM_ENABLED)
-        hist_build_raw();
-    #endif
-    #ifdef FEATURE_WAVEFORM
-    if (waveform_draw)
-    {
-        waveform_init();
-        waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
-    }
-    #endif
-    if (histogram.max == 0) histogram.max = 1;
-    slim_overlay_data_ready = 1;
-}
-
-static void slim_overlay_draw(void)
-{
-    if (!slim_overlay_data_ready) return;
-    if (!get_global_draw()) return;
-    if (menu_active_and_not_hidden()) return;
-    if (!can_use_raw_overlays() || !raw_overlay_calibration_ready()) return;
-    if (!hist_draw && !waveform_draw) return;
-    if (WAVEFORM_FULLSCREEN) return;
-
-    #ifdef FEATURE_HISTOGRAM
-    if (hist_draw && RAW_HISTOGRAM_ENABLED)
-    {
-        if (get_screen_layout() == SCREENLAYOUT_3_2)
-            hist_draw_image(os.x_max - HIST_WIDTH - 2,
-                os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1);
-        else if (should_draw_bottom_graphs())
-            hist_draw_image(os.x0 + 50, 480 - hist_height - 1);
-        else
-            hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
-    }
-    #endif
-    #ifdef FEATURE_WAVEFORM
-    if (waveform_draw)
-    {
-        int screen_layout = get_screen_layout();
-        if (should_draw_bottom_graphs() && WAVEFORM_FACTOR == 1)
-            waveform_draw_image(os.x0 + 250, 480 - 54, 54);
-        else if (screen_layout == SCREENLAYOUT_3_2)
-            waveform_draw_image(os.x0 + 4,
-                os.y_max - (lv ? os.off_169 : 0) - (gui_menu_shown() ? 25 : 0) - 54, 54);
-        else
-            waveform_draw_image(os.x_max - WAVEFORM_WIDTH * WAVEFORM_FACTOR - 4,
-                os.y_max - WAVEFORM_HEIGHT * WAVEFORM_FACTOR - WAVEFORM_OFFSET,
-                WAVEFORM_HEIGHT * WAVEFORM_FACTOR);
-    }
-    #endif
-}
-#endif
-
 // Items which need a high FPS
 // Magic Zoom, Focus Peaking, zebra*, spotmeter*, false color*
 // * = not really high FPS, but still fluent
@@ -4370,18 +4306,6 @@ livev_hipriority_task( void* unused )
             if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;          /* raw hisogram (any kind) */
             if (spotmeter_draw && spotmeter_formula == 3) raw_needed = 1;   /* spotmeter, units: raw */
         }
-#ifdef CONFIG_SLIM_MENUS
-        else if (lv && is_movie_mode())
-        {
-            #if !defined(CONFIG_70D)
-            if (zebra_draw && raw_zebra_enable == 1) raw_needed = 1;
-            #endif
-            if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;
-            #ifdef FEATURE_WAVEFORM
-            if (waveform_draw) raw_needed = 1;
-            #endif
-        }
-#endif
 
         if (!raw_flag && raw_needed)
         {
@@ -4443,10 +4367,6 @@ livev_hipriority_task( void* unused )
                             k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
                             k % 2 == 1  /* should redraw focus peaking? */
                         );
-#if defined(CONFIG_SLIM_MENUS) && (defined(FEATURE_HISTOGRAM) || defined(FEATURE_WAVEFORM))
-                    if (lv)
-                        slim_overlay_draw();
-#endif
                 )
             }
         }
@@ -4551,17 +4471,8 @@ livev_lopriority_task( void* unused )
 
         loprio_sleep();
 
-#if defined(CONFIG_SLIM_MENUS) && (defined(FEATURE_HISTOGRAM) || defined(FEATURE_WAVEFORM))
-        if (zebra_should_run() && !gui_menu_shown())
-        {
-            static int slim_hist_aux = 0;
-            if (should_run_polling_action(168, &slim_hist_aux) || !slim_overlay_data_ready)
-                slim_overlay_build();
-        }
-#else
         if (!gui_menu_shown())
             draw_histogram_and_waveform(0);
-#endif
     }
 }
 

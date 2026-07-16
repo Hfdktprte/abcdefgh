@@ -6688,6 +6688,14 @@ int handle_ml_menu_erase(struct event * event)
         #endif
        0)
     {
+#ifdef CONFIG_EOSM
+        /* crop_rec preview work can keep gui_state busy in movie LV (especially 3x3). */
+        if (lv && is_movie_mode())
+        {
+            give_semaphore( gui_sem );
+            return 0;
+        }
+#endif
         if (gui_state == GUISTATE_IDLE || (gui_menu_shown() && !beta_should_warn()))
         {
             give_semaphore( gui_sem );
@@ -6798,7 +6806,7 @@ int handle_longpress_events(struct event * event)
     /* also trigger menu by a long press on ERASE (DOWN) */
     if (event->param == BGMT_PRESS_DOWN)
     {
-        if (gui_state == GUISTATE_IDLE && !gui_menu_shown() && !IS_FAKE(event))
+        if (!gui_menu_shown() && !IS_FAKE(event))
         {
             erase_longpress.pressed = 1;
             erase_longpress.count = 0;

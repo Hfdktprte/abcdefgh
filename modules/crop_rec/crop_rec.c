@@ -4292,10 +4292,10 @@ void CheckPreviewRegsValuesAndForce()
     if (Preview_Control_Basic) return;
 
 #ifdef CONFIG_EOSM
-    /* 3x3 preview hooks fight Canon periodically; throttling avoids system-wide lag. */
-    static int eosm_preview_force_last = 0;
-    if (!should_run_polling_action(500, &eosm_preview_force_last))
-        return;
+    /* EOS M: engio hooks already patch preview; forcing registers here fights Canon
+     * and stalls the whole UI (laggy audio meters, menu won't open). Recovery uses
+     * crop_rec_recover_preview() instead. */
+    return;
 #endif
 
     if (is_100D)                       REG_C0F38024_Val = ((RAW_V - 5) << 16)  + RAW_H - 0x1A;
@@ -6914,7 +6914,8 @@ int crop_rec_request_preview_recovery()
 static unsigned int crop_rec_polling_cbr(unsigned int unused)
 {
     
-    /* connected to MODULE_KEY_TOUCH_1_FINGER for entering Movie tab menu */
+    /* touch/Movie-tab shortcuts inject Q+SET into an open menu — not used on slim. */
+#ifndef CONFIG_SLIM_MENUS
     if (gui_menu_shown() && submenu && !RECORDING)
     {
         if (is_movie_mode())
@@ -6924,6 +6925,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         module_send_keypress(MODULE_KEY_PRESS_SET);
         submenu = 0;
     }
+#endif
 #ifdef CONFIG_EOSM
     /* crop_rec_lv_dirty is module-level; also checked at startup */
 #else
@@ -6945,14 +6947,21 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 #endif
 
     int menu_shown = gui_menu_shown();
+#ifdef CONFIG_EOSM
+    static int crop_rec_menu_was_shown = 0;
+    if (lv && menu_shown)
+        crop_rec_menu_was_shown = 1;
+    else if (crop_rec_menu_was_shown && lv && !menu_shown)
+    {
+        crop_rec_lv_dirty = 1;
+        crop_rec_menu_was_shown = 0;
+    }
+#else
     if (lv && menu_shown)
     {
-#ifdef CONFIG_EOSM
-        crop_rec_lv_dirty = 1;
-#else
         lv_dirty = 1;
-#endif
     }
+#endif
     
     if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
     {
@@ -6980,8 +6989,9 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     if (lv_dirty)
 #endif
     {
+        int needs_refresh = crop_rec_needs_lv_refresh();
         /* do we need to refresh LiveView? */
-            if (crop_rec_needs_lv_refresh())
+            if (needs_refresh)
             {
                 /* let's check this once again, just in case */
                 /* (possible race condition that would result in unnecessary refresh) */
@@ -7006,7 +7016,8 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 #endif
             }
 #ifdef CONFIG_EOSM
-            if (CROP_PRESET_MENU && patch_active && is_movie_mode())
+            if ((needs_refresh || settings_changed || crop_rec_recover_force_zoom)
+                && CROP_PRESET_MENU && patch_active && is_movie_mode())
             {
                 crop_rec_recover_preview(crop_rec_recover_force_zoom);
                 crop_rec_recover_force_zoom = 0;
@@ -7060,21 +7071,35 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             }
              */
              
+            {
+                static int eosm_af_multi_set = 0;
+                static int eosm_af_single_set = 0;
+                static int eosm_x5_zoom_last = 0;
+
+                if (CROP_PRESET_MENU != CROP_PRESET_3X3)
+                {
+                    eosm_af_multi_set = 0;
+                    eosm_af_single_set = 0;
+                }
+
             if (is_manual_focus())
             {
                 /* while we are using manual focus and 3x3 presets change AF method to FlexiZone - Multi 
                  * this way preview will always work in 3x3 presets, also 738p HFR preset will have working preview while idle */
-                if (lv_af_mode == 1 && CROP_PRESET_MENU == CROP_PRESET_3X3) 
+                if (lv_af_mode == 1 && CROP_PRESET_MENU == CROP_PRESET_3X3 && !eosm_af_multi_set)
                 {
                     gui_uilock(UILOCK_EVERYTHING);
                     set_lv_af_mode(3); // Set it to FlexiZone - Multi
                     gui_uilock(UILOCK_NONE);
+                    eosm_af_multi_set = 1;
                     NotifyBox(2500,"AF mode was set to FlexiZone Multi");
                 }
                 else
                 {
 #ifdef CONFIG_EOSM
-                    if (!eosm_post_rec && lv_dispsize == 1) set_zoom(5);
+                    if (!eosm_post_rec && lv_dispsize == 1
+                        && should_run_polling_action(2000, &eosm_x5_zoom_last))
+                        set_zoom(5);
 #else
                     if (lv_dispsize == 1) set_zoom(5);
 #endif
@@ -7087,36 +7112,38 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             // well, "Single" can also do focusing in x5 mode, but since we are modifying preview, autofocus in x5 mode
             // won't give accurate results, it seems modifying preiew break AF data
             // FlexiZone - Single = 1, Tracking = 2, FlexiZone - Multi = 3
-            if (!is_manual_focus() && lv_af_mode != 1) // AF mode not set to FlexiZone - Single
+            if (!is_manual_focus() && lv_af_mode != 1 && !eosm_af_single_set) // AF mode not set to FlexiZone - Single
             {
                 gui_uilock(UILOCK_EVERYTHING);
                 set_lv_af_mode(1); // Set it to FlexiZone - Single
                 gui_uilock(UILOCK_NONE);
+                eosm_af_single_set = 1;
                 NotifyBox(2500,"AF mode was set to FlexiZone Single");
             }
 
             if (!is_manual_focus() && lv_af_mode == 1)
             {
 #ifdef CONFIG_EOSM
-                if (!eosm_post_rec && lv_dispsize == 1) set_zoom(5);
+                if (!eosm_post_rec && lv_dispsize == 1
+                    && should_run_polling_action(2000, &eosm_x5_zoom_last))
+                    set_zoom(5);
 #else
                 if (lv_dispsize == 1) set_zoom(5);
 #endif
             }
+            }
         }
 
         /* while idle, check our preview resgisters, force the new values if not set yet */
-#ifdef CONFIG_EOSM
-        if (!crop_rec_lv_dirty && !crop_rec_needs_lv_refresh() && CROP_PRESET_MENU && !RECORDING && lv_dispsize == 5 && PathDriveMode->zoom == 5)
-#else
+#ifndef CONFIG_EOSM
         if (!lv_dirty && !crop_rec_needs_lv_refresh() && CROP_PRESET_MENU && !RECORDING && lv_dispsize == 5 && PathDriveMode->zoom == 5)
-#endif
         {
             if (Preview_Control && !Preview_Control_Basic) // presets with basic preview don't need it
             {
                 CheckPreviewRegsValuesAndForce();
             }
         }
+#endif
 
         // FIXME: for now, "More" hacks must be on in order to get wokring preview in 3x3 presets while recording
         // see notes in reg_override_3X3

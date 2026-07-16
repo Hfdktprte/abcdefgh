@@ -562,8 +562,10 @@ static void audio_common_task(void * unused)
             }
             continue;
         }
-#endif
+        int meters_sleep_cycles = 10 / MIN_MSLEEP;
+#else
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
+#endif
         meters_slept_times++;
         compute_audio_levels(0);
         compute_audio_levels(1);

@@ -353,7 +353,7 @@ static int slim_handle_main_dial_shutter(unsigned int key)
     return 0;
 }
 
-/* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO.
+/* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
 {
@@ -362,8 +362,8 @@ static int slim_handle_info_button(unsigned int key)
     if (!INFO_button)
         return 0; /* OFF — Canon INFO / LV cycle */
 
-    /* Outside ML overlay LV, keep Canon's INFO cycle. */
-    if (lv_disp_mode != 0)
+    /* Outside ML overlay LV, keep Canon INFO for non-framing modes only. */
+    if (INFO_button != 4 && lv_disp_mode != 0)
         return -1;
 
     switch (INFO_button)
@@ -397,6 +397,10 @@ static int slim_handle_info_button(unsigned int key)
                 menu_set_str_value_from_script("Expo", "Dual ISO", "ON", 1);
             else
                 menu_set_str_value_from_script("Expo", "Dual ISO", "OFF", 0);
+            return 1;
+
+        case 4: /* framing ↔ real-time (MLV Lite Preview → Framing) */
+            mlv_lite_info_framing_toggle();
             return 1;
 
         default:
@@ -5390,17 +5394,27 @@ static struct menu_entry slim_more_hacks_menu[] = {
     },
 };
 
+static MENU_UPDATE_FUNC(slim_info_button_update)
+{
+    static int last_info_button = -1;
+    if (last_info_button == 4 && INFO_button != 4)
+        mlv_lite_info_framing_reset();
+    last_info_button = INFO_button;
+}
+
 /* Settings → INFO Button (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
         .priv      = &INFO_button,
-        .max       = 3,
-        .choices   = CHOICES("OFF", "Aperture", "false colors", "Dual ISO"),
+        .max       = 4,
+        .choices   = CHOICES("OFF", "Aperture", "false colors", "Dual ISO", "framing"),
         .edit_mode = EM_INLINE_ADJUST,
+        .update    = slim_info_button_update,
         /* IT_DICE: do not treat OFF as disabled (slim greys IT_PERCENT_OFF when value==0). */
         .icon_type = IT_DICE,
-        .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO.",
+        .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO, framing toggle.",
+        .help2     = "Framing: each INFO press toggles low-res correct framing vs real-time LV.",
     },
 };
 
@@ -7048,9 +7062,10 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     }
     
     /* we need to use customize buttons in LiveView while ML isn't showing and when using Crop mood */
-    if (lv)
+    if (lv && !gui_menu_shown())
     {
-        if (CROP_PRESET_MENU && patch_active && !gui_menu_shown())
+        /* EOS M slim: INFO Button mapping must work even before patch_active settles. */
+        if ((is_EOSM && is_movie_mode()) || (CROP_PRESET_MENU && patch_active))
         {
             if (slim_handle_main_dial_shutter(key))
                 return 0;
@@ -7930,8 +7945,8 @@ static unsigned int crop_rec_init()
         SET_button  = 1; /* Zoom x10 */
         Arrows_U_D  = 1; /* ISO */
         Arrows_L_R  = 2; /* Aperture (inactive without electronic lens) */
-        /* INFO Button persists via Settings (0=OFF .. 3=Dual ISO). */
-        if (INFO_button < 0 || INFO_button > 3)
+        /* INFO Button persists via Settings (0=OFF .. 4=framing). */
+        if (INFO_button < 0 || INFO_button > 4)
             INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */

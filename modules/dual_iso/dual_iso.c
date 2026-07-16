@@ -83,6 +83,8 @@ static CONFIG_INT("isoless.display", isoless_display, 1);
 extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
 extern WEAK_FUNC(ret_0) int is_play_or_qr_mode();
+extern WEAK_FUNC(ret_0) void* get_lcd_422_buf();
+extern WEAK_FUNC(ret_0) int display_filter_enabled();
 extern WEAK_FUNC(ret_0) int raw_hist_get_percentile_level();
 extern WEAK_FUNC(ret_0) int raw_hist_get_overexposure_percentage();
 extern WEAK_FUNC(ret_0) void raw_lv_request();
@@ -611,11 +613,12 @@ static unsigned int isoless_vsync_destripe(unsigned int unused)
         return CBR_RET_CONTINUE;
 
     /* When the display-filter pipeline is active, it already owns de-stripe. */
-    extern int display_filter_enabled();
     if (display_filter_enabled())
         return CBR_RET_CONTINUE;
 
-    isoless_destripe_yuv422((uint32_t*) CACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR));
+    void* lcd_buf = get_lcd_422_buf();
+    if (!lcd_buf) return CBR_RET_CONTINUE;
+    isoless_destripe_yuv422((uint32_t*) CACHEABLE(lcd_buf));
     return CBR_RET_CONTINUE;
 }
 

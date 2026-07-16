@@ -3255,7 +3255,8 @@ int display_filter_enabled()
     
     int fp = focus_peaking_as_display_filter();
     if (!(defish_preview || anamorphic_preview || fp || mdf)) return 0;
-    if (!zebra_should_run()) return 0;
+    /* Module display filters (dual ISO de-stripe, MLV raw preview, ...) must run in LV. */
+    if (!zebra_should_run() && !mdf) return 0;
     if (should_draw_zoom_overlay()) return 0; // not enough CPU power to run MZ and filters at the same time
     
     return fp ? 2 : 1;

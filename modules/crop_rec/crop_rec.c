@@ -368,13 +368,12 @@ static int slim_handle_info_button(unsigned int key)
 
     switch (INFO_button)
     {
-        case 1: /* Aperture + (same as SET → Aperture +) */
+        case 1: /* Aperture + — wrap at max back to min */
             if (!lens_info.aperture)
                 return 1; /* no electronic iris — no effect */
-            if (lens_info.raw_aperture == lens_info.raw_aperture_max)
-                return 1;
             if (more_hacks && RECORDING)
                 return 1;
+            /* priv != -1 → aperture_toggle wraps min↔max */
             aperture_toggle(0, 1);
             return 1;
 

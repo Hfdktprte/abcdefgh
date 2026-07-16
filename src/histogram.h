@@ -63,6 +63,10 @@ MENU_UPDATE_FUNC(raw_histo_update);
 
 void hist_invalidate_r2ev_cache(void);
 
+#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height);
+#endif
+
 #define RAW_HISTOGRAM_ENABLED (hist_draw && hist_type >= 2)
 #define RAW_HISTOBAR_ENABLED (hist_draw && hist_type == 3)
 

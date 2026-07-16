@@ -119,6 +119,9 @@ static int crop_preset_fps = 0;
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
 CONFIG_INT("crop.button_INFO",      INFO_button, 0);
+#ifdef CONFIG_SLIM_MENUS
+static CONFIG_INT("crop.shutter_zoom", Shutter_zoom, 0); /* 0=OFF, 1=hold x10, 2=sticky x10 */
+#endif
 CONFIG_INT("crop.arrows_U_D",       Arrows_U_D, 1);
 CONFIG_INT("crop.more_hacks",       more_hacks, 1);
 static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 2);
@@ -356,6 +359,70 @@ static int slim_handle_main_dial_shutter(unsigned int key)
     }
     return 0;
 }
+
+#ifdef CONFIG_SLIM_MENUS
+static void slim_zoom_to_x10(void)
+{
+    extern int kill_canon_gui_mode;
+
+    if (!lv || RECORDING || lv_dispsize != 5) return;
+    if (lv_disp_mode != 0) return;
+
+    set_zoom(10);
+    kill_canon_gui_mode = 0;
+    if (canon_gui_front_buffer_disabled())
+        canon_gui_enable_front_buffer(0);
+    crop_rec_recover_preview(1);
+}
+
+static void slim_zoom_from_x10(void)
+{
+    extern int kill_canon_gui_mode;
+
+    if (!lv || RECORDING || lv_dispsize != 10) return;
+
+    set_zoom(1);
+    msleep(50);
+    set_zoom(5);
+    kill_canon_gui_mode = 1;
+    crop_rec_recover_preview(1);
+}
+
+/* Settings → Shutter zoom: half-shutter x10 like SET (hold or sticky). */
+static int slim_handle_shutter_zoom(unsigned int key)
+{
+    if (!Shutter_zoom || !is_EOSM || !is_movie_mode()) return 0;
+    if (!lv || gui_menu_shown() || RECORDING) return 0;
+    if (lv_disp_mode != 0) return 0;
+
+    if (Shutter_zoom == 1)
+    {
+        if (key == MODULE_KEY_PRESS_HALFSHUTTER && lv_dispsize == 5)
+        {
+            slim_zoom_to_x10();
+            return 1;
+        }
+        if (key == MODULE_KEY_UNPRESS_HALFSHUTTER && lv_dispsize == 10)
+        {
+            slim_zoom_from_x10();
+            return 1;
+        }
+    }
+    else if (Shutter_zoom == 2)
+    {
+        if (key == MODULE_KEY_PRESS_HALFSHUTTER)
+        {
+            if (lv_dispsize == 5)
+                slim_zoom_to_x10();
+            else if (lv_dispsize == 10)
+                slim_zoom_from_x10();
+            return 1;
+        }
+    }
+
+    return 0;
+}
+#endif
 
 /* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
@@ -5449,6 +5516,19 @@ static struct menu_entry slim_info_button_menu[] = {
     },
 };
 
+static struct menu_entry slim_shutter_zoom_menu[] = {
+    {
+        .name      = "Shutter zoom",
+        .priv      = &Shutter_zoom,
+        .max       = 2,
+        .choices   = CHOICES("OFF", "ON", "Sticky"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Half-shutter x10 zoom (same as SET). ON: hold to zoom; Sticky: tap to toggle.",
+        .help2     = "Only in movie LV with ML overlays. Not active while recording.",
+    },
+};
+
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
@@ -7217,6 +7297,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             if (slim_handle_main_dial_shutter(key))
                 return 0;
 
+            if (slim_handle_shutter_zoom(key))
+                return 0;
+
             {
                 int info = slim_handle_info_button(key);
                 if (info == 1) return 0;
@@ -8103,6 +8186,7 @@ static unsigned int crop_rec_init()
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
+        menu_add("Settings", slim_shutter_zoom_menu, COUNT(slim_shutter_zoom_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
@@ -8147,6 +8231,9 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(Half_Shutter)
     MODULE_CONFIG(SET_button)
     MODULE_CONFIG(INFO_button)
+#ifdef CONFIG_SLIM_MENUS
+    MODULE_CONFIG(Shutter_zoom)
+#endif
     MODULE_CONFIG(tapdisp)
     MODULE_CONFIG(Arrows_L_R)
     MODULE_CONFIG(Arrows_U_D)

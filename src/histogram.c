@@ -225,6 +225,49 @@ void FAST hist_build_raw()
     histobar_refresh();
 }
 
+#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height)
+{
+    if (!waveform || !wf_width || !wf_height) return;
+    if (!can_use_raw_overlays()) return;
+
+    static int raw_wf_aux = INT_MIN;
+    if (should_run_polling_action(1000, &raw_wf_aux) || !raw_info.black_level)
+    {
+        if (!raw_update_params()) return;
+    }
+    else if (raw_info.bits_per_pixel != 14)
+    {
+        return;
+    }
+
+    hist_build_r2ev_cache();
+    bzero32(waveform, wf_width * wf_height);
+
+    int step = lv ? 4 : 2;
+    for (int i = os.y0; i < os.y_max; i += step)
+    {
+        int y = BM2RAW_Y(i);
+        if (y < raw_info.active_area.y1+8 || y > raw_info.active_area.y2-8) continue;
+
+        for (int j = os.x0; j < os.x_max; j += 4)
+        {
+            int x = BM2RAW_X(j);
+            if (x < raw_info.active_area.x1+8 || x > raw_info.active_area.x2-8) continue;
+
+            int g = raw_green_pixel_dark(x, y);
+            if (g == 0) continue;
+
+            int Y = (r2ev[g] * 255 + (HIST_WIDTH-1)/2) / (HIST_WIDTH-1);
+            int bin_x = COERCE(((j - os.x0) * wf_width) / os.x_ex, 0, wf_width-1);
+            int bin_y = COERCE((Y * wf_height) >> 8, 0, wf_height-1);
+            uint8_t* w = &waveform[bin_x + bin_y * wf_width];
+            if ((*w) < 250) (*w)++;
+        }
+    }
+}
+#endif
+
 MENU_UPDATE_FUNC(raw_histo_update)
 {
     if (RAW_HISTOGRAM_ENABLED)

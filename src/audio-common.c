@@ -548,24 +548,7 @@ static void audio_common_task(void * unused)
     TASK_LOOP
     {
         msleep(MIN_MSLEEP);
-#ifdef CONFIG_SLIM_MENUS
-        if (!zebra_draw_enabled())
-        {
-            int meters_sleep_cycles = 50 / MIN_MSLEEP;
-            meters_slept_times++;
-            if (meters_slept_times >= meters_sleep_cycles)
-            {
-                compute_audio_levels(0);
-                compute_audio_levels(1);
-                reconfig_audio = audio_meters_step(reconfig_audio);
-                meters_slept_times = 0;
-            }
-            continue;
-        }
-        int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
-#else
-        int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
-#endif
+        int meters_sleep_cycles = (DISPLAY_IS_ON ? (50/MIN_MSLEEP) : (500/MIN_MSLEEP));
         meters_slept_times++;
         compute_audio_levels(0);
         compute_audio_levels(1);

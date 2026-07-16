@@ -84,6 +84,7 @@ extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
 extern WEAK_FUNC(ret_0) int is_play_or_qr_mode();
 extern WEAK_FUNC(ret_0) void* get_lcd_422_buf();
+extern WEAK_FUNC(ret_0) void* get_fastrefresh_422_buf();
 extern WEAK_FUNC(ret_0) int raw_hist_get_percentile_level();
 extern WEAK_FUNC(ret_0) int raw_hist_get_overexposure_percentage();
 extern WEAK_FUNC(ret_0) void raw_lv_request();
@@ -680,6 +681,31 @@ static void isoless_yuv_destripe_lv_fast(uint8_t * base, int pitch, int height)
     }
 }
 
+static void isoless_lv_destripe_one(void * buf)
+{
+    if (!buf) return;
+
+    get_yuv422_vram();
+    if (vram_lv.pitch <= 0 || vram_lv.height <= 0)
+        return;
+
+    uint8_t * base = (uint8_t *) CACHEABLE(buf);
+
+    static int detect_aux = INT_MIN;
+    if (!lv_stripe_valid || should_run_polling_action(1000, &detect_aux))
+        isoless_lv_detect_stripes(base, vram_lv.pitch, vram_lv.height);
+
+    /* Dual ISO always alternates every 2 lines; don't stall on weak detection. */
+    if (!lv_stripe_valid && dual_iso_is_active())
+    {
+        lv_stripe_period = 2;
+        lv_stripe_keep = 0;
+        lv_stripe_valid = 1;
+    }
+
+    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
+}
+
 /* Called from core at display vsync — patch the buffer actually on screen. */
 void dual_iso_vsync_display_hook(void)
 {
@@ -689,18 +715,15 @@ void dual_iso_vsync_display_hook(void)
         return;
     }
 
-    get_yuv422_vram();
-    void * buf = get_lcd_422_buf();
-    if (!buf || vram_lv.pitch <= 0 || vram_lv.height <= 0)
-        return;
+    isoless_lv_destripe_one(get_lcd_422_buf());
+    isoless_lv_destripe_one(get_fastrefresh_422_buf());
+}
 
-    uint8_t * base = (uint8_t *) CACHEABLE(buf);
-
-    static int detect_aux = INT_MIN;
-    if (!lv_stripe_valid || should_run_polling_action(1000, &detect_aux))
-        isoless_lv_detect_stripes(base, vram_lv.pitch, vram_lv.height);
-
-    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
+static unsigned int isoless_vsync_cbr(unsigned int unused)
+{
+    (void) unused;
+    dual_iso_vsync_display_hook();
+    return CBR_RET_CONTINUE;
 }
 
 /* Normal dual-ISO display: keep Canon YUV preview (de-striped), not ML raw preview. */
@@ -1365,6 +1388,7 @@ MODULE_INFO_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
+    MODULE_CBR(CBR_VSYNC, isoless_vsync_cbr, 0)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
 MODULE_CBRS_END()
 

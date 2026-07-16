@@ -67,6 +67,7 @@ void hist_invalidate_r2ev_cache(void);
 void waveform_slim_scan_begin(void);
 void waveform_slim_scan_pixel(int bmp_j, int ev_bin);
 int waveform_slim_using_raw_scan(void);
+void waveform_build_raw_slim(void);
 #endif
 
 #define RAW_HISTOGRAM_ENABLED (hist_draw && hist_type >= 2)

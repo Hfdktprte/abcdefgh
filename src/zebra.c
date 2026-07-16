@@ -557,7 +557,7 @@ hist_build()
 
     #ifdef FEATURE_WAVEFORM
 #if defined(CONFIG_SLIM_MENUS)
-    if (waveform_draw && !(RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()))
+    if (waveform_draw && !can_use_raw_overlays())
         waveform_init();
 #else
     if (waveform_draw)
@@ -579,6 +579,12 @@ hist_build()
     {
         hist_build_raw();
     }
+#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+    else if (waveform_draw && can_use_raw_overlays())
+    {
+        waveform_build_raw_slim();
+    }
+#endif
     #endif
 
 #ifdef CONFIG_SLIM_MENUS
@@ -4328,6 +4334,9 @@ livev_hipriority_task( void* unused )
             if (zebra_draw && raw_zebra_enable == 1) raw_needed = 1;        /* raw zebras: always */
             #endif            
             if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;          /* raw hisogram (any kind) */
+#ifdef CONFIG_SLIM_MENUS
+            if (waveform_draw) raw_needed = 1;                               /* slim waveform uses raw scan */
+#endif
             if (spotmeter_draw && spotmeter_formula == 3) raw_needed = 1;   /* spotmeter, units: raw */
         }
 

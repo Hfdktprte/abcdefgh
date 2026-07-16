@@ -100,10 +100,10 @@ static void hist_slim_update_display_max(uint32_t frame_max)
     if (!frame_max)
         return;
 
-    if (frame_max > hist_display_max)
+    if (frame_max >= hist_display_max)
         hist_display_max = frame_max;
     else
-        hist_display_max = MAX(frame_max, (hist_display_max * 7 + frame_max) / 8);
+        hist_display_max = MAX(frame_max, (hist_display_max * 3 + frame_max) / 4);
 }
 
 static void hist_prepare_smooth_display(void)
@@ -122,27 +122,25 @@ static void hist_prepare_smooth_display(void)
     }
 
     for (int i = 0; i < HIST_WIDTH; i++)
-        hist_smooth[i] = (hist_smooth[i] * 3 + hist_spatial[i]) / 4;
+    {
+        if (hist_spatial[i] >= hist_smooth[i])
+            hist_smooth[i] = (hist_smooth[i] + hist_spatial[i] * 3) / 4;
+        else
+            hist_smooth[i] = (hist_smooth[i] * 3 + hist_spatial[i]) / 4;
+    }
 }
-#endif
 
-void FAST hist_build_raw()
+static int hist_slim_scan_raw_pixels(int accumulate_hist)
 {
-    if (!raw_update_params()) return;
-
-    memset(&histogram, 0, sizeof(histogram));
-    histogram.is_raw = 1;
+    if (!raw_update_params()) return 0;
 
     int step = lv ? 4 : 2;
-
     hist_build_r2ev_cache();
 
-#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+#if defined(FEATURE_WAVEFORM)
     waveform_slim_scan_begin();
 #endif
 
-#ifdef CONFIG_SLIM_MENUS
-    /* slim: green for luma curve; all channels for clip indicators */
     for (int i = os.y0; i < os.y_max; i += step)
     {
         int y = BM2RAW_Y(i);
@@ -159,17 +157,41 @@ void FAST hist_build_raw()
             if (r == 0 || g == 0 || b == 0) continue;
 
             int ev = r2ev[g];
-            histogram.hist_r[r2ev[r]]++;
-            histogram.hist_g[ev]++;
-            histogram.hist_b[r2ev[b]]++;
-            histogram.hist[ev]++;
-            histogram.total_px++;
+            if (accumulate_hist)
+            {
+                histogram.hist_r[r2ev[r]]++;
+                histogram.hist_g[ev]++;
+                histogram.hist_b[r2ev[b]]++;
+                histogram.hist[ev]++;
+                histogram.total_px++;
+            }
 #if defined(FEATURE_WAVEFORM)
             waveform_slim_scan_pixel(j, ev);
 #endif
         }
     }
+
+    return 1;
+}
+#endif
+
+void FAST hist_build_raw()
+{
+    memset(&histogram, 0, sizeof(histogram));
+    histogram.is_raw = 1;
+
+#ifdef CONFIG_SLIM_MENUS
+    if (!hist_slim_scan_raw_pixels(1))
+        return;
 #else
+    if (!raw_update_params()) return;
+
+    int step = lv ? 4 : 2;
+
+    hist_build_r2ev_cache();
+#endif
+
+#ifndef CONFIG_SLIM_MENUS
     for (int i = os.y0; i < os.y_max; i += step)
     {
         int y = BM2RAW_Y(i);
@@ -262,6 +284,14 @@ void FAST hist_build_raw()
     histobar_refresh();
 #endif
 }
+
+#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+void FAST waveform_build_raw_slim(void)
+{
+    if (!can_use_raw_overlays()) return;
+    hist_slim_scan_raw_pixels(0);
+}
+#endif
 
 #if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
 void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height)

@@ -4472,11 +4472,7 @@ livev_hipriority_task( void* unused )
 
 static void loprio_sleep()
 {
-#ifdef CONFIG_SLIM_MENUS
-    msleep(100);
-#else
     msleep(200);
-#endif
     while (is_mvr_buffer_almost_full()) msleep(100);
 }
 
@@ -4520,9 +4516,7 @@ livev_lopriority_task( void* unused )
             continue;
         }
 
-#ifndef CONFIG_SLIM_MENUS
         loprio_sleep();
-#endif
 
         if (!gui_menu_shown())
             draw_histogram_and_waveform(0);

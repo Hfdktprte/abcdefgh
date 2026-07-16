@@ -466,6 +466,17 @@ compute_audio_levels(
         raw = -raw;
     
     level->last     = raw;
+#ifdef CONFIG_SLIM_MENUS
+    /* Slim top bar redraws slowly via lvinfo — track input faster for responsive VU. */
+    level->avg      = (level->avg * 3 + raw) / 4;
+    if( raw > level->peak )
+        level->peak = raw;
+    if( raw > level->peak_fast )
+        level->peak_fast = raw;
+    else
+        level->peak_fast = (level->peak_fast * 3 + raw) / 4;
+    level->peak = ( level->peak * 15 + level->avg ) / 16;
+#else
     level->avg      = (level->avg * 7 + raw) / 8;
     if( raw > level->peak )
         level->peak = raw;
@@ -476,6 +487,20 @@ compute_audio_levels(
     // Decay the peak to the average
     level->peak = ( level->peak * 31 + level->avg ) / 32;
     level->peak_fast = ( level->peak_fast * 3 + level->avg ) / 4;
+#endif
+}
+
+void audio_meters_redraw_fast(void)
+{
+#ifdef FEATURE_AUDIO_METERS
+    if (!audio_meters_are_drawn())
+        return;
+    if (audio_meter_x == INT_MIN || audio_meter_y == INT_MIN || audio_meter_width == INT_MIN)
+        return;
+    if (is_mvr_buffer_almost_full())
+        return;
+    draw_meters();
+#endif
 }
 
 /** Task to monitor the audio levels.
@@ -513,10 +538,12 @@ static int audio_meters_step( int reconfig_audio )
 
     if(audio_meters_are_drawn())
     {
+#ifndef CONFIG_SLIM_MENUS
         if(!is_mvr_buffer_almost_full())
         {
             BMP_LOCK( draw_meters(); );
         }
+#endif
 
         if(RECORDING)
         {
@@ -568,7 +595,11 @@ static void audio_common_task(void * unused)
     TASK_LOOP
     {
         msleep(MIN_MSLEEP);
+#ifdef CONFIG_SLIM_MENUS
+        int meters_sleep_cycles = DISPLAY_IS_ON ? 1 : (500/MIN_MSLEEP);
+#else
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
+#endif
         meters_slept_times++;
         compute_audio_levels(0);
         compute_audio_levels(1);

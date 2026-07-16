@@ -119,9 +119,7 @@ static int crop_preset_fps = 0;
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
 CONFIG_INT("crop.button_INFO",      INFO_button, 0);
-#ifdef CONFIG_SLIM_MENUS
-CONFIG_INT("crop.shutter_zoom", Shutter_zoom, 0); /* 0=OFF, 1=hold x10, 2=sticky x10 */
-#endif
+CONFIG_INT("crop.shutter_zoom", Shutter_zoom, 0); /* EOS M slim: 0=OFF, 1=hold x10, 2=sticky x10 */
 CONFIG_INT("crop.arrows_U_D",       Arrows_U_D, 1);
 CONFIG_INT("crop.more_hacks",       more_hacks, 1);
 static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 2);
@@ -360,7 +358,6 @@ static int slim_handle_main_dial_shutter(unsigned int key)
     return 0;
 }
 
-#ifdef CONFIG_SLIM_MENUS
 static void slim_zoom_to_x10(void)
 {
     extern int kill_canon_gui_mode;
@@ -372,7 +369,9 @@ static void slim_zoom_to_x10(void)
     kill_canon_gui_mode = 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
+#ifdef CONFIG_EOSM
     crop_rec_recover_preview(1);
+#endif
 }
 
 static void slim_zoom_from_x10(void)
@@ -385,7 +384,9 @@ static void slim_zoom_from_x10(void)
     msleep(50);
     set_zoom(5);
     kill_canon_gui_mode = 1;
+#ifdef CONFIG_EOSM
     crop_rec_recover_preview(1);
+#endif
 }
 
 /* Settings → Shutter zoom: half-shutter x10 like SET (hold or sticky). */
@@ -422,7 +423,6 @@ static int slim_handle_shutter_zoom(unsigned int key)
 
     return 0;
 }
-#endif
 
 /* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
@@ -8231,9 +8231,7 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(Half_Shutter)
     MODULE_CONFIG(SET_button)
     MODULE_CONFIG(INFO_button)
-#ifdef CONFIG_SLIM_MENUS
     MODULE_CONFIG(Shutter_zoom)
-#endif
     MODULE_CONFIG(tapdisp)
     MODULE_CONFIG(Arrows_L_R)
     MODULE_CONFIG(Arrows_U_D)

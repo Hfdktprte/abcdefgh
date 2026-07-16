@@ -74,14 +74,10 @@ void hist_invalidate_r2ev_cache(void)
 #ifdef CONFIG_SLIM_MENUS
 /* Smoothed curve for display — hides per-bin vertical bar look */
 static uint32_t hist_smooth[HIST_WIDTH];
-static uint32_t hist_display_max = 1;
-static int hist_display_ready = 0;
 
 static void hist_slim_reset_display(void)
 {
     memset(hist_smooth, 0, sizeof(hist_smooth));
-    hist_display_max = 1;
-    hist_display_ready = 0;
 }
 
 static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
@@ -95,39 +91,10 @@ static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
     }
 }
 
-static void hist_slim_update_display_max(uint32_t frame_max)
-{
-    if (!frame_max)
-        return;
-
-    if (frame_max >= hist_display_max)
-        hist_display_max = frame_max;
-    else
-        hist_display_max = MAX(frame_max, (hist_display_max * 3 + frame_max) / 4);
-}
-
 static void hist_prepare_smooth_display(void)
 {
-    uint32_t hist_frame[HIST_WIDTH];
-    uint32_t hist_spatial[HIST_WIDTH];
-
-    hist_smooth_3tap(histogram.hist, hist_frame);
-    hist_smooth_3tap(hist_frame, hist_spatial);
-
-    if (!hist_display_ready)
-    {
-        memcpy(hist_smooth, hist_spatial, sizeof(hist_smooth));
-        hist_display_ready = 1;
-        return;
-    }
-
-    for (int i = 0; i < HIST_WIDTH; i++)
-    {
-        if (hist_spatial[i] >= hist_smooth[i])
-            hist_smooth[i] = (hist_smooth[i] + hist_spatial[i] * 3) / 4;
-        else
-            hist_smooth[i] = (hist_smooth[i] * 3 + hist_spatial[i]) / 4;
-    }
+    /* Spatial smooth only — peaks follow the scene on the next draw. */
+    hist_smooth_3tap(histogram.hist, hist_smooth);
 }
 
 static int hist_slim_scan_raw_pixels(int accumulate_hist)
@@ -277,8 +244,6 @@ void FAST hist_build_raw()
     }
 
 #ifdef CONFIG_SLIM_MENUS
-    hist_slim_update_display_max(histogram.max);
-    histogram.max = hist_display_max;
     hist_prepare_smooth_display();
 #else
     histobar_refresh();

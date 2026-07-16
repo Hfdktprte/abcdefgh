@@ -58,15 +58,31 @@ static void hist_build_r2ev_cache()
         r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static void hist_slim_reset_display(void);
+#endif
+
 void hist_invalidate_r2ev_cache(void)
 {
     r2ev_white_level = -1;
     r2ev_black_level = -1;
+#ifdef CONFIG_SLIM_MENUS
+    hist_slim_reset_display();
+#endif
 }
 
 #ifdef CONFIG_SLIM_MENUS
 /* Smoothed curve for display — hides per-bin vertical bar look */
 static uint32_t hist_smooth[HIST_WIDTH];
+static uint32_t hist_display_max = 1;
+static int hist_display_ready = 0;
+
+static void hist_slim_reset_display(void)
+{
+    memset(hist_smooth, 0, sizeof(hist_smooth));
+    hist_display_max = 1;
+    hist_display_ready = 0;
+}
 
 static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
 {
@@ -79,9 +95,34 @@ static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
     }
 }
 
+static void hist_slim_update_display_max(uint32_t frame_max)
+{
+    if (!frame_max)
+        return;
+
+    if (frame_max > hist_display_max)
+        hist_display_max = frame_max;
+    else
+        hist_display_max = MAX(frame_max, (hist_display_max * 7 + frame_max) / 8);
+}
+
 static void hist_prepare_smooth_display(void)
 {
-    hist_smooth_3tap(histogram.hist, hist_smooth);
+    uint32_t hist_frame[HIST_WIDTH];
+    uint32_t hist_spatial[HIST_WIDTH];
+
+    hist_smooth_3tap(histogram.hist, hist_frame);
+    hist_smooth_3tap(hist_frame, hist_spatial);
+
+    if (!hist_display_ready)
+    {
+        memcpy(hist_smooth, hist_spatial, sizeof(hist_smooth));
+        hist_display_ready = 1;
+        return;
+    }
+
+    for (int i = 0; i < HIST_WIDTH; i++)
+        hist_smooth[i] = (hist_smooth[i] * 3 + hist_spatial[i]) / 4;
 }
 #endif
 
@@ -159,27 +200,21 @@ void FAST hist_build_raw()
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
 #ifdef CONFIG_SLIM_MENUS
+    for (int i = 0; i < 5000; i++)
     {
-        static int slim_gap_aux = 0;
-        if (should_run_polling_action(300, &slim_gap_aux))
+        int ev0 = r2ev[i];
+        int evplus = r2ev[i+1];
+        int evminus = r2ev[i-1];
+        if (evplus - evminus > 2)
         {
-            for (int i = 0; i < 5000; i++)
+            int num_bins = evplus - evminus - 1;
+            int delta = histogram.hist_g[ev0] / num_bins;
+            for (int e = evminus+1; e <= evplus-1; e++)
             {
-                int ev0 = r2ev[i];
-                int evplus = r2ev[i+1];
-                int evminus = r2ev[i-1];
-                if (evplus - evminus > 2)
-                {
-                    int num_bins = evplus - evminus - 1;
-                    int delta = histogram.hist_g[ev0] / num_bins;
-                    for (int e = evminus+1; e <= evplus-1; e++)
-                    {
-                        histogram.hist_g[e] += delta;
-                        histogram.hist[e] += delta;
-                        histogram.hist_g[ev0] -= delta;
-                        histogram.hist[ev0] -= delta;
-                    }
-                }
+                histogram.hist_g[e] += delta;
+                histogram.hist[e] += delta;
+                histogram.hist_g[ev0] -= delta;
+                histogram.hist[ev0] -= delta;
             }
         }
     }
@@ -220,6 +255,8 @@ void FAST hist_build_raw()
     }
 
 #ifdef CONFIG_SLIM_MENUS
+    hist_slim_update_display_max(histogram.max);
+    histogram.max = hist_display_max;
     hist_prepare_smooth_display();
 #else
     histobar_refresh();

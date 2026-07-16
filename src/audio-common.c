@@ -478,27 +478,6 @@ compute_audio_levels(
     level->peak_fast = ( level->peak_fast * 3 + level->avg ) / 4;
 }
 
-#ifdef CONFIG_SLIM_MENUS
-/** Keep mic preamp on when meters are hidden (521fff5); does not touch meter timing. */
-static void audio_mic_preamp_keepalive(void)
-{
-    static int aux = 0;
-
-    if (!is_movie_mode() || !sound_recording_enabled())
-        return;
-
-    if (!should_run_polling_action(1000, &aux))
-        return;
-
-#if defined(CONFIG_600D) || defined(CONFIG_7D)
-    audio_configure(1);
-#elif defined(CONFIG_650D) || defined(CONFIG_700D) || defined(CONFIG_EOSM) || defined(CONFIG_100D) || defined(CONFIG_70D)
-    void PowerMicAmp(uint32_t);
-    PowerMicAmp(0);
-#endif
-}
-#endif
-
 /** Task to monitor the audio levels.
  *
  * Compute the average and peak level, periodically calling
@@ -570,7 +549,6 @@ static void audio_common_task(void * unused)
     {
         msleep(MIN_MSLEEP);
 #ifdef CONFIG_SLIM_MENUS
-        audio_mic_preamp_keepalive();
         if (!zebra_draw_enabled())
         {
             int meters_sleep_cycles = 50 / MIN_MSLEEP;
@@ -584,8 +562,10 @@ static void audio_common_task(void * unused)
             }
             continue;
         }
-#endif
+        int meters_sleep_cycles = 10 / MIN_MSLEEP;
+#else
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
+#endif
         meters_slept_times++;
         compute_audio_levels(0);
         compute_audio_levels(1);

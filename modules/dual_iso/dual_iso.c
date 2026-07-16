@@ -680,8 +680,6 @@ static void isoless_yuv_destripe_lv_fast(uint8_t * base, int pitch, int height)
     }
 }
 
-}
-
 /* Called from core at display vsync — patch the buffer actually on screen. */
 void dual_iso_vsync_display_hook(void)
 {

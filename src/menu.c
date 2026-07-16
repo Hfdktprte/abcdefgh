@@ -304,23 +304,33 @@ static void slim_touch_select_entry(struct menu *menu, struct menu_entry *entry)
     give_semaphore(menu_sem);
 }
 
-static int slim_touch_handle_release(void)
+/* Return 0 if tap was handled; set *needs_full_redraw for grid launch etc. */
+static int slim_touch_handle_release(int *needs_full_redraw)
 {
     int tx, ty;
+    if (needs_full_redraw)
+        *needs_full_redraw = 0;
     if (!slim_touch_get_xy(&tx, &ty))
         return 1;
 
     if (menu_grid_is_active())
     {
         int redraw = 0;
-        return menu_grid_handle_touch(tx, ty, &redraw);
+        int ret = menu_grid_handle_touch(tx, ty, &redraw);
+        if (ret == 0 && needs_full_redraw)
+            *needs_full_redraw = redraw;
+        touch_slim_clear_xy();
+        return ret;
     }
 
     struct menu *menu = slim_touch_draw_menu;
     if (!menu)
         menu = get_current_menu_or_submenu();
     if (!menu)
+    {
+        touch_slim_clear_xy();
         return 1;
+    }
 
     for (int i = 0; i < slim_touch_hit_count; i++)
     {
@@ -334,18 +344,22 @@ static int slim_touch_handle_release(void)
         {
             slim_touch_select_entry(t->menu, t->entry);
             menu_entry_select(t->menu, 1);
+            touch_slim_clear_xy();
             return 0;
         }
         if (t->has_arrows && tx >= t->arrow_r0 && tx < t->arrow_r1)
         {
             slim_touch_select_entry(t->menu, t->entry);
             menu_entry_select(t->menu, 0);
+            touch_slim_clear_xy();
             return 0;
         }
 
         slim_touch_select_entry(t->menu, t->entry);
+        touch_slim_clear_xy();
         return 0;
     }
+    touch_slim_clear_xy();
     return 1;
 }
 #endif /* CONFIG_SLIM_MENUS && CONFIG_TOUCHSCREEN */
@@ -5750,14 +5764,20 @@ int handle_ml_menu_touch(struct event * event)
     switch (event->param)
     {
         case BGMT_TOUCH_1_FINGER:
+            touch_slim_capture_xy();
             return 0;
         case BGMT_UNTOUCH_1_FINGER:
         {
-            int handled = !slim_touch_handle_release();
-            if (!handled)
+            int needs_full_redraw = 0;
+            if (slim_touch_handle_release(&needs_full_redraw) == 0)
             {
-                menu_damage = 1;
-                menu_redraw();
+                if (needs_full_redraw)
+                    menu_redraw_full();
+                else
+                {
+                    menu_damage = 1;
+                    menu_redraw();
+                }
             }
             return 0;
         }

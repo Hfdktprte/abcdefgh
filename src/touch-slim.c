@@ -8,6 +8,9 @@
 
 static uint32_t touch_orig_cbr = 0;
 static int touch_prev_fingers = -1;
+static int touch_cached_x = 0;
+static int touch_cached_y = 0;
+static int touch_cached_valid = 0;
 
 static int touch_read_fingers(void)
 {
@@ -16,6 +19,37 @@ static int touch_read_fingers(void)
 #else
     return 0;
 #endif
+}
+
+static int touch_read_xy_live(int *tx, int *ty)
+{
+#ifdef TOUCH_XY_RAW1
+    uint32_t raw = MEM(TOUCH_XY_RAW1);
+    if (raw == 0)
+        raw = MEM(TOUCH_XY_RAW2);
+    *tx = COERCE((int)(raw & 0xFFF), 0, 719);
+    *ty = COERCE((int)((raw >> 12) & 0xFFF), 0, 479);
+    return touch_read_fingers() >= 1 || raw != 0;
+#else
+    (void) tx;
+    (void) ty;
+    return 0;
+#endif
+}
+
+void touch_slim_capture_xy(void)
+{
+    int tx, ty;
+    if (!touch_read_xy_live(&tx, &ty))
+        return;
+    touch_cached_x = tx;
+    touch_cached_y = ty;
+    touch_cached_valid = 1;
+}
+
+void touch_slim_clear_xy(void)
+{
+    touch_cached_valid = 0;
 }
 
 static void touch_emit_edges(int fingers)
@@ -30,7 +64,10 @@ static void touch_emit_edges(int fingers)
         return;
 
     if (fingers >= 1 && prev < 1)
+    {
+        touch_slim_capture_xy();
         fake_simple_button(BGMT_TOUCH_1_FINGER);
+    }
     if (fingers >= 2 && prev < 2)
         fake_simple_button(BGMT_TOUCH_2_FINGER);
 
@@ -44,21 +81,21 @@ static void touch_emit_edges(int fingers)
 
 void touch_slim_poll(void)
 {
-    touch_emit_edges(touch_read_fingers());
+    int fingers = touch_read_fingers();
+    if (fingers >= 1)
+        touch_slim_capture_xy();
+    touch_emit_edges(fingers);
 }
 
 int touch_slim_get_xy(int *tx, int *ty)
 {
-#ifdef TOUCH_XY_RAW1
-    uint32_t raw = MEM(TOUCH_XY_RAW1);
-    *tx = COERCE((int)(raw & 0xFFF), 0, 719);
-    *ty = COERCE((int)((raw >> 12) & 0xFFF), 0, 479);
-    return 1;
-#else
-    (void) tx;
-    (void) ty;
-    return 0;
-#endif
+    if (touch_cached_valid)
+    {
+        *tx = touch_cached_x;
+        *ty = touch_cached_y;
+        return 1;
+    }
+    return touch_read_xy_live(tx, ty);
 }
 
 #ifdef HIJACK_TOUCH_CBR_PTR

@@ -1839,8 +1839,8 @@ static MENU_UPDATE_FUNC(aperture_display)
     if (!a || !lens_info.lens_exists) // for unchipped lenses, always display zero
         a = av = 0;
 #ifdef CONFIG_SLIM_MENUS
-    /* ASCII f/ so Canon Gothic renders (bfnt SYM_F_SLASH looks like the old font). */
-    MENU_SET_VALUE("f/%d.%d", a / 10, a % 10);
+    /* Slim Exposure: bare number (e.g. 3.5), no f/ prefix. */
+    MENU_SET_VALUE("%d.%d", a / 10, a % 10);
     /* Never grey Aperture on slim Exposure. */
     MENU_SET_ENABLED(1);
 #else

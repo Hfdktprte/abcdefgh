@@ -5399,8 +5399,9 @@ static struct menu_entry slim_info_button_menu[] = {
         .max       = 3,
         .choices   = CHOICES("OFF", "Aperture", "false colors", "Dual ISO"),
         .edit_mode = EM_INLINE_ADJUST,
+        /* IT_DICE: do not treat OFF as disabled (slim greys IT_PERCENT_OFF when value==0). */
+        .icon_type = IT_DICE,
         .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO.",
-        .depends_on = DEP_LIVEVIEW,
     },
 };
 

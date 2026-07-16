@@ -479,24 +479,7 @@ compute_audio_levels(
 }
 
 #ifdef CONFIG_SLIM_MENUS
-static int audio_meters_period_ms(void)
-{
-    /* 363b70a baseline via audio_common_task; tune per overlay state. */
-    return zebra_draw_enabled() ? 10 : 50;
-}
-#endif
-
-/** Task to monitor the audio levels.
- *
- * Compute the average and peak level, periodically calling
- * the draw_meters() function to display the results on screen.
- * \todo Check that we have live-view enabled and the TFT is on
- * before drawing.
- */
-/** EOS M / Digic V: keep internal mic preamp powered.
- * VU meters used to be the only caller of PowerMicAmp(); when meters were hidden
- * (Global Draw off, kill_gd, lv_disp_mode, half-shutter, grid menu) levels and
- * MLV recordings were both quiet. */
+/** Keep mic preamp on when meters are hidden (521fff5); does not touch meter timing. */
 static void audio_mic_preamp_keepalive(void)
 {
     static int aux = 0;
@@ -514,10 +497,17 @@ static void audio_mic_preamp_keepalive(void)
     PowerMicAmp(0);
 #endif
 }
+#endif
 
+/** Task to monitor the audio levels.
+ *
+ * Compute the average and peak level, periodically calling
+ * the draw_meters() function to display the results on screen.
+ * \todo Check that we have live-view enabled and the TFT is on
+ * before drawing.
+ */
 static int audio_meters_step( int reconfig_audio )
 {
-    audio_mic_preamp_keepalive();
 
     if(audio_meters_are_drawn())
     {
@@ -534,6 +524,9 @@ static int audio_meters_step( int reconfig_audio )
         {
             #if defined(CONFIG_600D) || defined(CONFIG_7D)
             audio_configure(1);
+            #elif defined(CONFIG_650D) || defined(CONFIG_700D) || defined(CONFIG_EOSM) || defined(CONFIG_100D) || defined(CONFIG_70D)
+            void PowerMicAmp();
+            PowerMicAmp(0);
             #endif
             reconfig_audio = 1;
         }
@@ -577,20 +570,11 @@ static void audio_common_task(void * unused)
     {
         msleep(MIN_MSLEEP);
 #ifdef CONFIG_SLIM_MENUS
-        int meters_sleep_cycles = audio_meters_period_ms() / MIN_MSLEEP;
-        meters_slept_times++;
-        if (zebra_draw_enabled())
+        audio_mic_preamp_keepalive();
+        if (!zebra_draw_enabled())
         {
-            compute_audio_levels(0);
-            compute_audio_levels(1);
-            if (meters_slept_times >= meters_sleep_cycles)
-            {
-                reconfig_audio = audio_meters_step(reconfig_audio);
-                meters_slept_times = 0;
-            }
-        }
-        else
-        {
+            int meters_sleep_cycles = 50 / MIN_MSLEEP;
+            meters_slept_times++;
             if (meters_slept_times >= meters_sleep_cycles)
             {
                 compute_audio_levels(0);
@@ -598,8 +582,9 @@ static void audio_common_task(void * unused)
                 reconfig_audio = audio_meters_step(reconfig_audio);
                 meters_slept_times = 0;
             }
+            continue;
         }
-#else
+#endif
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
         meters_slept_times++;
         compute_audio_levels(0);
@@ -608,7 +593,6 @@ static void audio_common_task(void * unused)
             reconfig_audio = audio_meters_step(reconfig_audio);
             meters_slept_times = 0;
         }
-#endif
     }
 
 }

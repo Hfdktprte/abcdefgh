@@ -4413,9 +4413,6 @@ livev_hipriority_task( void* unused )
                 
         int m = 100;
         if (lens_display_dirty) m = 10;
-#ifdef CONFIG_SLIM_MENUS
-        if (audio_meters_are_drawn()) m = MIN(m, 4);
-#endif
         if (should_draw_zoom_overlay()) m = 100;
         
         int kmm = k % m;
@@ -4431,12 +4428,6 @@ livev_hipriority_task( void* unused )
                 BMP_LOCK( if (lv) update_lens_display(1,0); );
                 if (lens_display_dirty) lens_display_dirty--;
             }
-
-#ifdef CONFIG_SLIM_MENUS
-            /* Top bar layout is slow (k%%m); refresh VU pixels every hiprio pass. */
-            if (lv && audio_meters_are_drawn())
-                BMP_LOCK( audio_meters_redraw_fast(); );
-#endif
 
             if (kmm == 8)
             {
@@ -4502,6 +4493,13 @@ livev_lopriority_task( void* unused )
                 #endif
             )
                 draw_histogram_and_waveform(0);
+
+            /* ~20 ms VU refresh (Danne baseline); loprio avoids BMP_LOCK fights with zebras in hiprio. */
+            {
+                static int slim_meter_aux = 0;
+                if (should_run_polling_action(20, &slim_meter_aux) && audio_meters_are_drawn())
+                    BMP_LOCK( audio_meters_redraw_fast(); );
+            }
 #else
             draw_histogram_and_waveform(0);
 #endif

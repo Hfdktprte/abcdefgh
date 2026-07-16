@@ -526,10 +526,12 @@ static int audio_meters_step( int reconfig_audio )
 
     if(audio_meters_are_drawn())
     {
+#ifndef CONFIG_SLIM_MENUS
         if(!is_mvr_buffer_almost_full())
         {
             BMP_LOCK( draw_meters(); );
         }
+#endif
 
         if(RECORDING)
         {

@@ -491,6 +491,14 @@ void audio_meters_redraw_fast(void)
 #endif
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static int audio_meters_period_ms(void)
+{
+    /* 86a0a81: 20 ms with zebras; slower when overlays are off (no hiprio redraw). */
+    return zebra_draw_enabled() ? 20 : 40;
+}
+#endif
+
 /** Task to monitor the audio levels.
  *
  * Compute the average and peak level, periodically calling
@@ -526,12 +534,10 @@ static int audio_meters_step( int reconfig_audio )
 
     if(audio_meters_are_drawn())
     {
-#ifndef CONFIG_SLIM_MENUS
         if(!is_mvr_buffer_almost_full())
         {
             BMP_LOCK( draw_meters(); );
         }
-#endif
 
         if(RECORDING)
         {
@@ -583,6 +589,30 @@ static void audio_common_task(void * unused)
     TASK_LOOP
     {
         msleep(MIN_MSLEEP);
+#ifdef CONFIG_SLIM_MENUS
+        int meters_sleep_cycles = audio_meters_period_ms() / MIN_MSLEEP;
+        meters_slept_times++;
+        if (zebra_draw_enabled())
+        {
+            compute_audio_levels(0);
+            compute_audio_levels(1);
+            if (meters_slept_times >= meters_sleep_cycles)
+            {
+                reconfig_audio = audio_meters_step(reconfig_audio);
+                meters_slept_times = 0;
+            }
+        }
+        else
+        {
+            if (meters_slept_times >= meters_sleep_cycles)
+            {
+                compute_audio_levels(0);
+                compute_audio_levels(1);
+                reconfig_audio = audio_meters_step(reconfig_audio);
+                meters_slept_times = 0;
+            }
+        }
+#else
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
         meters_slept_times++;
         compute_audio_levels(0);
@@ -591,6 +621,7 @@ static void audio_common_task(void * unused)
             reconfig_audio = audio_meters_step(reconfig_audio);
             meters_slept_times = 0;
         }
+#endif
     }
 
 }

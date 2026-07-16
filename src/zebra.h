@@ -15,6 +15,9 @@ int get_global_draw();
 /* returns true if you should draw zebras and other overlays right now */
 int zebra_should_run();
 
+/* returns true if zebra overlay is enabled in menu */
+int zebra_draw_enabled(void);
+
 /* returns true if the setting is enabled (does not check preconditions) */
 int get_global_draw_setting();
 

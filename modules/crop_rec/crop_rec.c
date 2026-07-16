@@ -6973,7 +6973,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     extern int kill_canon_gui_mode;
 
 #ifdef CONFIG_SLIM_MENUS
-    if (RECORDING && lv && is_movie_mode() && !gui_menu_shown())
+    if (lv && is_movie_mode() && !gui_menu_shown())
     {
         if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
@@ -7337,7 +7337,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
             }
             
-            /* Block SET/Arrows/One finger touch while recording to prevent changing focus box position.
+            /* Block SET/Arrows while recording to prevent changing focus box position.
              * When changing focus box position, a part of preview configuration changes, we don't 
              * want that to happen, to avoid corrupted frames, black preview or instability 
              * is there another way to block focus box from shifting, and make its position static? */
@@ -7347,11 +7347,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     ((key == MODULE_KEY_PRESS_UP)    && !Arrows_U_D) ||
                     ((key == MODULE_KEY_PRESS_DOWN)  && !Arrows_U_D) ||
                     ((key == MODULE_KEY_PRESS_LEFT)  && !Arrows_L_R) ||
-                    ((key == MODULE_KEY_PRESS_RIGHT) && !Arrows_L_R) ||
-                    ((key == MODULE_KEY_TOUCH_1_FINGER) ||
-                     (key == MODULE_KEY_UNTOUCH_1_FINGER) ||
-                     (key == MODULE_KEY_TOUCH_2_FINGER) ||
-                     (key == MODULE_KEY_UNTOUCH_2_FINGER)))
+                    ((key == MODULE_KEY_PRESS_RIGHT) && !Arrows_L_R))
                 {
                     return 0;
                 }

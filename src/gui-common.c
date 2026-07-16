@@ -11,6 +11,8 @@
 #include <lens.h>
 #include <config.h>
 #include <lvinfo.h>
+#include <menu.h>
+#include <touch-slim.h>
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -479,7 +481,7 @@ int handle_common_events_by_feature(struct event * event)
     }
 
 #if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    /* Movie recording screen: no touch (focus box, Canon overlays, tap-to-menu). */
+    /* Movie LV: no touch while recording; otherwise tap opens ML grid launcher. */
     if (lv && is_movie_mode() && !gui_menu_shown())
     {
         switch (event->param)
@@ -495,6 +497,13 @@ int handle_common_events_by_feature(struct event * event)
             case BGMT_TOUCH_PINCH_START:
             case BGMT_TOUCH_PINCH_STOP:
 #endif
+                if (RECORDING)
+                    return 0;
+                if (event->param == BGMT_UNTOUCH_1_FINGER)
+                {
+                    gui_open_menu();
+                    return 0;
+                }
                 return 0;
         }
     }

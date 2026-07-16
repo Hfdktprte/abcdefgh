@@ -36,6 +36,7 @@
 #include "focus.h"
 #include "menuhelp.h"
 #include "menu-grid.h"
+#include "touch-slim.h"
 #include "console.h"
 #include "debug.h"
 #include "lvinfo.h"
@@ -282,10 +283,7 @@ static void slim_touch_commit_row(struct menu *menu, struct menu_entry *entry)
 #ifdef TOUCH_XY_RAW1
 static int slim_touch_get_xy(int *tx, int *ty)
 {
-    uint32_t raw = MEM(TOUCH_XY_RAW1);
-    *tx = COERCE((int)(raw & 0xFFF), 0, 719);
-    *ty = COERCE((int)((raw >> 12) & 0xFFF), 0, 479);
-    return 1;
+    return touch_slim_get_xy(tx, ty);
 }
 #else
 static int slim_touch_get_xy(int *tx, int *ty)
@@ -5764,8 +5762,6 @@ int handle_ml_menu_touch(struct event * event)
             return 0;
         }
         case BGMT_TOUCH_2_FINGER:
-            give_semaphore(gui_sem);
-            return 0;
         case BGMT_UNTOUCH_2_FINGER:
             return 0;
         default:

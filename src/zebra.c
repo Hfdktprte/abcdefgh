@@ -4493,13 +4493,6 @@ livev_lopriority_task( void* unused )
                 #endif
             )
                 draw_histogram_and_waveform(0);
-
-            /* ~20 ms VU refresh (Danne baseline); loprio avoids BMP_LOCK fights with zebras in hiprio. */
-            {
-                static int slim_meter_aux = 0;
-                if (should_run_polling_action(20, &slim_meter_aux) && audio_meters_are_drawn())
-                    BMP_LOCK( audio_meters_redraw_fast(); );
-            }
 #else
             draw_histogram_and_waveform(0);
 #endif

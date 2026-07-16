@@ -1141,6 +1141,19 @@ waveform_draw_image(
                     //~ count /= 2;
                 }
                 // Scale to a grayscale
+#ifdef CONFIG_SLIM_MENUS
+                count = (count * 96) >> 7;
+                if( count > 55 )
+                    count = COLOR_RED;
+                else if( count > 0 )
+                    count = COLOR_WHITE;
+                else if( y == (WAVEFORM_HEIGHT*1)>>2 )
+                    count = COLOR_BLUE;
+                else if( y == (WAVEFORM_HEIGHT*3)>>2 )
+                    count = COLOR_BLUE;
+                else
+                    count = waveform_bg;
+#else
                 count = (count * 42) >> 7;
                 if( count > 42 - 5 )
                     count = COLOR_RED;
@@ -1159,6 +1172,7 @@ waveform_draw_image(
                     count = COLOR_BLUE;
                 else
                     count = waveform_bg; // transparent
+#endif
 
                 pixel |= (count << ((i & 3)<<3));
 

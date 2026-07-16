@@ -349,7 +349,7 @@ static void hist_dot(int x, int y, int fg_color, int bg_color, int radius, int l
 #ifdef CONFIG_SLIM_MENUS
     if (radius == HIST_CLIP_DOT_RADIUS && !label)
     {
-        draw_circle(x, y, radius, fg_color);
+        fill_circle(x, y, radius, fg_color);
         return;
     }
 #endif
@@ -504,9 +504,15 @@ void hist_draw_image(
                 unsigned int over_g = histogram.hist_g[i];
                 unsigned int over_b = histogram.hist_b[i];
 
+#ifdef CONFIG_SLIM_MENUS
+                if (over_r > thr) hist_dot(x_origin + HIST_WIDTH/2 - 25, yw, COLOR_RED,   bg, hist_clip_dot_radius(over_r, histogram.total_px), hist_clip_dot_label(over_r, histogram.total_px));
+                if (over_g > thr) hist_dot(x_origin + HIST_WIDTH/2     , yw, COLOR_GREEN2, bg, hist_clip_dot_radius(over_g, histogram.total_px), hist_clip_dot_label(over_g, histogram.total_px));
+                if (over_b > thr) hist_dot(x_origin + HIST_WIDTH/2 + 25, yw, COLOR_CYAN,  bg, hist_clip_dot_radius(over_b, histogram.total_px), hist_clip_dot_label(over_b, histogram.total_px));
+#else
                 if (over_r > thr) hist_dot(x_origin + HIST_WIDTH/2 - 25, yw, COLOR_RED,        bg, hist_clip_dot_radius(over_r, histogram.total_px), hist_clip_dot_label(over_r, histogram.total_px));
                 if (over_g > thr) hist_dot(x_origin + HIST_WIDTH/2     , yw, COLOR_GREEN1,     bg, hist_clip_dot_radius(over_g, histogram.total_px), hist_clip_dot_label(over_g, histogram.total_px));
                 if (over_b > thr) hist_dot(x_origin + HIST_WIDTH/2 + 25, yw, COLOR_LIGHT_BLUE, bg, hist_clip_dot_radius(over_b, histogram.total_px), hist_clip_dot_label(over_b, histogram.total_px));
+#endif
             }
             else
             {

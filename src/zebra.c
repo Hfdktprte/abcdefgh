@@ -44,7 +44,6 @@
 #include "imgconv.h"
 #include "falsecolor.h"
 #include "histogram.h"
-#include "audio.h"
 
 /* todo: move battery stuff in battery.c */
 #include "battery.h"
@@ -4385,11 +4384,6 @@ livev_hipriority_task( void* unused )
                         else
                             hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
                     }
-#endif
-#ifdef FEATURE_AUDIO_METERS
-                    /* Paint after zebras in same lock; audio_common_task cannot win BMP_LOCK during RAW scan. */
-                    if (zebra_draw_enabled() && audio_meters_are_drawn())
-                        audio_meters_redraw_fast();
 #endif
 #endif
                 )

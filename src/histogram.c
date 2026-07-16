@@ -68,24 +68,20 @@ void hist_invalidate_r2ev_cache(void)
 /* Smoothed curve for display — hides per-bin vertical bar look */
 static uint32_t hist_smooth[HIST_WIDTH];
 
-static void hist_smooth_7tap(const uint32_t *src, uint32_t *dst)
+static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
 {
-    static const int w[7] = {1, 2, 4, 6, 4, 2, 1};
     for (int i = 0; i < HIST_WIDTH; i++)
     {
-        int sum = 0;
-        for (int d = -3; d <= 3; d++)
-        {
-            int j = COERCE(i + d, 0, HIST_WIDTH - 1);
-            sum += src[j] * w[d + 3];
-        }
-        dst[i] = sum / 20;
+        int l = src[i > 0 ? i - 1 : 0];
+        int c = src[i];
+        int r = src[i < HIST_WIDTH - 1 ? i + 1 : HIST_WIDTH - 1];
+        dst[i] = (l + 2 * c + r) / 4;
     }
 }
 
 static void hist_prepare_smooth_display(void)
 {
-    hist_smooth_7tap(histogram.hist, hist_smooth);
+    hist_smooth_3tap(histogram.hist, hist_smooth);
 }
 #endif
 
@@ -99,6 +95,10 @@ void FAST hist_build_raw()
     int step = lv ? 4 : 2;
 
     hist_build_r2ev_cache();
+
+#if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
+    waveform_slim_scan_begin();
+#endif
 
 #ifdef CONFIG_SLIM_MENUS
     /* slim: green for luma curve; all channels for clip indicators */
@@ -117,11 +117,15 @@ void FAST hist_build_raw()
             int b = raw_blue_pixel_dark(x, y);
             if (r == 0 || g == 0 || b == 0) continue;
 
+            int ev = r2ev[g];
             histogram.hist_r[r2ev[r]]++;
-            histogram.hist_g[r2ev[g]]++;
+            histogram.hist_g[ev]++;
             histogram.hist_b[r2ev[b]]++;
-            histogram.hist[r2ev[g]]++;
+            histogram.hist[ev]++;
             histogram.total_px++;
+#if defined(FEATURE_WAVEFORM)
+            waveform_slim_scan_pixel(j, ev);
+#endif
         }
     }
 #else
@@ -155,21 +159,27 @@ void FAST hist_build_raw()
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
 #ifdef CONFIG_SLIM_MENUS
-    for (int i = 0; i < 5000; i++)
     {
-        int ev0 = r2ev[i];
-        int evplus = r2ev[i+1];
-        int evminus = r2ev[i-1];
-        if (evplus - evminus > 2) /* will there be a gap? fill it */
+        static int slim_gap_aux = 0;
+        if (should_run_polling_action(300, &slim_gap_aux))
         {
-            int num_bins = evplus - evminus - 1;
-            int delta = histogram.hist_g[ev0] / num_bins;
-            for (int e = evminus+1; e <= evplus-1; e++)
+            for (int i = 0; i < 5000; i++)
             {
-                histogram.hist_g[e] += delta;
-                histogram.hist[e] += delta;
-                histogram.hist_g[ev0] -= delta;
-                histogram.hist[ev0] -= delta;
+                int ev0 = r2ev[i];
+                int evplus = r2ev[i+1];
+                int evminus = r2ev[i-1];
+                if (evplus - evminus > 2)
+                {
+                    int num_bins = evplus - evminus - 1;
+                    int delta = histogram.hist_g[ev0] / num_bins;
+                    for (int e = evminus+1; e <= evplus-1; e++)
+                    {
+                        histogram.hist_g[e] += delta;
+                        histogram.hist[e] += delta;
+                        histogram.hist_g[ev0] -= delta;
+                        histogram.hist[ev0] -= delta;
+                    }
+                }
             }
         }
     }
@@ -211,46 +221,17 @@ void FAST hist_build_raw()
 
 #ifdef CONFIG_SLIM_MENUS
     hist_prepare_smooth_display();
-#endif
-
+#else
     histobar_refresh();
+#endif
 }
 
 #if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
 void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height)
 {
-    if (!waveform || !wf_width || !wf_height) return;
-    if (!can_use_raw_overlays()) return;
-
-    if (!raw_info.black_level)
-    {
-        if (!raw_update_params()) return;
-    }
-
-    hist_build_r2ev_cache();
-    bzero32(waveform, wf_width * wf_height);
-
-    int step = lv ? 4 : 2;
-    for (int i = os.y0; i < os.y_max; i += step)
-    {
-        int y = BM2RAW_Y(i);
-        if (y < raw_info.active_area.y1+8 || y > raw_info.active_area.y2-8) continue;
-
-        for (int j = os.x0; j < os.x_max; j += 4)
-        {
-            int x = BM2RAW_X(j);
-            if (x < raw_info.active_area.x1+8 || x > raw_info.active_area.x2-8) continue;
-
-            int g = raw_green_pixel_dark(x, y);
-            if (g == 0) continue;
-
-            int Y = (r2ev[g] * 255 + (HIST_WIDTH-1)/2) / (HIST_WIDTH-1);
-            int bin_x = COERCE(((j - os.x0) * wf_width) / os.x_ex, 0, wf_width-1);
-            int bin_y = COERCE((Y * wf_height) >> 8, 0, wf_height-1);
-            uint8_t* w = &waveform[bin_x + bin_y * wf_width];
-            if ((*w) < 250) (*w)++;
-        }
-    }
+    (void)waveform;
+    (void)wf_width;
+    (void)wf_height;
 }
 #endif
 
@@ -290,10 +271,21 @@ static int hist_rgb_color(int y, int sizeR, int sizeG, int sizeB)
     return 0;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+#define HIST_CLIP_DOT_RADIUS 5
+#endif
+
 static void hist_dot(int x, int y, int fg_color, int bg_color, int radius, int label)
 {
     x &= ~3;
     y &= ~3;
+#ifdef CONFIG_SLIM_MENUS
+    if (radius == HIST_CLIP_DOT_RADIUS && !label)
+    {
+        draw_circle(x, y, radius, fg_color);
+        return;
+    }
+#endif
     for (int r = 0; r < radius; r++)
     {
         draw_circle(x, y, r, fg_color);
@@ -338,8 +330,6 @@ static int hist_dot_label(int over, int hist_total_px)
 }
 
 #ifdef CONFIG_SLIM_MENUS
-/* original clip dots: radius 0 (threshold) .. 10 (>1% clipped); use midpoint */
-#define HIST_CLIP_DOT_RADIUS 5
 static int hist_clip_dot_radius(int over, int hist_total_px)
 {
     (void)over;

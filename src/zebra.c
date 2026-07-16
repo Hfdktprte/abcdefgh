@@ -513,6 +513,33 @@ static inline void waveform_add_pixel(int x, int Y)
     uint8_t* w = &WAVEFORM(((x-os.x0) * WAVEFORM_WIDTH) / os.x_ex, (Y * WAVEFORM_HEIGHT) >> 8);
     if ((*w) < 250) (*w)++;
 }
+
+#if defined(CONFIG_SLIM_MENUS)
+static int slim_wf_from_raw_scan = 0;
+
+void waveform_slim_scan_begin(void)
+{
+    slim_wf_from_raw_scan = 0;
+    if (!waveform_draw || !can_use_raw_overlays()) return;
+    waveform_init();
+    slim_wf_from_raw_scan = 1;
+}
+
+void waveform_slim_scan_pixel(int bmp_j, int ev_bin)
+{
+    if (!slim_wf_from_raw_scan || !waveform) return;
+    int Y = (ev_bin * 255 + (HIST_WIDTH-1)/2) / (HIST_WIDTH-1);
+    int bin_x = COERCE(((bmp_j - os.x0) * WAVEFORM_WIDTH) / os.x_ex, 0, WAVEFORM_WIDTH-1);
+    int bin_y = COERCE((Y * WAVEFORM_HEIGHT) >> 8, 0, WAVEFORM_HEIGHT-1);
+    uint8_t* w = &waveform[bin_x + bin_y * WAVEFORM_WIDTH];
+    if ((*w) < 250) (*w)++;
+}
+
+int waveform_slim_using_raw_scan(void)
+{
+    return slim_wf_from_raw_scan;
+}
+#endif
 #endif
 
 static void
@@ -529,10 +556,13 @@ hist_build()
     #endif
 
     #ifdef FEATURE_WAVEFORM
-    if (waveform_draw)
-    {
+#if defined(CONFIG_SLIM_MENUS)
+    if (waveform_draw && !(RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()))
         waveform_init();
-    }
+#else
+    if (waveform_draw)
+        waveform_init();
+#endif
     #endif
     
     #ifdef FEATURE_VECTORSCOPE
@@ -553,17 +583,7 @@ hist_build()
 
 #ifdef CONFIG_SLIM_MENUS
 #ifdef FEATURE_WAVEFORM
-    int waveform_from_raw = 0;
-    if (waveform_draw && can_use_raw_overlays())
-    {
-        static int slim_wf_aux = 0;
-        waveform_from_raw = 1;
-        if (should_run_polling_action(100, &slim_wf_aux))
-        {
-            waveform_init();
-            waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
-        }
-    }
+    int waveform_from_raw = waveform_slim_using_raw_scan();
 #else
     int waveform_from_raw = 0;
 #endif
@@ -4477,7 +4497,9 @@ livev_lopriority_task( void* unused )
             continue;
         }
 
+#ifndef CONFIG_SLIM_MENUS
         loprio_sleep();
+#endif
 
         if (!gui_menu_shown())
             draw_histogram_and_waveform(0);

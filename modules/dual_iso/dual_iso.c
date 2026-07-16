@@ -816,10 +816,20 @@ static struct menu_entry isoless_menu[] =
         .update = isoless_update,
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",
-        .help2 = "With some clever post, you get less shadow noise (more DR).",
+        .help2 = "Dial: OFF/recovery ISO. SET: Display mode and more.",
         .edit_mode = EM_INLINE_ADJUST,
         .submenu_width = 710,
         .children =  (struct menu_entry[]) {
+            {
+                .name = "Dual ISO Display",
+                .priv = &isoless_display,
+                .update = isoless_display_update,
+                .max = 1,
+                .choices = CHOICES("Normal", "Scan Lines"),
+                .help  = "Normal: clean live view (like primary ISO).",
+                .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
+                .edit_mode = EM_INLINE_ADJUST,
+            },
             {
                 .name = "Recovery ISO",
                 .priv = &isoless_recovery_iso,
@@ -830,15 +840,6 @@ static struct menu_entry isoless_menu[] =
                 .choices = CHOICES("-6 EV", "-5 EV", "-4 EV", "-3 EV", "-2 EV", "-1 EV", "+1 EV", "+2 EV", "+3 EV", "+4 EV", "+5 EV", "+6 EV", "100", "200", "400", "800", "1600", "3200", "6400"),
                 .help  = "ISO for half of the scanlines (usually to recover shadows).",
                 .help2 = "Can be absolute or relative to primary ISO from Canon menu.",
-            },
-            {
-                .name = "Dual ISO Display",
-                .priv = &isoless_display,
-                .update = isoless_display_update,
-                .max = 1,
-                .choices = CHOICES("Normal", "Scan Lines"),
-                .help  = "Normal: clean live view (like primary ISO).",
-                .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
             },
             {
                 .name = "Dynamic range gained",

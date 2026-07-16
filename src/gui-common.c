@@ -477,6 +477,28 @@ int handle_common_events_by_feature(struct event * event)
         /* powersave: ignore internal Canon events and ML events, but wake up on any other key press */
         idle_wakeup_reset_counters(event->param);
     }
+
+#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
+    /* Recording screen: no touch (focus box, Canon overlays, tap-to-menu). */
+    if (RECORDING && lv && is_movie_mode() && !gui_menu_shown())
+    {
+        switch (event->param)
+        {
+            case BGMT_TOUCH_1_FINGER:
+            case BGMT_UNTOUCH_1_FINGER:
+            case BGMT_TOUCH_2_FINGER:
+            case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+            case BGMT_TOUCH_MOVE:
+#endif
+#ifdef BGMT_TOUCH_PINCH_START
+            case BGMT_TOUCH_PINCH_START:
+            case BGMT_TOUCH_PINCH_STOP:
+#endif
+                return 0;
+        }
+    }
+#endif
     
     // If we're here, we're dealing with a button press.  Record the timestamp
     // as a record of when the user was last actively pushing buttons.

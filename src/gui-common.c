@@ -26,6 +26,26 @@ static int last_time_active = 0;
 int is_canon_bottom_bar_dirty() { return bottom_bar_dirty; }
 int get_last_time_active() { return last_time_active; }
 
+#ifdef CONFIG_SLIM_MENUS
+static int handle_slim_rec_touch_block(struct event * event)
+{
+    switch (event->param)
+    {
+    case BGMT_TOUCH_1_FINGER:
+    case BGMT_TOUCH_2_FINGER:
+    case BGMT_UNTOUCH_1_FINGER:
+    case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+    case BGMT_TOUCH_MOVE:
+#endif
+        if (RECORDING || (lv && is_movie_mode() && !gui_menu_shown()))
+            return 0;
+        break;
+    }
+    return 1;
+}
+#endif
+
 // disable Canon bottom bar
 
 #if defined(CONFIG_LVAPP_HACK_DEBUGMSG) || defined(CONFIG_LVAPP_HACK)
@@ -483,6 +503,10 @@ int handle_common_events_by_feature(struct event * event)
     // as a record of when the user was last actively pushing buttons.
     if (event->param != GMT_OLC_INFO_CHANGED)
         last_time_active = get_seconds_clock();
+
+#ifdef CONFIG_SLIM_MENUS
+    if (handle_slim_rec_touch_block(event) == 0) return 0;
+#endif
 
     /* convert Q replacement events into BGMT_Q */
     if (handle_Q_button_equiv(event) == 0) return 0;

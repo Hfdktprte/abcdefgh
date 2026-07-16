@@ -7240,6 +7240,12 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
             return 0;
     }
+    if (RECORDING)
+    {
+        if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
+            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
+            return 0;
+    }
 #endif
 
     //Reset zoom when stopping recording

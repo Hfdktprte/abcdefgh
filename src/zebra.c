@@ -556,9 +556,13 @@ hist_build()
     int waveform_from_raw = 0;
     if (waveform_draw && can_use_raw_overlays())
     {
-        waveform_init();
-        waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+        static int slim_wf_aux = 0;
         waveform_from_raw = 1;
+        if (should_run_polling_action(100, &slim_wf_aux))
+        {
+            waveform_init();
+            waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+        }
     }
 #else
     int waveform_from_raw = 0;
@@ -4425,7 +4429,11 @@ livev_hipriority_task( void* unused )
 
 static void loprio_sleep()
 {
+#ifdef CONFIG_SLIM_MENUS
+    msleep(100);
+#else
     msleep(200);
+#endif
     while (is_mvr_buffer_almost_full()) msleep(100);
 }
 

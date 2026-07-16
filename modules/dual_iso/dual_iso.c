@@ -592,46 +592,10 @@ static MENU_UPDATE_FUNC(isoless_check)
         menu_set_warning_raw(entry, info);
 }
 
-static MENU_UPDATE_FUNC(isoless_dr_update)
-{
-    isoless_check(entry, info);
-    if (info->warning_level >= MENU_WARN_ADVICE)
-    {
-        MENU_SET_VALUE("N/A");
-        return;
-    }
-    
-    int dr_improvement = dual_iso_get_dr_improvement() / 10;
-    
-    MENU_SET_VALUE("%d.%d EV", dr_improvement/10, dr_improvement%10);
-}
-
 static MENU_UPDATE_FUNC(isoless_display_update)
 {
     if (!isoless_hdr)
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Enable Dual ISO first.");
-}
-
-static MENU_UPDATE_FUNC(isoless_overlap_update)
-{
-    int iso1 = 72 + isoless_recovery_iso_index() * 8;
-    int iso2 = (lens_info.iso_analog_raw)/8*8;
-
-    int iso_hi = MAX(iso1, iso2);
-    int iso_lo = MIN(iso1, iso2);
-    
-    isoless_check(entry, info);
-    if (info->warning_level >= MENU_WARN_ADVICE)
-    {
-        MENU_SET_VALUE("N/A");
-        return;
-    }
-    
-    int iso_diff = (iso_hi - iso_lo) * 10/ 8;
-    int dr_lo = (get_dxo_dynamic_range(iso_lo)+5)/10;
-    int overlap = dr_lo - iso_diff;
-    
-    MENU_SET_VALUE("%d.%d EV", overlap/10, overlap%10);
 }
 
 /* Dual ISO Expo row: ◄ second ISO or OFF ► only. First ISO always follows main ISO menu.
@@ -761,6 +725,8 @@ static MENU_UPDATE_FUNC(isoless_update)
     int n = slim_dual_valid_count(primary);
     int recovery;
 
+    isoless_check(entry, info);
+
     if (primary != last_primary)
     {
         slim_dual_sync_primary(primary);
@@ -806,7 +772,7 @@ static MENU_SELECT_FUNC(isoless_slim_select)
     slim_dual_set_cycle_pos(primary, slim_dual_cycle_pos(primary) + delta);
 }
 
-static struct menu_entry isoless_menu[] =
+static struct menu_entry isoless_expo_menu[] =
 {
     {
         .name = "Dual ISO",
@@ -816,61 +782,18 @@ static struct menu_entry isoless_menu[] =
         .update = isoless_update,
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",
-        .help2 = "Dial: OFF/recovery ISO. SET: Display mode and more.",
+        .help2 = "With some clever post, you get less shadow noise (more DR).",
         .edit_mode = EM_INLINE_ADJUST,
-        .submenu_width = 710,
-        .children =  (struct menu_entry[]) {
-            {
-                .name = "Dual ISO Display",
-                .priv = &isoless_display,
-                .update = isoless_display_update,
-                .max = 1,
-                .choices = CHOICES("Normal", "Scan Lines"),
-                .help  = "Normal: clean live view (like primary ISO).",
-                .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
-                .edit_mode = EM_INLINE_ADJUST,
-            },
-            {
-                .name = "Recovery ISO",
-                .priv = &isoless_recovery_iso,
-                .update = isoless_check,
-                .min = -12,
-                .max = 6,
-                .unit = UNIT_ISO,
-                .choices = CHOICES("-6 EV", "-5 EV", "-4 EV", "-3 EV", "-2 EV", "-1 EV", "+1 EV", "+2 EV", "+3 EV", "+4 EV", "+5 EV", "+6 EV", "100", "200", "400", "800", "1600", "3200", "6400"),
-                .help  = "ISO for half of the scanlines (usually to recover shadows).",
-                .help2 = "Can be absolute or relative to primary ISO from Canon menu.",
-            },
-            {
-                .name = "Dynamic range gained",
-                .update = isoless_dr_update,
-                .icon_type = IT_ALWAYS_ON,
-                .help  = "[READ-ONLY] How much more DR you get with current settings",
-                .help2 = "(upper theoretical limit, estimated from DxO measurements)",
-            },
-            {
-                .name = "Midtone overlapping",
-                .update = isoless_overlap_update,
-                .icon_type = IT_ALWAYS_ON,
-                .help  = "[READ-ONLY] How much of midtones will get better resolution",
-                .help2 = "Highlights/shadows will be half res, with aliasing/moire.",
-            },
-            {
-                .name = "Alternate frames only",
-                .priv = &isoless_alternate,
-                .max = 1,
-                .help = "Shoot one image with the hack, one without.",
-            },
-            {
-                .name = "Custom file prefix",
-                .priv = &isoless_file_prefix,
-                .max = 1,
-                .choices = CHOICES("OFF", "DUAL (unreliable!)"),
-                .help  = "Change file prefix for dual ISO photos (e.g. DUAL0001.CR2).",
-                .help2 = "Will not sync properly in burst mode or when taking pics quickly."
-            },
-            MENU_EOL,
-        },
+    },
+    {
+        .name = "Dual ISO Display",
+        .priv = &isoless_display,
+        .update = isoless_display_update,
+        .max = 1,
+        .choices = CHOICES("Normal", "Scan Lines"),
+        .help  = "Normal: clean live view (like primary ISO).",
+        .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
+        .edit_mode = EM_INLINE_ADJUST,
     },
 };
 
@@ -1265,7 +1188,7 @@ static unsigned int isoless_init()
 
     if (FRAME_CMOS_ISO_START || PHOTO_CMOS_ISO_START)
     {
-        menu_add("Expo", isoless_menu, COUNT(isoless_menu));
+        menu_add("Expo", isoless_expo_menu, COUNT(isoless_expo_menu));
     }
     else
     {

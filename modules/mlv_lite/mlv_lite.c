@@ -68,7 +68,6 @@
 #include "fps.h"
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
-#include "../dual_iso/dual_iso.h"
 #include "../trace/trace.h"
 #include "powersave.h"
 #include "shoot.h"
@@ -89,6 +88,9 @@ static GUARDED_BY(GuiMainTask) int show_edmac = 0;
 
 /* from mlv_play module */
 extern WEAK_FUNC(ret_0) void mlv_play_file(char *filename);
+
+/* from dual_iso module */
+extern WEAK_FUNC(ret_0) int dual_iso_prefers_yuv_preview(void);
 
 static int updowntoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(updowntoggle) Arrows_U_D;

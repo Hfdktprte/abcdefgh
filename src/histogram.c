@@ -398,7 +398,11 @@ void hist_draw_image(
 
 #if defined(FEATURE_HISTOGRAM)
         /* draw clip warnings */
+#ifdef CONFIG_SLIM_MENUS
+        if (hist_draw && i == HIST_WIDTH - 1)
+#else
         if (hist_warn && i == HIST_WIDTH - 1)
+#endif
         {
             unsigned int thr = histogram.total_px / 100000; // start at 0.0001 with a tiny dot
             thr = MAX(thr, 1);

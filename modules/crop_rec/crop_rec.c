@@ -4875,16 +4875,35 @@ static void update_patch()
     }
 }
 
+#ifdef CONFIG_EOSM
+static void crop_rec_recover_preview(int force_zoom_toggle);
+int crop_rec_request_preview_recovery();
+#endif
+
 /* enable patch when switching LiveView (not in the middle of LiveView) */
 /* otherwise you will end up with a halfway configured video mode that looks weird */
 PROP_HANDLER(PROP_LV_ACTION)
 {
     update_patch();
+#ifdef CONFIG_EOSM
+    if (!buf[0]) /* LV start / resume (e.g. powersave wake) */
+        crop_rec_request_preview_recovery();
+#endif
 }
 
 /* also try when switching zoom modes */
+#ifdef CONFIG_EOSM
+static int crop_rec_prev_dispsize = 1;
+#endif
 PROP_HANDLER(PROP_LV_DISPSIZE)
 {
+#ifdef CONFIG_EOSM
+    int new_zoom = buf[0];
+    if (new_zoom != 0x81 && crop_rec_prev_dispsize == 10 && new_zoom != 10)
+        crop_rec_request_preview_recovery();
+    if (new_zoom != 0x81)
+        crop_rec_prev_dispsize = new_zoom;
+#endif
     update_patch();
 }
 
@@ -6724,6 +6743,48 @@ int check_if_settings_changed()
     return 0;
 }
 
+#ifdef CONFIG_EOSM
+/* LiveView preview can desync from ML overlays after boot, x10 exit, or powersave. */
+static int crop_rec_lv_dirty = 1;
+static int crop_rec_recover_force_zoom = 0;
+
+static void crop_rec_recover_preview(int force_zoom_toggle)
+{
+    extern int kill_canon_gui_mode;
+
+    if (!lv || !CROP_PRESET_MENU || !patch_active) return;
+    if (!is_movie_mode() || RECORDING) return;
+
+    if (canon_gui_front_buffer_disabled())
+        canon_gui_enable_front_buffer(0);
+
+    wait_lv_frames(1);
+
+    if (lv_dispsize == 5 && PathDriveMode->zoom == 5)
+        CheckPreviewRegsValuesAndForce();
+
+    if (force_zoom_toggle && lv_dispsize == 5)
+    {
+        gui_uilock(UILOCK_EVERYTHING);
+        set_zoom(1);
+        msleep(50);
+        set_zoom(5);
+        kill_canon_gui_mode = 1;
+        gui_uilock(UILOCK_NONE);
+        wait_lv_frames(1);
+        CheckPreviewRegsValuesAndForce();
+    }
+
+    redraw();
+}
+
+int crop_rec_request_preview_recovery()
+{
+    crop_rec_lv_dirty = 1;
+    return 0;
+}
+#endif
+
 /* when closing ML menu, check whether we need to refresh the LiveView */
 static unsigned int crop_rec_polling_cbr(unsigned int unused)
 {
@@ -6738,8 +6799,12 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         module_send_keypress(MODULE_KEY_PRESS_SET);
         submenu = 0;
     }
+#ifdef CONFIG_EOSM
+    /* crop_rec_lv_dirty is module-level; also checked at startup */
+#else
     /* also check at startup */
     static int lv_dirty = 1;
+#endif
 
 #ifdef CONFIG_EOSM
     static int was_mlv_busy = 0;
@@ -6757,7 +6822,11 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     int menu_shown = gui_menu_shown();
     if (lv && menu_shown)
     {
+#ifdef CONFIG_EOSM
+        crop_rec_lv_dirty = 1;
+#else
         lv_dirty = 1;
+#endif
     }
     
     if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
@@ -6772,11 +6841,19 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     /* for 650D / 700D / EOSM/M2 / 100D */
     if (check_if_settings_changed())
     {
+#ifdef CONFIG_EOSM
+        crop_rec_lv_dirty = 1;
+#else
         lv_dirty = 1;
+#endif
         settings_changed = 1;
     }
 
+#ifdef CONFIG_EOSM
+    if (crop_rec_lv_dirty)
+#else
     if (lv_dirty)
+#endif
     {
         /* do we need to refresh LiveView? */
             if (crop_rec_needs_lv_refresh())
@@ -6803,7 +6880,18 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 }
 #endif
             }
+#ifdef CONFIG_EOSM
+            if (CROP_PRESET_MENU && patch_active && is_movie_mode())
+            {
+                crop_rec_recover_preview(crop_rec_recover_force_zoom);
+                crop_rec_recover_force_zoom = 0;
+            }
+#endif
+#ifdef CONFIG_EOSM
+        crop_rec_lv_dirty = 0;
+#else
         lv_dirty = 0;
+#endif
         settings_changed = 0;
     }
 
@@ -6893,7 +6981,11 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         }
 
         /* while idle, check our preview resgisters, force the new values if not set yet */
+#ifdef CONFIG_EOSM
+        if (!crop_rec_lv_dirty && !crop_rec_needs_lv_refresh() && CROP_PRESET_MENU && !RECORDING && lv_dispsize == 5 && PathDriveMode->zoom == 5)
+#else
         if (!lv_dirty && !crop_rec_needs_lv_refresh() && CROP_PRESET_MENU && !RECORDING && lv_dispsize == 5 && PathDriveMode->zoom == 5)
+#endif
         {
             if (Preview_Control && !Preview_Control_Basic) // presets with basic preview don't need it
             {
@@ -7125,7 +7217,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 
                     /* Disable Canon overlays in x5 mode */
                     kill_canon_gui_mode = 1;
-
+#ifdef CONFIG_EOSM
+                    crop_rec_recover_preview(1);
+#endif
                     return 0;
                 }
             }

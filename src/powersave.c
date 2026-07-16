@@ -6,6 +6,7 @@
 #include "shoot.h"
 #include "bmp.h"
 #include "lens.h"
+#include "../modules/crop_rec/crop_rec.h"
 
 /* Canon's powersave timer */
 /* ======================= */
@@ -327,6 +328,9 @@ static void idle_display_on()
     ResumeLiveView();
     display_on();
     redraw();
+#ifdef CONFIG_EOSM
+    crop_rec_request_preview_recovery();
+#endif
 }
 
 static void idle_bmp_off()

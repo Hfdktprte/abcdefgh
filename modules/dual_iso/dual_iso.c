@@ -325,10 +325,14 @@ static unsigned int isoless_refresh(unsigned int ctx)
     int setting_changed = (sig != prev_sig);
     prev_sig = sig;
 
-    /* Normal display: Canon single-ISO preview path; dual CMOS only while recording RAW. */
-    int need_dual_lv = isoless_hdr && raw_mv && FRAME_CMOS_ISO_START && lv_dispsize != 10;
-    if (!isoless_display)
-        need_dual_lv = need_dual_lv && RECORDING_RAW;
+    /* Scan Lines: dual ISO on FRAME/LV CMOS (striped preview).
+     * Normal: keep FRAME/LV single-ISO for clean Canon preview always;
+     *         apply dual ISO on PHOTO CMOS while recording RAW (Digic V split tables). */
+    int need_dual_lv = isoless_hdr && raw_mv && FRAME_CMOS_ISO_START && lv_dispsize != 10 && isoless_display;
+    int need_dual_ph_mv = !isoless_display && isoless_hdr && raw_mv && PHOTO_CMOS_ISO_START
+                          && RECORDING_RAW && lv_dispsize != 10;
+    int need_dual_ph = need_dual_ph_mv ||
+        (isoless_hdr && raw_ph && PHOTO_CMOS_ISO_START && ((get_shooting_card()->file_number % 2) || !isoless_alternate));
     
     if (enabled_lv && (setting_changed || lv_dispsize == 10 || !need_dual_lv))
     {
@@ -336,13 +340,13 @@ static unsigned int isoless_refresh(unsigned int ctx)
         enabled_lv = 0;
     }
     
-    if (enabled_ph && setting_changed)
+    if (enabled_ph && (setting_changed || !need_dual_ph))
     {
         isoless_disable(PHOTO_CMOS_ISO_START, PHOTO_CMOS_ISO_SIZE, PHOTO_CMOS_ISO_COUNT, backup_ph);
         enabled_ph = 0;
     }
 
-    if (isoless_hdr && raw_ph && !enabled_ph && PHOTO_CMOS_ISO_START && ((get_shooting_card()->file_number % 2) || !isoless_alternate))
+    if (need_dual_ph && !enabled_ph)
     {
         enabled_ph = 1;
         int err = isoless_enable(PHOTO_CMOS_ISO_START, PHOTO_CMOS_ISO_SIZE, PHOTO_CMOS_ISO_COUNT, backup_ph);
@@ -409,7 +413,9 @@ int dual_iso_is_enabled()
 
 int dual_iso_is_active()
 {
-    return is_movie_mode() ? enabled_lv : enabled_ph;
+    if (is_movie_mode())
+        return enabled_lv || enabled_ph;
+    return enabled_ph;
 }
 
 int dual_iso_get_recovery_iso()
@@ -607,7 +613,7 @@ static MENU_UPDATE_FUNC(isoless_display_update)
     if (!isoless_hdr)
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Enable Dual ISO first.");
     else if (isoless_display == 0 && RECORDING_RAW)
-        MENU_SET_WARNING(MENU_WARN_INFO, "Dual ISO active on sensor while recording.");
+        MENU_SET_WARNING(MENU_WARN_INFO, "Recording: dual ISO on RAW path; preview stays single-ISO.");
 }
 
 /* Dual ISO Expo row: ◄ second ISO or OFF ► only. First ISO always follows main ISO menu.
@@ -803,8 +809,8 @@ static struct menu_entry isoless_expo_menu[] =
         .update = isoless_display_update,
         .max = 1,
         .choices = CHOICES("Normal", "Scan Lines"),
-        .help  = "Normal: Canon single-ISO preview (not recording).",
-        .help2 = "Dual ISO applies to RAW while recording. Scan Lines: always show stripes.",
+        .help  = "Normal: single-ISO Canon preview (while recording too).",
+        .help2 = "Dual ISO applies to RAW capture via PHOTO CMOS. Scan Lines: striped LV.",
         .edit_mode = EM_INLINE_ADJUST,
     },
 };

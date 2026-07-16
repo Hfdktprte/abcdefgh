@@ -351,6 +351,10 @@ static void mlv_snd_prepare_audio()
 
     /* some models may need this */
     SoundDevActiveIn(0);
+
+    /* Mic preamp on before ASIF capture (VU-meter path alone is not enough on Digic V). */
+    void PowerMicAmp(uint32_t);
+    PowerMicAmp(0);
     
     /* set up audio output according to configuration */
     SetSamplingRate(mlv_snd_in_sample_rate, 0);

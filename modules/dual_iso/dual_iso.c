@@ -489,7 +489,35 @@ static int isoless_yuv_destripe(uint32_t* lv, int show_bright)
     }
 
     if (best_score < 5)
-        return 0;
+    {
+        /* Dual ISO always alternates every 2 lines; force de-stripe if detection was weak. */
+        if (dual_iso_is_active())
+        {
+            int avg0 = 0;
+            int avg1 = 0;
+            int n = 0;
+            period = 2;
+            for (int y = os.y0; y < os.y_max - 1; y += 2)
+            {
+                for (int x = os.x0; x < os.x_max; x += 32)
+                {
+                    uint32_t uyvy0 = lv[BM2LV(x, y) / 4];
+                    uint32_t uyvy1 = lv[BM2LV(x, y + 1) / 4];
+                    avg0 += (((((uyvy0) >> 24) & 0xFF) + (((uyvy0) >> 8) & 0xFF)) >> 1);
+                    avg1 += (((((uyvy1) >> 24) & 0xFF) + (((uyvy1) >> 8) & 0xFF)) >> 1);
+                    n++;
+                }
+            }
+            if (n)
+            {
+                max_i = (avg0 >= avg1) ? 0 : 1;
+                min_i = 1 - max_i;
+                best_score = 10;
+            }
+        }
+        if (best_score < 5)
+            return 0;
+    }
 
     /* one exposure too bright or too dark? pick the usable one */
     if (min_b < 10)
@@ -534,12 +562,11 @@ static unsigned int isoless_playback_fix(unsigned int ctx)
     return 0;
 }
 
-/* Clean LV preview while dual ISO is active; RAW histo/waveform still use dual lines. */
-static unsigned int isoless_lv_display_fix(unsigned int ctx)
+/* Normal live view: hide dual-ISO scan lines in the YUV preview (recording unchanged). */
+static int isoless_lv_destripe_needed(void)
 {
     if (is_7d || is_1100d)
         return 0;
-
     if (!isoless_hdr || isoless_display != 0)
         return 0;
     if (!dual_iso_is_active())
@@ -548,13 +575,48 @@ static unsigned int isoless_lv_display_fix(unsigned int ctx)
         return 0;
     if (is_movie_mode() && lv_dispsize == 10)
         return 0;
+    return 1;
+}
 
-    uint32_t* lv_buf = (uint32_t*)get_yuv422_vram()->vram;
-    if (!lv_buf) return 0;
+static void isoless_destripe_yuv422(uint32_t* lv)
+{
+    if (!lv) return;
+    get_yuv422_vram();
+    isoless_yuv_destripe(lv, 1);
+}
 
-    /* show primary (brighter / lower ISO) exposure lines */
-    isoless_yuv_destripe(lv_buf, 1);
-    return 0;
+static unsigned int isoless_display_filter(unsigned int ctx)
+{
+    if (!isoless_lv_destripe_needed())
+        return 0;
+
+    if (ctx == 0)
+        return 1;
+
+    struct display_filter_buffers * buffers = (struct display_filter_buffers *) ctx;
+    if (!buffers->src_buf || !buffers->dst_buf)
+        return 0;
+
+    get_yuv422_vram();
+    int size = vram_lv.pitch * vram_lv.height;
+    memcpy(buffers->dst_buf, buffers->src_buf, size);
+    isoless_yuv_destripe(buffers->dst_buf, 1);
+    return 1;
+}
+
+static unsigned int isoless_vsync_destripe(unsigned int unused)
+{
+    (void) unused;
+    if (!isoless_lv_destripe_needed())
+        return CBR_RET_CONTINUE;
+
+    /* When the display-filter pipeline is active, it already owns de-stripe. */
+    extern int display_filter_enabled();
+    if (display_filter_enabled())
+        return CBR_RET_CONTINUE;
+
+    isoless_destripe_yuv422((uint32_t*) CACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR));
+    return CBR_RET_CONTINUE;
 }
 
 static MENU_UPDATE_FUNC(isoless_check)
@@ -1213,7 +1275,8 @@ MODULE_INFO_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
-    MODULE_CBR(CBR_SHOOT_TASK, isoless_lv_display_fix, CTX_SHOOT_TASK)
+    MODULE_CBR(CBR_VSYNC, isoless_vsync_destripe, 0)
+    MODULE_CBR(CBR_DISPLAY_FILTER, isoless_display_filter, 0)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
 MODULE_CBRS_END()
 

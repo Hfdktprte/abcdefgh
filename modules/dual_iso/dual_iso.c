@@ -70,6 +70,7 @@
 #include <raw.h>
 #include <patch.h>
 #include <vram.h>
+#include <lvinfo.h>
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
 
@@ -77,8 +78,6 @@ static CONFIG_INT("isoless.hdr", isoless_hdr, 0);
 static CONFIG_INT("isoless.iso", isoless_recovery_iso, 3);
 static CONFIG_INT("isoless.alt", isoless_alternate, 0);
 static CONFIG_INT("isoless.prefix", isoless_file_prefix, 0);
-/* 0 = Normal (clean LV preview), 1 = Scan Lines (show alternating ISO lines) */
-static CONFIG_INT("isoless.display", isoless_display, 1);
 
 extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
@@ -321,16 +320,12 @@ static unsigned int isoless_refresh(unsigned int ctx)
     if (PHOTO_CMOS_ISO_COUNT > COUNT(backup_lv)) goto end;
     
     static int prev_sig = 0;
-    int sig = isoless_recovery_iso + (lvi << 16) + (raw_mv << 17) + (raw_ph << 18) + (isoless_hdr << 24) + (isoless_alternate << 25) + (isoless_file_prefix << 26) + (isoless_display << 27) + get_shooting_card()->file_number * isoless_alternate + lens_info.raw_iso * 1234;
+    int sig = isoless_recovery_iso + (lvi << 16) + (raw_mv << 17) + (raw_ph << 18) + (isoless_hdr << 24) + (isoless_alternate << 25) + (isoless_file_prefix << 26) + get_shooting_card()->file_number * isoless_alternate + lens_info.raw_iso * 1234;
     int setting_changed = (sig != prev_sig);
     prev_sig = sig;
 
-    /* Scan Lines: dual ISO on FRAME/LV CMOS always (striped preview).
-     * Normal: FRAME/LV single-ISO when idle (clean preview); FRAME dual only
-     * while recording RAW (movie RAW uses FRAME table on EOS M, not PHOTO). */
-    int need_dual_lv = isoless_hdr && raw_mv && FRAME_CMOS_ISO_START && lv_dispsize != 10;
-    if (!isoless_display)
-        need_dual_lv = need_dual_lv && RECORDING_RAW;
+    /* Single-ISO LV preview when idle; FRAME dual ISO only while recording RAW. */
+    int need_dual_lv = isoless_hdr && raw_mv && FRAME_CMOS_ISO_START && lv_dispsize != 10 && RECORDING_RAW;
 
     int need_dual_ph = isoless_hdr && raw_ph && PHOTO_CMOS_ISO_START
         && ((get_shooting_card()->file_number % 2) || !isoless_alternate);
@@ -607,14 +602,6 @@ static MENU_UPDATE_FUNC(isoless_check)
         menu_set_warning_raw(entry, info);
 }
 
-static MENU_UPDATE_FUNC(isoless_display_update)
-{
-    if (!isoless_hdr)
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Enable Dual ISO first.");
-    else if (isoless_display == 0 && RECORDING_RAW)
-        MENU_SET_WARNING(MENU_WARN_INFO, "Recording: dual ISO on; LV may show scan lines.");
-}
-
 /* Dual ISO Expo row: ◄ second ISO or OFF ► only. First ISO always follows main ISO menu.
  * Dial L/R cycles OFF and full-stop seconds strictly above primary (200/400/800/1600).
  * Note: this module is built without platform features.h, so do not gate on CONFIG_SLIM_MENUS. */
@@ -628,6 +615,40 @@ static int slim_dual_primary_iso(void)
         return raw2iso(lens_info.iso_analog_raw / 8 * 8);
     return 100;
 }
+
+static int dual_iso_lvinfo_hidden_by_shortcut(void)
+{
+    if (get_config_var("crop.button_INFO") == 4)
+        return 1;
+    if (get_config_var("crop.button_SET") == 4)
+        return 1;
+    return 0;
+}
+
+static LVINFO_UPDATE_FUNC(dual_iso_lvinfo)
+{
+    LVINFO_BUFFER(16);
+
+    if (!isoless_hdr || dual_iso_lvinfo_hidden_by_shortcut())
+        return;
+
+    int primary = slim_dual_primary_iso();
+    int recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
+
+    if (recovery <= primary)
+        return;
+
+    snprintf(buffer, sizeof(buffer), "%d/%d", primary, recovery);
+    item->color_fg = COLOR_YELLOW;
+}
+
+static struct lvinfo_item dual_iso_lvinfo_item = {
+    .name = "Dual ISO",
+    .which_bar = LV_BOTTOM_BAR_ONLY,
+    .update = dual_iso_lvinfo,
+    .preferred_position = -64,
+    .priority = 2,
+};
 
 static int slim_dual_rec_to_index(int rec_iso)
 {
@@ -799,17 +820,7 @@ static struct menu_entry isoless_expo_menu[] =
         .update = isoless_update,
         .max = 1,
         .help  = "Alternate ISO for every 2 sensor scan lines.",
-        .help2 = "With some clever post, you get less shadow noise (more DR).",
-        .edit_mode = EM_INLINE_ADJUST,
-    },
-    {
-        .name = "Dual ISO Display",
-        .priv = &isoless_display,
-        .update = isoless_display_update,
-        .max = 1,
-        .choices = CHOICES("Normal", "Scan Lines"),
-        .help  = "Normal: single-ISO Canon preview (while recording too).",
-        .help2 = "Dual ISO applies to RAW capture via PHOTO CMOS. Scan Lines: striped LV.",
+        .help2 = "Clean preview when idle; dual ISO in RAW while recording.",
         .edit_mode = EM_INLINE_ADJUST,
     },
 };
@@ -1206,6 +1217,7 @@ static unsigned int isoless_init()
     if (FRAME_CMOS_ISO_START || PHOTO_CMOS_ISO_START)
     {
         menu_add("Expo", isoless_expo_menu, COUNT(isoless_expo_menu));
+        lvinfo_add_item(&dual_iso_lvinfo_item);
     }
     else
     {
@@ -1238,5 +1250,4 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(isoless_recovery_iso)
     MODULE_CONFIG(isoless_alternate)
     MODULE_CONFIG(isoless_file_prefix)
-    MODULE_CONFIG(isoless_display)
 MODULE_CONFIGS_END()

@@ -4675,7 +4675,6 @@ static struct menu_entry expo_menus[] = {
     #endif
 
     MENU_PLACEHOLDER("Dual ISO"),
-    MENU_PLACEHOLDER("Dual ISO Display"),
 };
 
 #ifndef CONFIG_SLIM_MENUS

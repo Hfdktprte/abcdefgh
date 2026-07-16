@@ -89,12 +89,11 @@ static GUARDED_BY(GuiMainTask) int show_edmac = 0;
 /* from mlv_play module */
 extern WEAK_FUNC(ret_0) void mlv_play_file(char *filename);
 
-/* Dual ISO Normal: skip ML raw preview only while recording (striped dual RAW). */
+/* Dual ISO: skip ML raw preview while recording (striped dual RAW on LV). */
 static int dual_iso_skip_raw_preview(void)
 {
     if (!is_movie_mode()) return 0;
     if (get_config_var("isoless.hdr") == 0) return 0;
-    if (get_config_var("isoless.display") != 0) return 0; /* Scan Lines */
     return RECORDING_RAW;
 }
 

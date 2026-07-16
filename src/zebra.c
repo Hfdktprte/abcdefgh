@@ -550,6 +550,22 @@ hist_build()
         hist_build_raw();
     }
     #endif
+
+#ifdef CONFIG_SLIM_MENUS
+#ifdef FEATURE_WAVEFORM
+    int waveform_from_raw = 0;
+    if (waveform_draw && can_use_raw_overlays())
+    {
+        waveform_init();
+        waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+        waveform_from_raw = 1;
+    }
+#else
+    int waveform_from_raw = 0;
+#endif
+#else
+    int waveform_from_raw = 0;
+#endif
     
     histogram.is_rgb =
 #ifdef CONFIG_SLIM_MENUS
@@ -563,7 +579,7 @@ hist_build()
     
     if (0
         #ifdef FEATURE_WAVEFORM
-        || waveform_draw
+        || (waveform_draw && !waveform_from_raw)
         #endif
         #ifdef FEATURE_VECTORSCOPE
         || vectorscope_draw
@@ -1055,7 +1071,11 @@ waveform_draw_image(
 
     if (!PLAY_OR_QR_MODE)
     {
+#ifdef CONFIG_SLIM_MENUS
+        /* RAW waveform: same linear scale as RAW histogram, not YUV luma. */
+#else
         if (!lv_luma_is_accurate()) return;
+#endif
     }
 
     // Ensure that x_origin is quad-word aligned
@@ -3262,7 +3282,7 @@ struct menu_entry zebra_menus[] = {
         .icon_type = IT_BOOL,
         .choices = CHOICES("OFF", "ON"),
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "Exposure aid: useful for checking overall brightness.",
+        .help = "RAW luma waveform (same scale as histogram).",
         .help2 = "Dial L/R toggles ON/OFF.",
     },
 #else

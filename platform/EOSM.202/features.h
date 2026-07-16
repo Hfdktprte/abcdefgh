@@ -38,7 +38,7 @@
 #undef FEATURE_ZEBRA_FAST
 /* False color: needed for Settings → INFO Button → false colors toggle. */
 #define FEATURE_FALSE_COLOR
-#undef FEATURE_WAVEFORM
+#define FEATURE_WAVEFORM
 #undef FEATURE_VECTORSCOPE
 #undef FEATURE_REC_NOTIFY
 

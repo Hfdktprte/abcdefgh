@@ -3336,6 +3336,11 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
     }
 #elif defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY) // all new cameras should work with this method
 
+#ifdef CONFIG_MODULES
+    extern WEAK_FUNC(ret_0) void dual_iso_vsync_display_hook(void);
+    dual_iso_vsync_display_hook();
+#endif
+
     if (!display_filter_buffer) return CBR_RET_CONTINUE;
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
     if (!display_filter_enabled()) { display_filter_valid_image = 0;  return CBR_RET_CONTINUE; }

@@ -212,6 +212,7 @@ static void slim_draw_arrow_right(int tip_x, int cy, int height, int color)
 #if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
 static int entry_is_slim_navigable(struct menu_entry * entry);
 static void menu_entry_select(struct menu * menu, int mode);
+static struct menu * get_current_menu_or_submenu(void);
 
 struct slim_touch_hit {
     int y0, y1;

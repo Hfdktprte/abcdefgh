@@ -36,7 +36,8 @@
 #undef FEATURE_ARROW_SHORTCUTS
 #undef FEATURE_MAGIC_ZOOM_FULL_SCREEN // https://bitbucket.org/hudson/magic-lantern/issue/2272/full-screen-magic-zoom-is-garbled-on-700d
 #undef FEATURE_ZEBRA_FAST
-#undef FEATURE_FALSE_COLOR
+/* False color: needed for Settings → INFO Button → false colors toggle. */
+#define FEATURE_FALSE_COLOR
 #undef FEATURE_WAVEFORM
 #undef FEATURE_VECTORSCOPE
 #undef FEATURE_REC_NOTIFY

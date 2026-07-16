@@ -353,6 +353,58 @@ static int slim_handle_main_dial_shutter(unsigned int key)
     return 0;
 }
 
+/* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO.
+ * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
+static int slim_handle_info_button(unsigned int key)
+{
+    if (!is_EOSM || key != MODULE_KEY_INFO)
+        return 0;
+    if (!INFO_button)
+        return 0; /* OFF — Canon INFO / LV cycle */
+
+    /* Outside ML overlay LV, keep Canon's INFO cycle. */
+    if (lv_disp_mode != 0)
+        return -1;
+
+    switch (INFO_button)
+    {
+        case 1: /* Aperture + (same as SET → Aperture +) */
+            if (!lens_info.aperture)
+                return 1; /* no electronic iris — no effect */
+            if (lens_info.raw_aperture == lens_info.raw_aperture_max)
+                return 1;
+            if (more_hacks && RECORDING)
+                return 1;
+            aperture_toggle(0, 1);
+            return 1;
+
+        case 2: /* false colors toggle */
+        {
+            extern int falsecolor_draw;
+            if (!falsecolor_draw)
+                falsecolor_draw = 1;
+            else
+            {
+                falsecolor_draw = 0;
+                redraw();
+            }
+            return 1;
+        }
+
+        case 3: /* Dual ISO on/off */
+            if (RECORDING)
+                return 1;
+            if (!dual_iso_is_enabled())
+                menu_set_str_value_from_script("Expo", "Dual ISO", "ON", 1);
+            else
+                menu_set_str_value_from_script("Expo", "Dual ISO", "OFF", 0);
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
 /* customize buttons and buttons shortcuts, FIXME: implement these as feature in ML core? */
 static unsigned int photo_keypress_cbr(unsigned int key)
 {
@@ -362,13 +414,19 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         if (slim_handle_main_dial_shutter(key))
             return 0;
 
+        {
+            int info = slim_handle_info_button(key);
+            if (info == 1) return 0;
+            if (info == -1) return 1;
+        }
+
         extern int kill_canon_gui_mode;
         /* Quick x10 mode */
 
         if (lv_dispsize == 1)
         {
             if (((key == MODULE_KEY_PRESS_SET         ) && SET_button  == 1)                 ||
-                ((key == MODULE_KEY_INFO              ) && INFO_button == 1)                 ||
+                ((key == MODULE_KEY_INFO              ) && !is_EOSM && INFO_button == 1)     ||
                 ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter) )
             {
             if (key == MODULE_KEY_PRESS_HALFSHUTTER && Half_Shutter)
@@ -390,7 +448,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         if (lv_dispsize == 10)
         {
             if (((key == MODULE_KEY_PRESS_SET           ) && SET_button  == 1)                 ||
-                ((key == MODULE_KEY_INFO                ) && INFO_button == 1)                 ||
+                ((key == MODULE_KEY_INFO                ) && !is_EOSM && INFO_button == 1)     ||
                 ((key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
                 ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
             {
@@ -421,7 +479,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 iso_toggle(0, -2);
                 return 0;
             }
-            if (((key == MODULE_KEY_INFO)       && INFO_button == 2) ||
+            if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
             {
                 iso_toggle(0, 2);
@@ -447,7 +505,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 iso_toggle(0, -2);
                 return 0;
             }
-            if (((key == MODULE_KEY_INFO)       && INFO_button == 2) ||
+            if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
             {
                 iso_toggle(0, 2);
@@ -469,7 +527,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 aperture_toggle(0, -1);
                 return 0;
             }
-            if (key == MODULE_KEY_INFO && INFO_button == 3)
+            if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
             {
                 aperture_toggle(0, -1);
                 return 0;
@@ -495,7 +553,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 aperture_toggle(0, -1);
                 return 0;
             }
-            if (key == MODULE_KEY_INFO && INFO_button == 3)
+            if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
             {
                 aperture_toggle(0, -1);
                 return 0;
@@ -507,7 +565,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             }
             
             /* Dual ISO ON / OFF */
-            if (((key == MODULE_KEY_INFO)       && INFO_button == 4) ||
+            if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 4) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button == 4))
             {
                 if (!RECORDING)
@@ -526,7 +584,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             }
             
             /* False color ON / OFF */
-            if (((key == MODULE_KEY_INFO)       && INFO_button == 5) ||
+            if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 5) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 5))
             {
                 SetGUIRequestMode(0);
@@ -570,7 +628,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         if (!is_movie_mode() && !gui_menu_shown() && lv && lv_dispsize != 10)
         {
 
-            if ((key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 2) || (key == MODULE_KEY_PRESS_SET && SET_button == 7) || (key == MODULE_KEY_INFO && INFO_button == 6))
+            if ((key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 2) || (key == MODULE_KEY_PRESS_SET && SET_button == 7) || (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 6))
             {
                 msleep(100);
                 if(lv_disp_mode != 0){
@@ -581,7 +639,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 gui_open_menu();
                 submenu = 1;
             }
-            if ((key == MODULE_KEY_PRESS_SET && SET_button == 6) || (key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 3) || (key == MODULE_KEY_INFO && INFO_button == 7))
+            if ((key == MODULE_KEY_PRESS_SET && SET_button == 6) || (key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 3) || (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 7))
             {
                 msleep(100);
                 if(lv_disp_mode != 0){
@@ -592,7 +650,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 gui_open_menu();
                 submenu = 1;
             }
-            if ((key == MODULE_KEY_PRESS_SET && SET_button == 8) || (key == MODULE_KEY_INFO && INFO_button == 8)
+            if ((key == MODULE_KEY_PRESS_SET && SET_button == 8) || (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 8)
 #ifndef CONFIG_SLIM_MENUS
                  || (key == MODULE_KEY_TOUCH_1_FINGER && tapdisp == 4)
 #endif
@@ -5333,6 +5391,19 @@ static struct menu_entry slim_more_hacks_menu[] = {
     },
 };
 
+/* Settings → INFO Button (EOS M slim). */
+static struct menu_entry slim_info_button_menu[] = {
+    {
+        .name      = "INFO Button",
+        .priv      = &INFO_button,
+        .max       = 3,
+        .choices   = CHOICES("OFF", "Aperture", "false colors", "Dual ISO"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO.",
+        .depends_on = DEP_LIVEVIEW,
+    },
+};
+
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
@@ -6984,11 +7055,17 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             if (slim_handle_main_dial_shutter(key))
                 return 0;
 
+            {
+                int info = slim_handle_info_button(key);
+                if (info == 1) return 0;
+                if (info == -1) return 1;
+            }
+
             /* Quick x10 mode */
             if (lv_dispsize == 5 && !RECORDING)
             {
                 if (((key == MODULE_KEY_PRESS_SET         ) && SET_button  == 1)                 ||
-                    ((key == MODULE_KEY_INFO              ) && INFO_button == 1)                 ||
+                    ((key == MODULE_KEY_INFO              ) && !is_EOSM && INFO_button == 1)     ||
                     ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter && is_manual_focus()) )
                 {
                     if(lv_disp_mode != 0){
@@ -7013,7 +7090,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             {
                 
                 if (((key == MODULE_KEY_PRESS_SET           ) && SET_button  == 1)                 ||
-                    ((key == MODULE_KEY_INFO                ) && INFO_button == 1)                 ||
+                    ((key == MODULE_KEY_INFO                ) && !is_EOSM && INFO_button == 1)     ||
                     ((key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
                     ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
                 {
@@ -7051,7 +7128,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     iso_toggle(0, -2);
                     return 0;
                 }
-                if (((key == MODULE_KEY_INFO)       && INFO_button == 2) ||
+                if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                     ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
                 {
                     if(lv_disp_mode != 0){
@@ -7081,7 +7158,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     aperture_toggle(0, -1);
                     return 0;
                 }
-                if (key == MODULE_KEY_INFO && INFO_button == 3)
+                if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
                 {
                     if(lv_disp_mode != 0){
                         // Use INFO key to cycle LV as normal when not in the LV with ML overlays
@@ -7099,7 +7176,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
 
                 /* Dual ISO ON / OFF */
-                if (((key == MODULE_KEY_INFO)       && INFO_button == 4) ||
+                if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 4) ||
                     ((key == MODULE_KEY_PRESS_SET)  && SET_button == 4))
                 {
                     if(lv_disp_mode != 0){
@@ -7123,7 +7200,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
 
                 /* False color ON / OFF */
-                if (((key == MODULE_KEY_INFO)       && INFO_button == 5) ||
+                if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 5) ||
                     ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 5))
                 {
                     if(lv_disp_mode != 0){
@@ -7171,7 +7248,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             
             if (lv_dispsize != 10)
             {
-                if ((tapdisp == 2 && key == MODULE_KEY_TOUCH_1_FINGER) || (SET_button == 7 && key == MODULE_KEY_PRESS_SET) || (INFO_button == 6 && key == MODULE_KEY_INFO))
+                if ((tapdisp == 2 && key == MODULE_KEY_TOUCH_1_FINGER) || (SET_button == 7 && key == MODULE_KEY_PRESS_SET) || (!is_EOSM && INFO_button == 6 && key == MODULE_KEY_INFO))
                 {
                     msleep(100);
                     if(lv_disp_mode != 0){
@@ -7183,7 +7260,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     msleep(10);
                     submenu = 1;
                 }
-                if ((tapdisp == 3 && key == MODULE_KEY_TOUCH_1_FINGER) || (SET_button == 6 && key == MODULE_KEY_PRESS_SET) || (INFO_button == 7 && key == MODULE_KEY_INFO))
+                if ((tapdisp == 3 && key == MODULE_KEY_TOUCH_1_FINGER) || (SET_button == 6 && key == MODULE_KEY_PRESS_SET) || (!is_EOSM && INFO_button == 7 && key == MODULE_KEY_INFO))
                 {
                     msleep(100);
                     if(lv_disp_mode != 0){
@@ -7196,7 +7273,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     submenu = 1;
                 }
 #ifdef CONFIG_SLIM_MENUS
-                if ((SET_button == 8 && key == MODULE_KEY_PRESS_SET) || (INFO_button == 8 && key == MODULE_KEY_INFO))
+                if ((SET_button == 8 && key == MODULE_KEY_PRESS_SET) || (!is_EOSM && INFO_button == 8 && key == MODULE_KEY_INFO))
                 {
                     msleep(100);
                     if(lv_disp_mode != 0){
@@ -7853,10 +7930,13 @@ static unsigned int crop_rec_init()
         SET_button  = 1; /* Zoom x10 */
         Arrows_U_D  = 1; /* ISO */
         Arrows_L_R  = 2; /* Aperture (inactive without electronic lens) */
-        INFO_button = 0; /* OFF — leave main dial for shutter */
+        /* INFO Button persists via Settings (0=OFF .. 3=Dual ISO). */
+        if (INFO_button < 0 || INFO_button > 3)
+            INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
+        menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;

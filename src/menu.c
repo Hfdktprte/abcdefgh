@@ -4869,8 +4869,10 @@ void menu_entry_select(
     else if (mode == 3) // SET
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* White Balance: SET inert (dial only). Dual ISO: dial cycles ISO, SET opens submenu. */
-        if (entry->name && streq(entry->name, "White Balance"))
+        /* Dual ISO / White Balance / Dual ISO Display: dial only, no submenu. */
+        if (entry->name && (streq(entry->name, "Dual ISO")
+            || streq(entry->name, "White Balance")
+            || streq(entry->name, "Dual ISO Display")))
         {
             entry_used = 1;
         }

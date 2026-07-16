@@ -69,6 +69,7 @@
 #include <fileprefix.h>
 #include <raw.h>
 #include <patch.h>
+#include <vram.h>
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
 
@@ -76,6 +77,8 @@ static CONFIG_INT("isoless.hdr", isoless_hdr, 0);
 static CONFIG_INT("isoless.iso", isoless_recovery_iso, 3);
 static CONFIG_INT("isoless.alt", isoless_alternate, 0);
 static CONFIG_INT("isoless.prefix", isoless_file_prefix, 0);
+/* 0 = Normal (clean LV preview), 1 = Scan Lines (show alternating ISO lines) */
+static CONFIG_INT("isoless.display", isoless_display, 1);
 
 extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
@@ -425,22 +428,10 @@ int dual_iso_set_recovery_iso(int iso)
     return 1;
 }
 
-static unsigned int isoless_playback_fix(unsigned int ctx)
+/* Detect alternating dual-ISO scan lines in a YUV422 buffer and remove banding
+ * by copying one exposure onto the other. Returns 1 if destriped. */
+static int isoless_yuv_destripe(uint32_t* lv, int show_bright)
 {
-    if (is_7d || is_1100d)
-        return 0; /* seems to cause problems, figure out why */
-    
-    if (!isoless_hdr) return 0;
-    if (!is_play_or_qr_mode()) return 0;
-    
-    static int aux = INT_MIN;
-    if (!should_run_polling_action(1000, &aux))
-        return 0;
-
-    uint32_t* lv = (uint32_t*)get_yuv422_vram()->vram;
-    if (!lv) return 0;
-
-    /* try to guess the period of alternating lines */
     int avg[5];
     int best_score = 0;
     int period = 0;
@@ -448,25 +439,24 @@ static unsigned int isoless_playback_fix(unsigned int ctx)
     int min_i = 0;
     int max_b = 0;
     int min_b = 0;
+
     for (int rep = 2; rep <= 5; rep++)
     {
-        /* compute average brightness for each line group */
         for (int i = 0; i < rep; i++)
             avg[i] = 0;
-        
+
         int num = 0;
-        for(int y = os.y0; y < os.y_max; y ++ )
+        for (int y = os.y0; y < os.y_max; y++)
         {
             for (int x = os.x0; x < os.x_max; x += 32)
             {
-                uint32_t uyvy = lv[BM2LV(x,y)/4];
+                uint32_t uyvy = lv[BM2LV(x, y) / 4];
                 int luma = (((((uyvy) >> 24) & 0xFF) + (((uyvy) >> 8) & 0xFF)) >> 1);
                 avg[y % rep] += luma;
                 num++;
             }
         }
-        
-        /* choose the group with max contrast */
+
         int min = INT_MAX;
         int max = INT_MIN;
         int mini = 0;
@@ -497,33 +487,73 @@ static unsigned int isoless_playback_fix(unsigned int ctx)
             min_b = min;
         }
     }
-    
+
     if (best_score < 5)
         return 0;
 
-    /* alternate between bright and dark exposures */
+    /* one exposure too bright or too dark? pick the usable one */
+    if (min_b < 10)
+        show_bright = 1;
+    if (max_b > 245)
+        show_bright = 0;
+
+    for (int y = os.y0; y < os.y_max; y++)
+    {
+        uint32_t* line = &(lv[BM2LV_R(y) / 4]);
+        int ref_y = y / period * period + (show_bright ? max_i : min_i);
+        if (ref_y < 0) continue;
+        if (y == ref_y) continue;
+        uint32_t* ref = &(lv[BM2LV_R(ref_y) / 4]);
+        memcpy(line, ref, vram_lv.pitch);
+    }
+    return 1;
+}
+
+static unsigned int isoless_playback_fix(unsigned int ctx)
+{
+    if (is_7d || is_1100d)
+        return 0; /* seems to cause problems, figure out why */
+
+    if (!isoless_hdr) return 0;
+    if (!is_play_or_qr_mode()) return 0;
+
+    static int aux = INT_MIN;
+    if (!should_run_polling_action(1000, &aux))
+        return 0;
+
+    uint32_t* lv = (uint32_t*)get_yuv422_vram()->vram;
+    if (!lv) return 0;
+
     static int show_bright = 0;
     show_bright = !show_bright;
-    
-    /* one exposure too bright or too dark? no point in showing it */
-    int forced = 0;
-    if (min_b < 10)
-        show_bright = 1, forced = 1;
-    if (max_b > 245)
-        show_bright = 0, forced = 1;
 
-    bmp_printf(FONT_MED, 0, 0, "%s%s", show_bright ? "Bright" : "Dark", forced ? " only" : "");
+    if (!isoless_yuv_destripe(lv, show_bright))
+        return 0;
 
-    /* only keep one line from each group (not optimal for resolution, but doesn't have banding) */
-    for(int y = os.y0; y < os.y_max; y ++ )
-    {
-        uint32_t* bright = &(lv[BM2LV_R(y)/4]);
-        int dark_y = y/period*period + (show_bright ? max_i : min_i);
-        if (dark_y < 0) continue;
-        if (y == dark_y) continue;
-        uint32_t* dark = &(lv[BM2LV_R(dark_y)/4]);
-        memcpy(bright, dark, vram_lv.pitch);
-    }
+    bmp_printf(FONT_MED, 0, 0, "%s", show_bright ? "Bright" : "Dark");
+    return 0;
+}
+
+/* Clean LV preview while dual ISO is active; RAW histo/waveform still use dual lines. */
+static unsigned int isoless_lv_display_fix(unsigned int ctx)
+{
+    if (is_7d || is_1100d)
+        return 0;
+
+    if (!isoless_hdr || isoless_display != 0)
+        return 0;
+    if (!dual_iso_is_active())
+        return 0;
+    if (!lv || is_play_or_qr_mode())
+        return 0;
+    if (is_movie_mode() && lv_dispsize == 10)
+        return 0;
+
+    uint32_t* lv_buf = (uint32_t*)get_yuv422_vram()->vram;
+    if (!lv_buf) return 0;
+
+    /* show primary (brighter / lower ISO) exposure lines */
+    isoless_yuv_destripe(lv_buf, 1);
     return 0;
 }
 
@@ -574,6 +604,12 @@ static MENU_UPDATE_FUNC(isoless_dr_update)
     int dr_improvement = dual_iso_get_dr_improvement() / 10;
     
     MENU_SET_VALUE("%d.%d EV", dr_improvement/10, dr_improvement%10);
+}
+
+static MENU_UPDATE_FUNC(isoless_display_update)
+{
+    if (!isoless_hdr)
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Enable Dual ISO first.");
 }
 
 static MENU_UPDATE_FUNC(isoless_overlap_update)
@@ -794,6 +830,15 @@ static struct menu_entry isoless_menu[] =
                 .choices = CHOICES("-6 EV", "-5 EV", "-4 EV", "-3 EV", "-2 EV", "-1 EV", "+1 EV", "+2 EV", "+3 EV", "+4 EV", "+5 EV", "+6 EV", "100", "200", "400", "800", "1600", "3200", "6400"),
                 .help  = "ISO for half of the scanlines (usually to recover shadows).",
                 .help2 = "Can be absolute or relative to primary ISO from Canon menu.",
+            },
+            {
+                .name = "Dual ISO Display",
+                .priv = &isoless_display,
+                .update = isoless_display_update,
+                .max = 1,
+                .choices = CHOICES("Normal", "Scan Lines"),
+                .help  = "Normal: clean live view (like primary ISO).",
+                .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
             },
             {
                 .name = "Dynamic range gained",
@@ -1244,6 +1289,7 @@ MODULE_INFO_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
+    MODULE_CBR(CBR_SHOOT_TASK, isoless_lv_display_fix, CTX_SHOOT_TASK)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
 MODULE_CBRS_END()
 
@@ -1252,4 +1298,5 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(isoless_recovery_iso)
     MODULE_CONFIG(isoless_alternate)
     MODULE_CONFIG(isoless_file_prefix)
+    MODULE_CONFIG(isoless_display)
 MODULE_CONFIGS_END()

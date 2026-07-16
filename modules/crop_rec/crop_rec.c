@@ -333,6 +333,10 @@ static void set_lv_af_mode(int lv_af_mode)
     prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
 }
 
+#ifdef CONFIG_EOSM
+static void crop_rec_recover_preview(int force_zoom_toggle);
+#endif
+
 //Photo mode
 static int reciso = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(reciso) isoless_recovery_iso;
@@ -443,6 +447,9 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 {
                         canon_gui_enable_front_buffer(0);
                 }
+#ifdef CONFIG_EOSM
+                crop_rec_recover_preview(1);
+#endif
                 return 0;
             }
         }
@@ -4899,7 +4906,12 @@ PROP_HANDLER(PROP_LV_DISPSIZE)
 {
 #ifdef CONFIG_EOSM
     int new_zoom = buf[0];
-    if (new_zoom != 0x81 && crop_rec_prev_dispsize == 10 && new_zoom != 10)
+    if (new_zoom != 0x81 && new_zoom == 10)
+    {
+        crop_rec_recover_force_zoom = 1;
+        crop_rec_request_preview_recovery();
+    }
+    else if (new_zoom != 0x81 && crop_rec_prev_dispsize == 10 && new_zoom != 10)
         crop_rec_request_preview_recovery();
     if (new_zoom != 0x81)
         crop_rec_prev_dispsize = new_zoom;
@@ -6755,6 +6767,29 @@ static void crop_rec_recover_preview(int force_zoom_toggle)
     if (!lv || !CROP_PRESET_MENU || !patch_active) return;
     if (!is_movie_mode() || RECORDING) return;
 
+    /* x10 uses Canon's native preview — keep front buffer on and refresh via zoom toggle */
+    if (lv_dispsize == 10 || PathDriveMode->zoom == 10)
+    {
+        kill_canon_gui_mode = 0;
+        if (canon_gui_front_buffer_disabled())
+            canon_gui_enable_front_buffer(0);
+        wait_lv_frames(2);
+        if (force_zoom_toggle)
+        {
+            gui_uilock(UILOCK_EVERYTHING);
+            set_zoom(1);
+            msleep(50);
+            set_zoom(10);
+            kill_canon_gui_mode = 0;
+            if (canon_gui_front_buffer_disabled())
+                canon_gui_enable_front_buffer(0);
+            gui_uilock(UILOCK_NONE);
+            wait_lv_frames(2);
+        }
+        redraw();
+        return;
+    }
+
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
 
@@ -7020,8 +7055,18 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 if (canon_gui_front_buffer_disabled())
                 {
                     canon_gui_enable_front_buffer(0);
+                    redraw();
                 }
             }
+#ifdef CONFIG_EOSM
+            static int crop_rec_x10_recover_last = 0;
+            if (lv_dispsize == 10 && PathDriveMode->zoom == 10
+                && canon_gui_front_buffer_disabled()
+                && should_run_polling_action(500, &crop_rec_x10_recover_last))
+            {
+                crop_rec_recover_preview(0);
+            }
+#endif
         }
 
         /* on entry-level models, setting picture quality to RAW from Canon menu gains extra SRM chunk 
@@ -7197,6 +7242,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     {
                             canon_gui_enable_front_buffer(0);
                     }
+#ifdef CONFIG_EOSM
+                    crop_rec_recover_preview(1);
+#endif
 
                     return 0;
                 }

@@ -485,8 +485,31 @@ compute_audio_levels(
  * \todo Check that we have live-view enabled and the TFT is on
  * before drawing.
  */
+/** EOS M / Digic V: keep internal mic preamp powered.
+ * VU meters used to be the only caller of PowerMicAmp(); when meters were hidden
+ * (Global Draw off, kill_gd, lv_disp_mode, half-shutter, grid menu) levels and
+ * MLV recordings were both quiet. */
+static void audio_mic_preamp_keepalive(void)
+{
+    static int aux = 0;
+
+    if (!is_movie_mode() || !sound_recording_enabled())
+        return;
+
+    if (!should_run_polling_action(1000, &aux))
+        return;
+
+#if defined(CONFIG_600D) || defined(CONFIG_7D)
+    audio_configure(1);
+#elif defined(CONFIG_650D) || defined(CONFIG_700D) || defined(CONFIG_EOSM) || defined(CONFIG_100D) || defined(CONFIG_70D)
+    void PowerMicAmp(uint32_t);
+    PowerMicAmp(0);
+#endif
+}
+
 static int audio_meters_step( int reconfig_audio )
 {
+    audio_mic_preamp_keepalive();
 
     if(audio_meters_are_drawn())
     {
@@ -503,9 +526,6 @@ static int audio_meters_step( int reconfig_audio )
         {
             #if defined(CONFIG_600D) || defined(CONFIG_7D)
             audio_configure(1);
-            #elif defined(CONFIG_650D) || defined(CONFIG_700D) || defined(CONFIG_EOSM) || defined(CONFIG_100D) || defined(CONFIG_70D)
-            void PowerMicAmp();
-            PowerMicAmp(0);
             #endif
             reconfig_audio = 1;
         }

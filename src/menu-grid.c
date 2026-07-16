@@ -207,26 +207,6 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw)
     return 0;
 }
 
-int menu_grid_handle_touch(int tx, int ty, int *needs_full_redraw)
-{
-    if (!grid_active)
-        return 1;
-
-    for (int i = 0; i < GRID_COUNT; i++)
-    {
-        int x, y, w, h;
-        grid_cell_rect(i, &x, &y, &w, &h);
-        if (tx >= x && tx < x + w && ty >= y && ty < y + h)
-        {
-            grid_sel = i;
-            menu_grid_launch(i);
-            *needs_full_redraw = 1;
-            return 0;
-        }
-    }
-    return 1;
-}
-
 #else /* !CONFIG_SLIM_MENUS */
 
 int menu_grid_is_active(void)   { return 0; }
@@ -238,13 +218,6 @@ void menu_grid_draw(void)       { }
 int menu_grid_handle_key(int button_code, int *needs_full_redraw)
 {
     (void) button_code;
-    (void) needs_full_redraw;
-    return 1;
-}
-int menu_grid_handle_touch(int tx, int ty, int *needs_full_redraw)
-{
-    (void) tx;
-    (void) ty;
     (void) needs_full_redraw;
     return 1;
 }

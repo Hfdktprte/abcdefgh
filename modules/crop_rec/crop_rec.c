@@ -7234,7 +7234,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     extern int kill_canon_gui_mode;
 
 #ifdef CONFIG_SLIM_MENUS
-    if (lv && is_movie_mode() && !gui_menu_shown() && RECORDING)
+    if (lv && is_movie_mode() && !gui_menu_shown())
     {
         if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)

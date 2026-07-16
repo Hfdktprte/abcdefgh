@@ -466,7 +466,7 @@ compute_audio_levels(
         raw = -raw;
     
     level->last     = raw;
-    level->avg      = (level->avg * 7 + raw) / 8;
+    level->avg      = (level->avg * 15 + raw) / 16;
     if( raw > level->peak )
         level->peak = raw;
     
@@ -474,8 +474,8 @@ compute_audio_levels(
         level->peak_fast = raw;
     
     // Decay the peak to the average
-    level->peak = ( level->peak * 31 + level->avg ) / 32;
-    level->peak_fast = ( level->peak_fast * 3 + level->avg ) / 4;
+    level->peak = ( level->peak * 63 + level->avg ) / 64;
+    level->peak_fast = ( level->peak_fast * 7 + level->avg ) / 8;
 }
 
 /** Task to monitor the audio levels.
@@ -562,7 +562,7 @@ static void audio_common_task(void * unused)
             }
             continue;
         }
-        int meters_sleep_cycles = 10 / MIN_MSLEEP;
+        int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
 #else
         int meters_sleep_cycles = (DISPLAY_IS_ON ? (20/MIN_MSLEEP) : (500/MIN_MSLEEP));
 #endif

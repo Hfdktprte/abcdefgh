@@ -140,7 +140,6 @@ ML_SRC_OBJS = \
 	property.o \
 	propvalues.o \
 	gui-common.o \
-	touch-slim.o \
 	chdk-gui_draw.o \
 	movtweaks.o \
 	menuhelp.o \

@@ -11,8 +11,6 @@
 #include <lens.h>
 #include <config.h>
 #include <lvinfo.h>
-#include <menu.h>
-#include <touch-slim.h>
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -480,34 +478,6 @@ int handle_common_events_by_feature(struct event * event)
         idle_wakeup_reset_counters(event->param);
     }
 
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    /* Movie LV: no touch while recording; otherwise tap opens ML grid launcher. */
-    if (lv && is_movie_mode() && !gui_menu_shown())
-    {
-        switch (event->param)
-        {
-            case BGMT_TOUCH_1_FINGER:
-            case BGMT_UNTOUCH_1_FINGER:
-            case BGMT_TOUCH_2_FINGER:
-            case BGMT_UNTOUCH_2_FINGER:
-#ifdef BGMT_TOUCH_MOVE
-            case BGMT_TOUCH_MOVE:
-#endif
-#ifdef BGMT_TOUCH_PINCH_START
-            case BGMT_TOUCH_PINCH_START:
-            case BGMT_TOUCH_PINCH_STOP:
-#endif
-                if (RECORDING)
-                    return 0;
-                if (event->param == BGMT_UNTOUCH_1_FINGER)
-                {
-                    gui_open_menu();
-                    return 0;
-                }
-                return 0;
-        }
-    }
-#endif
     
     // If we're here, we're dealing with a button press.  Record the timestamp
     // as a record of when the user was last actively pushing buttons.

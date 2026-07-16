@@ -13,3 +13,6 @@ extern WEAK_FUNC(ret_0) int dual_iso_set_recovery_iso(int raw_iso);
 extern WEAK_FUNC(ret_0) int dual_iso_calc_dr_improvement(int iso1, int iso2); /* ev x100 */
 
 extern WEAK_FUNC(ret_0) int dual_iso_get_dr_improvement(); /* with current settings */
+
+void dual_iso_vsync_display_hook(void);
+int dual_iso_prefers_yuv_preview(void);

@@ -68,6 +68,7 @@
 #include "fps.h"
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
+#include "../dual_iso/dual_iso.h"
 #include "../trace/trace.h"
 #include "powersave.h"
 #include "shoot.h"
@@ -4713,6 +4714,10 @@ static int raw_rec_should_preview(void)
 {
     if (!raw_video_enabled) return 0;
     if (!is_movie_mode()) return 0;
+
+    /* Dual ISO Normal display: use de-striped Canon YUV, not striped raw preview. */
+    if (dual_iso_prefers_yuv_preview())
+        return 0;
 
     /* keep x10 mode unaltered, for focusing */
     if (lv_dispsize == 10) return 0;

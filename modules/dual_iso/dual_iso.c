@@ -84,7 +84,6 @@ extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
 extern WEAK_FUNC(ret_0) int is_play_or_qr_mode();
 extern WEAK_FUNC(ret_0) void* get_lcd_422_buf();
-extern WEAK_FUNC(ret_0) int display_filter_enabled();
 extern WEAK_FUNC(ret_0) int raw_hist_get_percentile_level();
 extern WEAK_FUNC(ret_0) int raw_hist_get_overexposure_percentage();
 extern WEAK_FUNC(ret_0) void raw_lv_request();
@@ -580,46 +579,136 @@ static int isoless_lv_destripe_needed(void)
     return 1;
 }
 
-static void isoless_destripe_yuv422(uint32_t* lv)
+static int isoless_yuv_luma(const uint8_t * base, int pitch, int x, int y)
 {
-    if (!lv) return;
-    get_yuv422_vram();
-    isoless_yuv_destripe(lv, 1);
+    const uint32_t * uyvy = (const uint32_t *)(base + y * pitch + ((x >> 1) << 2));
+    uint32_t p = *uyvy;
+    return (((p >> 24) & 0xFF) + ((p >> 8) & 0xFF)) >> 1;
 }
 
-static unsigned int isoless_display_filter(unsigned int ctx)
+/* Cached stripe layout for fast per-frame LV de-stripe (period is 2 or 4 on EOS M). */
+static int lv_stripe_period = 2;
+static int lv_stripe_keep = 0;
+static int lv_stripe_valid = 0;
+
+static void isoless_lv_detect_stripes(const uint8_t * base, int pitch, int height)
 {
-    if (!isoless_lv_destripe_needed())
-        return 0;
+    int best_score = 0;
+    int best_period = 2;
+    int best_keep = 0;
 
-    if (ctx == 0)
-        return 1;
+    for (int rep = 2; rep <= 5; rep++)
+    {
+        int avg[5];
+        int num = 0;
+        for (int i = 0; i < rep; i++)
+            avg[i] = 0;
 
-    struct display_filter_buffers * buffers = (struct display_filter_buffers *) ctx;
-    if (!buffers->src_buf || !buffers->dst_buf)
-        return 0;
+        for (int y = 0; y < height - rep; y++)
+        {
+            for (int x = 0; x < vram_lv.width; x += 32)
+            {
+                int luma = isoless_yuv_luma(base, pitch, x, y);
+                avg[y % rep] += luma;
+                num++;
+            }
+        }
 
-    get_yuv422_vram();
-    int size = vram_lv.pitch * vram_lv.height;
-    memcpy(buffers->dst_buf, buffers->src_buf, size);
-    isoless_yuv_destripe(buffers->dst_buf, 1);
-    return 1;
+        if (!num) continue;
+
+        int min = INT_MAX;
+        int max = INT_MIN;
+        int mini = 0;
+        int maxi = 0;
+        for (int i = 0; i < rep; i++)
+        {
+            avg[i] = avg[i] * rep / num;
+            if (avg[i] < min) { min = avg[i]; mini = i; }
+            if (avg[i] > max) { max = avg[i]; maxi = i; }
+        }
+
+        int score = max - min;
+        if (score > best_score)
+        {
+            best_score = score;
+            best_period = rep;
+            best_keep = maxi; /* primary / brighter exposure */
+        }
+    }
+
+    if (best_score < 3 && dual_iso_is_active())
+    {
+        int avg0 = 0;
+        int avg1 = 0;
+        int n = 0;
+        for (int y = 0; y < height - 1; y += 2)
+        {
+            for (int x = 0; x < vram_lv.width; x += 32)
+            {
+                avg0 += isoless_yuv_luma(base, pitch, x, y);
+                avg1 += isoless_yuv_luma(base, pitch, x, y + 1);
+                n++;
+            }
+        }
+        if (n)
+        {
+            best_period = 2;
+            best_keep = (avg0 >= avg1) ? 0 : 1;
+            best_score = 10;
+        }
+    }
+
+    if (best_score >= 3)
+    {
+        lv_stripe_period = best_period;
+        lv_stripe_keep = best_keep;
+        lv_stripe_valid = 1;
+    }
 }
 
-static unsigned int isoless_vsync_destripe(unsigned int unused)
+static void isoless_yuv_destripe_lv_fast(uint8_t * base, int pitch, int height)
 {
-    (void) unused;
+    if (!lv_stripe_valid || lv_stripe_period <= 0)
+        return;
+
+    for (int y = 0; y < height; y++)
+    {
+        int ref_y = y / lv_stripe_period * lv_stripe_period + lv_stripe_keep;
+        if (ref_y >= height) continue;
+        if (y == ref_y) continue;
+        memcpy(base + y * pitch, base + ref_y * pitch, pitch);
+    }
+}
+
+}
+
+/* Called from core at display vsync — patch the buffer actually on screen. */
+void dual_iso_vsync_display_hook(void)
+{
     if (!isoless_lv_destripe_needed())
-        return CBR_RET_CONTINUE;
+    {
+        lv_stripe_valid = 0;
+        return;
+    }
 
-    /* When the display-filter pipeline is active, it already owns de-stripe. */
-    if (display_filter_enabled())
-        return CBR_RET_CONTINUE;
+    get_yuv422_vram();
+    void * buf = get_lcd_422_buf();
+    if (!buf || vram_lv.pitch <= 0 || vram_lv.height <= 0)
+        return;
 
-    void* lcd_buf = get_lcd_422_buf();
-    if (!lcd_buf) return CBR_RET_CONTINUE;
-    isoless_destripe_yuv422((uint32_t*) CACHEABLE(lcd_buf));
-    return CBR_RET_CONTINUE;
+    uint8_t * base = (uint8_t *) CACHEABLE(buf);
+
+    static int detect_aux = INT_MIN;
+    if (!lv_stripe_valid || should_run_polling_action(1000, &detect_aux))
+        isoless_lv_detect_stripes(base, vram_lv.pitch, vram_lv.height);
+
+    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
+}
+
+/* Normal dual-ISO display: keep Canon YUV preview (de-striped), not ML raw preview. */
+int dual_iso_prefers_yuv_preview(void)
+{
+    return isoless_lv_destripe_needed();
 }
 
 static MENU_UPDATE_FUNC(isoless_check)
@@ -1278,8 +1367,6 @@ MODULE_INFO_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
-    MODULE_CBR(CBR_VSYNC, isoless_vsync_destripe, 0)
-    MODULE_CBR(CBR_DISPLAY_FILTER, isoless_display_filter, 0)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
 MODULE_CBRS_END()
 

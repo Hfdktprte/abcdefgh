@@ -83,7 +83,6 @@ static CONFIG_INT("isoless.display", isoless_display, 1);
 extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
 extern WEAK_FUNC(ret_0) int is_play_or_qr_mode();
-extern WEAK_FUNC(ret_0) void* get_lcd_422_buf();
 extern WEAK_FUNC(ret_0) int raw_hist_get_percentile_level();
 extern WEAK_FUNC(ret_0) int raw_hist_get_overexposure_percentage();
 extern WEAK_FUNC(ret_0) void raw_lv_request();
@@ -322,11 +321,16 @@ static unsigned int isoless_refresh(unsigned int ctx)
     if (PHOTO_CMOS_ISO_COUNT > COUNT(backup_lv)) goto end;
     
     static int prev_sig = 0;
-    int sig = isoless_recovery_iso + (lvi << 16) + (raw_mv << 17) + (raw_ph << 18) + (isoless_hdr << 24) + (isoless_alternate << 25) + (isoless_file_prefix << 26) + get_shooting_card()->file_number * isoless_alternate + lens_info.raw_iso * 1234;
+    int sig = isoless_recovery_iso + (lvi << 16) + (raw_mv << 17) + (raw_ph << 18) + (isoless_hdr << 24) + (isoless_alternate << 25) + (isoless_file_prefix << 26) + (isoless_display << 27) + get_shooting_card()->file_number * isoless_alternate + lens_info.raw_iso * 1234;
     int setting_changed = (sig != prev_sig);
     prev_sig = sig;
+
+    /* Normal display: Canon single-ISO preview path; dual CMOS only while recording RAW. */
+    int need_dual_lv = isoless_hdr && raw_mv && FRAME_CMOS_ISO_START && lv_dispsize != 10;
+    if (!isoless_display)
+        need_dual_lv = need_dual_lv && RECORDING_RAW;
     
-    if (enabled_lv && (setting_changed || lv_dispsize == 10))
+    if (enabled_lv && (setting_changed || lv_dispsize == 10 || !need_dual_lv))
     {
         isoless_disable(FRAME_CMOS_ISO_START, FRAME_CMOS_ISO_SIZE, FRAME_CMOS_ISO_COUNT, backup_lv);
         enabled_lv = 0;
@@ -345,7 +349,7 @@ static unsigned int isoless_refresh(unsigned int ctx)
         if (err) { NotifyBox(10000, "ISOless PH err(%d)", err); enabled_ph = 0; }
     }
     
-    if (isoless_hdr && raw_mv && !enabled_lv && FRAME_CMOS_ISO_START && lv_dispsize != 10)
+    if (need_dual_lv && !enabled_lv)
     {
         enabled_lv = 1;
         int err = isoless_enable(FRAME_CMOS_ISO_START, FRAME_CMOS_ISO_SIZE, FRAME_CMOS_ISO_COUNT, backup_lv);
@@ -563,115 +567,6 @@ static unsigned int isoless_playback_fix(unsigned int ctx)
     return 0;
 }
 
-/* Normal live view: hide dual-ISO scan lines in the YUV preview (recording unchanged). */
-static int isoless_lv_destripe_needed(void)
-{
-    if (is_7d || is_1100d)
-        return 0;
-    if (!isoless_hdr || isoless_display != 0)
-        return 0;
-    if (!dual_iso_is_active())
-        return 0;
-    if (!lv || is_play_or_qr_mode())
-        return 0;
-    if (is_movie_mode() && lv_dispsize == 10)
-        return 0;
-    return 1;
-}
-
-static int isoless_yuv_luma(const uint8_t * base, int pitch, int x, int y)
-{
-    const uint32_t * uyvy = (const uint32_t *)(base + y * pitch + ((x >> 1) << 2));
-    uint32_t p = *uyvy;
-    return (((p >> 24) & 0xFF) + ((p >> 8) & 0xFF)) >> 1;
-}
-
-/* Cached stripe layout for fast per-frame LV de-stripe (period is 2 or 4 on EOS M). */
-static int lv_stripe_period = 2;
-static int lv_stripe_keep = 0;
-static int lv_stripe_valid = 0;
-
-static void isoless_yuv_destripe_lv_fast(uint8_t * base, int pitch, int height)
-{
-    if (!lv_stripe_valid || lv_stripe_period <= 0)
-        return;
-
-    int w4 = vram_lv.width >> 1;
-    if (w4 <= 0) return;
-
-    for (int y = 0; y < height; y++)
-    {
-        int ref_y = y / lv_stripe_period * lv_stripe_period + lv_stripe_keep;
-        if (ref_y >= height) continue;
-        if (y == ref_y) continue;
-
-        uint32_t * dst = (uint32_t *)(base + y * pitch);
-        const uint32_t * ref = (const uint32_t *)(base + ref_y * pitch);
-
-        /* Copy luma (Y) from the reference line; keep chroma from the destination line. */
-        for (int i = 0; i < w4; i++)
-        {
-            uint32_t d = dst[i];
-            uint32_t r = ref[i];
-            dst[i] = (d & 0x00FF00FF) | (r & 0xFF00FF00);
-        }
-    }
-}
-
-static void isoless_lv_pick_keep_line(const uint8_t * base, int pitch, int height)
-{
-    if (height < 2) return;
-
-    int avg0 = 0;
-    int avg1 = 0;
-    int n = 0;
-
-    for (int y = 0; y < height - 1; y += 2)
-    {
-        for (int x = 0; x < vram_lv.width; x += 32)
-        {
-            avg0 += isoless_yuv_luma(base, pitch, x, y);
-            avg1 += isoless_yuv_luma(base, pitch, x, y + 1);
-            n++;
-        }
-    }
-
-    if (!n) return;
-
-    lv_stripe_period = 2;
-    lv_stripe_keep = (avg0 >= avg1) ? 0 : 1;
-    lv_stripe_valid = 1;
-}
-
-/* Called from core at display vsync — patch the buffer actually on screen. */
-void dual_iso_vsync_display_hook(void)
-{
-    if (!isoless_lv_destripe_needed())
-    {
-        lv_stripe_valid = 0;
-        return;
-    }
-
-    get_yuv422_vram();
-    void * buf = get_lcd_422_buf();
-    if (!buf || vram_lv.pitch <= 0 || vram_lv.height <= 0)
-        return;
-
-    uint8_t * base = (uint8_t *) CACHEABLE(buf);
-
-    static int detect_aux = INT_MIN;
-    if (!lv_stripe_valid || should_run_polling_action(2000, &detect_aux))
-        isoless_lv_pick_keep_line(base, vram_lv.pitch, vram_lv.height);
-
-    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
-}
-
-/* Normal dual-ISO display: keep Canon YUV preview (de-striped), not ML raw preview. */
-int dual_iso_prefers_yuv_preview(void)
-{
-    return isoless_lv_destripe_needed();
-}
-
 static MENU_UPDATE_FUNC(isoless_check)
 {
     int iso1 = 72 + isoless_recovery_iso_index() * 8;
@@ -711,6 +606,8 @@ static MENU_UPDATE_FUNC(isoless_display_update)
 {
     if (!isoless_hdr)
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Enable Dual ISO first.");
+    else if (isoless_display == 0 && RECORDING_RAW)
+        MENU_SET_WARNING(MENU_WARN_INFO, "Dual ISO active on sensor while recording.");
 }
 
 /* Dual ISO Expo row: ◄ second ISO or OFF ► only. First ISO always follows main ISO menu.
@@ -906,8 +803,8 @@ static struct menu_entry isoless_expo_menu[] =
         .update = isoless_display_update,
         .max = 1,
         .choices = CHOICES("Normal", "Scan Lines"),
-        .help  = "Normal: clean live view (like primary ISO).",
-        .help2 = "Scan Lines: show alternating ISO lines. Histo/waveform always dual.",
+        .help  = "Normal: Canon single-ISO preview (not recording).",
+        .help2 = "Dual ISO applies to RAW while recording. Scan Lines: always show stripes.",
         .edit_mode = EM_INLINE_ADJUST,
     },
 };

@@ -3196,10 +3196,6 @@ static void* last_canon_buffer = 0;
 
 static int display_filter_valid_image = 0;
 
-#ifdef CONFIG_MODULES
-static void (*dual_iso_vsync_display_hook)(void) = MODULE_FUNCTION(dual_iso_vsync_display_hook);
-#endif
-
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
 {
     //~ struct vram_info * vram = get_yuv422_vram();
@@ -3339,10 +3335,6 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
         }
     }
 #elif defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY) // all new cameras should work with this method
-
-#ifdef CONFIG_MODULES
-    dual_iso_vsync_display_hook();
-#endif
 
     if (!display_filter_buffer) return CBR_RET_CONTINUE;
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;

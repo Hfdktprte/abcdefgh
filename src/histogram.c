@@ -231,14 +231,9 @@ void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height)
     if (!waveform || !wf_width || !wf_height) return;
     if (!can_use_raw_overlays()) return;
 
-    static int raw_wf_aux = INT_MIN;
-    if (should_run_polling_action(1000, &raw_wf_aux) || !raw_info.black_level)
+    if (!raw_info.black_level)
     {
         if (!raw_update_params()) return;
-    }
-    else if (raw_info.bits_per_pixel != 14)
-    {
-        return;
     }
 
     hist_build_r2ev_cache();

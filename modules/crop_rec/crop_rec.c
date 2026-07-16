@@ -369,9 +369,8 @@ static void slim_zoom_to_x10(void)
     kill_canon_gui_mode = 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
-#ifdef CONFIG_EOSM
-    crop_rec_recover_preview(1);
-#endif
+    wait_lv_frames(1);
+    redraw();
 }
 
 static void slim_zoom_from_x10(void)
@@ -384,9 +383,13 @@ static void slim_zoom_from_x10(void)
     msleep(50);
     set_zoom(5);
     kill_canon_gui_mode = 1;
+    if (canon_gui_front_buffer_disabled())
+        canon_gui_enable_front_buffer(0);
+    wait_lv_frames(1);
 #ifdef CONFIG_EOSM
-    crop_rec_recover_preview(1);
+    crop_rec_recover_preview(0);
 #endif
+    redraw();
 }
 
 /* Settings → Shutter zoom: half-shutter x10 like SET (hold or sticky). */
@@ -419,6 +422,9 @@ static int slim_handle_shutter_zoom(unsigned int key)
                 slim_zoom_from_x10();
             return 1;
         }
+        /* Swallow half-shutter release so Canon does not disturb x10 preview. */
+        if (key == MODULE_KEY_UNPRESS_HALFSHUTTER)
+            return 1;
     }
 
     return 0;
@@ -5500,7 +5506,7 @@ static MENU_UPDATE_FUNC(slim_info_button_update)
     last_info_button = INFO_button;
 }
 
-/* Settings → INFO Button (EOS M slim). */
+/* Settings → INFO Button + Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
@@ -5514,9 +5520,6 @@ static struct menu_entry slim_info_button_menu[] = {
         .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO, framing toggle.",
         .help2     = "Framing: each INFO press toggles low-res correct framing vs real-time LV.",
     },
-};
-
-static struct menu_entry slim_shutter_zoom_menu[] = {
     {
         .name      = "Shutter zoom",
         .priv      = &Shutter_zoom,
@@ -8186,7 +8189,6 @@ static unsigned int crop_rec_init()
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
-        menu_add("Settings", slim_shutter_zoom_menu, COUNT(slim_shutter_zoom_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;

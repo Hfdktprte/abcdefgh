@@ -4313,6 +4313,9 @@ livev_hipriority_task( void* unused )
             if (zebra_draw && raw_zebra_enable == 1) raw_needed = 1;
             #endif
             if (hist_draw && RAW_HISTOGRAM_ENABLED) raw_needed = 1;
+            #ifdef FEATURE_WAVEFORM
+            if (waveform_draw) raw_needed = 1;
+            #endif
         }
 #endif
 
@@ -4384,25 +4387,55 @@ livev_hipriority_task( void* unused )
                         );
 #ifdef CONFIG_SLIM_MENUS
 #ifdef FEATURE_HISTOGRAM
-                    if (hist_draw && !WAVEFORM_FULLSCREEN
-                        && RAW_HISTOGRAM_ENABLED && can_use_raw_overlays()
+                    if ((hist_draw || waveform_draw) && !WAVEFORM_FULLSCREEN
+                        && can_use_raw_overlays()
                         && raw_overlay_calibration_ready())
                     {
                         static int slim_hist_aux = 0;
                         static int slim_hist_ready = 0;
                         if (should_run_polling_action(168, &slim_hist_aux) || !slim_hist_ready)
                         {
-                            hist_build_raw();
+                            #ifdef FEATURE_HISTOGRAM
+                            if (hist_draw && RAW_HISTOGRAM_ENABLED)
+                                hist_build_raw();
+                            #endif
+                            #ifdef FEATURE_WAVEFORM
+                            if (waveform_draw)
+                            {
+                                waveform_init();
+                                waveform_build_raw(waveform, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+                            }
+                            #endif
                             slim_hist_ready = 1;
                         }
                         if (histogram.max == 0) histogram.max = 1;
-                        if (get_screen_layout() == SCREENLAYOUT_3_2)
-                            hist_draw_image(os.x_max - HIST_WIDTH - 2,
-                                os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1);
-                        else if (should_draw_bottom_graphs())
-                            hist_draw_image(os.x0 + 50, 480 - hist_height - 1);
-                        else
-                            hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
+                        #ifdef FEATURE_HISTOGRAM
+                        if (hist_draw && RAW_HISTOGRAM_ENABLED)
+                        {
+                            if (get_screen_layout() == SCREENLAYOUT_3_2)
+                                hist_draw_image(os.x_max - HIST_WIDTH - 2,
+                                    os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1);
+                            else if (should_draw_bottom_graphs())
+                                hist_draw_image(os.x0 + 50, 480 - hist_height - 1);
+                            else
+                                hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
+                        }
+                        #endif
+                        #ifdef FEATURE_WAVEFORM
+                        if (waveform_draw && !WAVEFORM_FULLSCREEN)
+                        {
+                            int screen_layout = get_screen_layout();
+                            if (should_draw_bottom_graphs() && WAVEFORM_FACTOR == 1)
+                                waveform_draw_image(os.x0 + 250, 480 - 54, 54);
+                            else if (screen_layout == SCREENLAYOUT_3_2)
+                                waveform_draw_image(os.x0 + 4,
+                                    os.y_max - (lv ? os.off_169 : 0) - (gui_menu_shown() ? 25 : 0) - 54, 54);
+                            else
+                                waveform_draw_image(os.x_max - WAVEFORM_WIDTH * WAVEFORM_FACTOR - 4,
+                                    os.y_max - WAVEFORM_HEIGHT * WAVEFORM_FACTOR - WAVEFORM_OFFSET,
+                                    WAVEFORM_HEIGHT * WAVEFORM_FACTOR);
+                        }
+                        #endif
                     }
 #endif
 #endif
@@ -4511,9 +4544,11 @@ livev_lopriority_task( void* unused )
         if (!gui_menu_shown())
         {
 #ifdef CONFIG_SLIM_MENUS
-            if (waveform_draw
+            if (
                 #ifdef FEATURE_VECTORSCOPE
-                || vectorscope_should_draw()
+                vectorscope_should_draw()
+                #else
+                0
                 #endif
             )
                 draw_histogram_and_waveform(0);

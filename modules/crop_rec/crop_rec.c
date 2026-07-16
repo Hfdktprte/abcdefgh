@@ -4291,6 +4291,13 @@ void CheckPreviewRegsValuesAndForce()
     if (PathDriveMode->zoom != 5) return;
     if (Preview_Control_Basic) return;
 
+#ifdef CONFIG_EOSM
+    /* 3x3 preview hooks fight Canon periodically; throttling avoids system-wide lag. */
+    static int eosm_preview_force_last = 0;
+    if (!should_run_polling_action(500, &eosm_preview_force_last))
+        return;
+#endif
+
     if (is_100D)                       REG_C0F38024_Val = ((RAW_V - 5) << 16)  + RAW_H - 0x1A;
     if (is_650D || is_700D || is_EOSM) REG_C0F38024_Val = ((RAW_V - 1) << 16)  + RAW_H - 0x11;
 
@@ -7113,12 +7120,19 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
         // FIXME: for now, "More" hacks must be on in order to get wokring preview in 3x3 presets while recording
         // see notes in reg_override_3X3
-        if (CROP_PRESET_MENU == CROP_PRESET_3X3 && raw_lv_is_enabled() && !is_more_hacks_selected())
         {
-            if (crop_preset_3x3_res_menu != 1) // exclude 1080p mode
+            static int slim_3x3_more_hacks_done = 0;
+            if (CROP_PRESET_MENU != CROP_PRESET_3X3)
+                slim_3x3_more_hacks_done = 0;
+            else if (raw_lv_is_enabled() && !is_more_hacks_selected() && crop_preset_3x3_res_menu != 1
+                     && !slim_3x3_more_hacks_done)
             {
-                menu_set_str_value_from_script("RAW video", "Small hacks", "More", 2);
-                NotifyBox(2000,"Small hacks was set to More");
+                if (is_EOSM)
+                    mlv_lite_set_small_hacks_more();
+                else
+                    menu_set_str_value_from_script("RAW video", "Small hacks", "More", 2);
+                slim_3x3_more_hacks_done = 1;
+                NotifyBox(2000, "Small Hacks set to More");
             }
         }
 

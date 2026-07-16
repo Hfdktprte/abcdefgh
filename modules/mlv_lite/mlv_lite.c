@@ -2326,6 +2326,12 @@ int is_more_hacks_selected()
     return 0;
 }
 
+void mlv_lite_set_small_hacks_more(void)
+{
+    if (small_hacks < 2)
+        small_hacks = 2;
+}
+
 static int WillSuspendAeWbTask = 0; // flag tells that we are going to suspend AeWb task
 
 int AeWbTask_Disabled()

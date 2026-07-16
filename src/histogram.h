@@ -64,7 +64,9 @@ MENU_UPDATE_FUNC(raw_histo_update);
 void hist_invalidate_r2ev_cache(void);
 
 #if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
-void waveform_build_raw(uint8_t* waveform, int wf_width, int wf_height);
+void waveform_slim_scan_begin(void);
+void waveform_slim_scan_pixel(int bmp_j, int ev_bin);
+int waveform_slim_using_raw_scan(void);
 #endif
 
 #define RAW_HISTOGRAM_ENABLED (hist_draw && hist_type >= 2)

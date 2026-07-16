@@ -4681,6 +4681,28 @@ unsigned int raw_rec_keypress_cbr_raw(unsigned int raw_event)
 
 static int preview_dirty = 0;
 
+/* EOS M slim: INFO Button → framing (low-res correct framing, like Preview → Framing). */
+static int slim_info_framing_active = 0;
+
+void mlv_lite_info_framing_toggle(void)
+{
+    slim_info_framing_active = !slim_info_framing_active;
+    if (!slim_info_framing_active && preview_dirty)
+    {
+#ifndef CONFIG_EOSM
+        raw_invalidate_lv_calibration();
+#endif
+        preview_dirty = 0;
+    }
+    redraw();
+    NotifyBox(2000, slim_info_framing_active ? "Framing preview" : "Real-time preview");
+}
+
+void mlv_lite_info_framing_reset(void)
+{
+    slim_info_framing_active = 0;
+}
+
 static int raw_rec_should_preview(void)
 {
     if (!raw_video_enabled) return 0;
@@ -4688,6 +4710,10 @@ static int raw_rec_should_preview(void)
 
     /* keep x10 mode unaltered, for focusing */
     if (lv_dispsize == 10) return 0;
+
+    /* EOS M Settings → INFO Button = framing: toggle ML framing vs real-time LV. */
+    if (cam_eos_m && INFO_button == 4)
+        return slim_info_framing_active;
 
     /* framing is incorrect in modes with high resolutions
      * (e.g. x5 zoom, crop_rec) */

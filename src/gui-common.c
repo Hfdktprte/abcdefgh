@@ -479,8 +479,8 @@ int handle_common_events_by_feature(struct event * event)
     }
 
 #if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    /* Recording screen: no touch (focus box, Canon overlays, tap-to-menu). */
-    if (RECORDING && lv && is_movie_mode() && !gui_menu_shown())
+    /* Movie recording screen: no touch (focus box, Canon overlays, tap-to-menu). */
+    if (lv && is_movie_mode() && !gui_menu_shown())
     {
         switch (event->param)
         {

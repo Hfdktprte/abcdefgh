@@ -6722,7 +6722,7 @@ int handle_ml_menu_erase(struct event * event)
     if (dofpreview) return 1; // don't open menu when DOF preview is locked
     
     if (event->param == BGMT_TRASH ||
-        #ifdef CONFIG_EOSM
+        #if defined(CONFIG_EOSM) && !defined(CONFIG_SLIM_MENUS)
         event->param == BGMT_MENU ||
         #endif
         #ifdef CONFIG_TOUCHSCREEN

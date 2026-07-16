@@ -25,7 +25,6 @@
 
 #include "shoot.h"
 #include "dryos.h"
-#include "touch-slim.h"
 #include "util.h"
 #include "bmp.h"
 #include "version.h"
@@ -6040,9 +6039,6 @@ shoot_task( void* unused )
 
 #if defined(CONFIG_MODULES)
         module_exec_cbr(CBR_SHOOT_TASK);
-#endif
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-        touch_slim_poll();
 #endif
 
         #ifdef FEATURE_MLU_HANDHELD_DEBUG

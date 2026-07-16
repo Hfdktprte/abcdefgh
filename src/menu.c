@@ -36,7 +36,6 @@
 #include "focus.h"
 #include "menuhelp.h"
 #include "menu-grid.h"
-#include "touch-slim.h"
 #include "console.h"
 #include "debug.h"
 #include "lvinfo.h"
@@ -209,146 +208,6 @@ static void slim_draw_arrow_right(int tip_x, int cy, int height, int color)
     }
 }
 #endif
-
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-static int entry_is_slim_navigable(struct menu_entry * entry);
-static void menu_entry_select(struct menu * menu, int mode);
-static struct menu * get_current_menu_or_submenu(void);
-
-struct slim_touch_hit {
-    int y0, y1;
-    int row_x0, row_x1;
-    int arrow_l0, arrow_l1;
-    int arrow_r0, arrow_r1;
-    int has_arrows;
-    struct menu *menu;
-    struct menu_entry *entry;
-};
-
-static struct slim_touch_hit slim_touch_hits[MENU_LEN];
-static int slim_touch_hit_count = 0;
-static struct menu *slim_touch_draw_menu = 0;
-
-static struct {
-    int valid;
-    int y, h;
-    int row_x0, row_x1;
-    int has_arrows;
-    int arrow_l0, arrow_l1;
-    int arrow_r0, arrow_r1;
-} slim_touch_row;
-
-static void slim_touch_reset(void)
-{
-    slim_touch_hit_count = 0;
-    slim_touch_row.valid = 0;
-}
-
-static void slim_touch_row_capture(int y, int h, int row_x0, int row_x1,
-    int has_arrows, int al0, int al1, int ar0, int ar1)
-{
-    slim_touch_row.valid = 1;
-    slim_touch_row.y = y;
-    slim_touch_row.h = h;
-    slim_touch_row.row_x0 = row_x0;
-    slim_touch_row.row_x1 = row_x1;
-    slim_touch_row.has_arrows = has_arrows;
-    slim_touch_row.arrow_l0 = al0;
-    slim_touch_row.arrow_l1 = al1;
-    slim_touch_row.arrow_r0 = ar0;
-    slim_touch_row.arrow_r1 = ar1;
-}
-
-static void slim_touch_commit_row(struct menu *menu, struct menu_entry *entry)
-{
-    if (!slim_touch_row.valid || !menu || !entry)
-        return;
-    if (slim_touch_hit_count >= MENU_LEN)
-        return;
-    struct slim_touch_hit *t = &slim_touch_hits[slim_touch_hit_count++];
-    t->y0 = slim_touch_row.y;
-    t->y1 = slim_touch_row.y + slim_touch_row.h;
-    t->row_x0 = slim_touch_row.row_x0;
-    t->row_x1 = slim_touch_row.row_x1;
-    t->has_arrows = slim_touch_row.has_arrows;
-    t->arrow_l0 = slim_touch_row.arrow_l0;
-    t->arrow_l1 = slim_touch_row.arrow_l1;
-    t->arrow_r0 = slim_touch_row.arrow_r0;
-    t->arrow_r1 = slim_touch_row.arrow_r1;
-    t->menu = menu;
-    t->entry = entry;
-    slim_touch_row.valid = 0;
-}
-
-#ifdef TOUCH_XY_RAW1
-static int slim_touch_get_xy(int *tx, int *ty)
-{
-    return touch_slim_get_xy(tx, ty);
-}
-#else
-static int slim_touch_get_xy(int *tx, int *ty)
-{
-    (void) tx;
-    (void) ty;
-    return 0;
-}
-#endif
-
-static void slim_touch_select_entry(struct menu *menu, struct menu_entry *entry)
-{
-    if (!menu || !entry || !entry_is_slim_navigable(entry))
-        return;
-    take_semaphore(menu_sem, 0);
-    for (struct menu_entry *e = menu->children; e; e = e->next)
-        e->selected = (e == entry);
-    give_semaphore(menu_sem);
-}
-
-static int slim_touch_handle_release(void)
-{
-    int tx, ty;
-    if (!slim_touch_get_xy(&tx, &ty))
-        return 1;
-
-    if (menu_grid_is_active())
-    {
-        int redraw = 0;
-        return menu_grid_handle_touch(tx, ty, &redraw);
-    }
-
-    struct menu *menu = slim_touch_draw_menu;
-    if (!menu)
-        menu = get_current_menu_or_submenu();
-    if (!menu)
-        return 1;
-
-    for (int i = 0; i < slim_touch_hit_count; i++)
-    {
-        struct slim_touch_hit *t = &slim_touch_hits[i];
-        if (ty < t->y0 || ty >= t->y1)
-            continue;
-        if (tx < t->row_x0 || tx >= t->row_x1)
-            continue;
-
-        if (t->has_arrows && tx >= t->arrow_l0 && tx < t->arrow_l1)
-        {
-            slim_touch_select_entry(t->menu, t->entry);
-            menu_entry_select(t->menu, 1);
-            return 0;
-        }
-        if (t->has_arrows && tx >= t->arrow_r0 && tx < t->arrow_r1)
-        {
-            slim_touch_select_entry(t->menu, t->entry);
-            menu_entry_select(t->menu, 0);
-            return 0;
-        }
-
-        slim_touch_select_entry(t->menu, t->entry);
-        return 0;
-    }
-    return 1;
-}
-#endif /* CONFIG_SLIM_MENUS && CONFIG_TOUCHSCREEN */
 
 #define HAS_SINGLE_ITEM_SUBMENU(entry) ((entry)->children && !(entry)->children[0].next && !(entry)->children[0].prev && !MENU_IS_EOL(entry->children))
 #define IS_SINGLE_ITEM_SUBMENU_ENTRY(entry) (!(entry)->next && !(entry)->prev)
@@ -3224,21 +3083,6 @@ skip_name:
             }
         }
     }
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    if (slim_style && !customize_mode && !junkie_mode && is_visible(entry))
-    {
-        int x_after_value = x_value + val_width + arrow_pad + arrow_w;
-        int ar1 = draw_right_arrow ? (x_after_value + arrow_w + arrow_pad + 24) : 0;
-        slim_touch_row_capture(
-            y, h,
-            x, x_end,
-            draw_tri_arrows,
-            draw_left_arrow ? (xval - 12) : 0,
-            draw_left_arrow ? (x_value + 4) : 0,
-            draw_right_arrow ? (x_after_value - arrow_w - 8) : 0,
-            ar1);
-    }
-#endif
 #endif
     
     if(entry->selected &&
@@ -3527,9 +3371,6 @@ menu_entry_process(
         // print the menu on the screen
         if (info.custom_drawing == CUSTOM_DRAW_DISABLE)
             entry_print(info.x, info.y, info.x_val - x, h, entry, &info, IS_SUBMENU(menu));
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-        slim_touch_commit_row(menu, entry);
-#endif
     }
     return 1;
 }
@@ -3850,9 +3691,6 @@ menu_display(
     int only_selected
 )
 {
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    slim_touch_draw_menu = menu;
-#endif
     struct menu_entry * entry = menu->children;
     
     //hide upper menu for vscroll
@@ -4587,10 +4425,6 @@ void menus_display(
     #endif
 
     take_semaphore( menu_sem, 0 );
-
-#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
-    slim_touch_reset();
-#endif
 
     // will override them only if rack focus items are selected
     reset_override_zoom_buttons();
@@ -5743,39 +5577,23 @@ void keyrepeat_ack(int button_code) // also for arrow shortcuts
 #ifdef CONFIG_TOUCHSCREEN
 int handle_ml_menu_touch(struct event * event)
 {
-#if defined(CONFIG_SLIM_MENUS)
-    if (!menu_shown)
-        return 1;
-
-    switch (event->param)
-    {
-        case BGMT_TOUCH_1_FINGER:
-            return 0;
-        case BGMT_UNTOUCH_1_FINGER:
-        {
-            int handled = !slim_touch_handle_release();
-            if (!handled)
-            {
-                menu_damage = 1;
-                menu_redraw();
-            }
-            return 0;
-        }
-        case BGMT_TOUCH_2_FINGER:
-        case BGMT_UNTOUCH_2_FINGER:
-            return 0;
-        default:
-            return 1;
-    }
-#else
     int button_code = event->param;
     switch (button_code) {
         case BGMT_TOUCH_1_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+            /* Slim: no touch interaction on any menu item. */
+            return 0;
+#else
             fake_simple_button(BGMT_Q);
             return 0;
+#endif
         case BGMT_TOUCH_2_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+            return 0;
+#else
             fake_simple_button(BGMT_TRASH);
             return 0;
+#endif
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
             return 0;
@@ -5783,7 +5601,6 @@ int handle_ml_menu_touch(struct event * event)
             return 1;
     }
     return 1;
-#endif
 }
 #endif
 

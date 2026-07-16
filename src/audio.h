@@ -652,6 +652,9 @@ int sound_recording_enabled();
 /* true if audio meters are displayed */
 int audio_meters_are_drawn();
 
+/* Redraw VU meters only (fast path for hiprio; needs lvinfo layout first). */
+void audio_meters_redraw_fast(void);
+
 /* sound-related tricks from fps-engio.c */
 int was_sound_recording_disabled_by_fps_override();
 int fps_should_record_wav();

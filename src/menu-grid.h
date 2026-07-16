@@ -11,5 +11,7 @@ void menu_grid_return(void);
 void menu_grid_draw(void);
 /** Returns 0 if handled, 1 if caller should continue normal menu key handling. */
 int menu_grid_handle_key(int button_code, int *needs_full_redraw);
+/** Returns 0 if handled. tx/ty are screen pixels (0..719, 0..479). */
+int menu_grid_handle_touch(int tx, int ty, int *needs_full_redraw);
 
 #endif

@@ -84,7 +84,6 @@ extern WEAK_FUNC(ret_0) int raw_lv_is_enabled();
 extern WEAK_FUNC(ret_0) int get_dxo_dynamic_range();
 extern WEAK_FUNC(ret_0) int is_play_or_qr_mode();
 extern WEAK_FUNC(ret_0) void* get_lcd_422_buf();
-extern WEAK_FUNC(ret_0) void* get_fastrefresh_422_buf();
 extern WEAK_FUNC(ret_0) int raw_hist_get_percentile_level();
 extern WEAK_FUNC(ret_0) int raw_hist_get_overexposure_percentage();
 extern WEAK_FUNC(ret_0) void raw_lv_request();
@@ -592,118 +591,56 @@ static int lv_stripe_period = 2;
 static int lv_stripe_keep = 0;
 static int lv_stripe_valid = 0;
 
-static void isoless_lv_detect_stripes(const uint8_t * base, int pitch, int height)
-{
-    int best_score = 0;
-    int best_period = 2;
-    int best_keep = 0;
-
-    for (int rep = 2; rep <= 5; rep++)
-    {
-        int avg[5];
-        int num = 0;
-        for (int i = 0; i < rep; i++)
-            avg[i] = 0;
-
-        for (int y = 0; y < height - rep; y++)
-        {
-            for (int x = 0; x < vram_lv.width; x += 32)
-            {
-                int luma = isoless_yuv_luma(base, pitch, x, y);
-                avg[y % rep] += luma;
-                num++;
-            }
-        }
-
-        if (!num) continue;
-
-        int min = INT_MAX;
-        int max = INT_MIN;
-        int mini = 0;
-        int maxi = 0;
-        for (int i = 0; i < rep; i++)
-        {
-            avg[i] = avg[i] * rep / num;
-            if (avg[i] < min) { min = avg[i]; mini = i; }
-            if (avg[i] > max) { max = avg[i]; maxi = i; }
-        }
-
-        int score = max - min;
-        if (score > best_score)
-        {
-            best_score = score;
-            best_period = rep;
-            best_keep = maxi; /* primary / brighter exposure */
-        }
-    }
-
-    if (best_score < 3 && dual_iso_is_active())
-    {
-        int avg0 = 0;
-        int avg1 = 0;
-        int n = 0;
-        for (int y = 0; y < height - 1; y += 2)
-        {
-            for (int x = 0; x < vram_lv.width; x += 32)
-            {
-                avg0 += isoless_yuv_luma(base, pitch, x, y);
-                avg1 += isoless_yuv_luma(base, pitch, x, y + 1);
-                n++;
-            }
-        }
-        if (n)
-        {
-            best_period = 2;
-            best_keep = (avg0 >= avg1) ? 0 : 1;
-            best_score = 10;
-        }
-    }
-
-    if (best_score >= 3)
-    {
-        lv_stripe_period = best_period;
-        lv_stripe_keep = best_keep;
-        lv_stripe_valid = 1;
-    }
-}
-
 static void isoless_yuv_destripe_lv_fast(uint8_t * base, int pitch, int height)
 {
     if (!lv_stripe_valid || lv_stripe_period <= 0)
         return;
+
+    int w4 = vram_lv.width >> 1;
+    if (w4 <= 0) return;
 
     for (int y = 0; y < height; y++)
     {
         int ref_y = y / lv_stripe_period * lv_stripe_period + lv_stripe_keep;
         if (ref_y >= height) continue;
         if (y == ref_y) continue;
-        memcpy(base + y * pitch, base + ref_y * pitch, pitch);
+
+        uint32_t * dst = (uint32_t *)(base + y * pitch);
+        const uint32_t * ref = (const uint32_t *)(base + ref_y * pitch);
+
+        /* Copy luma (Y) from the reference line; keep chroma from the destination line. */
+        for (int i = 0; i < w4; i++)
+        {
+            uint32_t d = dst[i];
+            uint32_t r = ref[i];
+            dst[i] = (d & 0x00FF00FF) | (r & 0xFF00FF00);
+        }
     }
 }
 
-static void isoless_lv_destripe_one(void * buf)
+static void isoless_lv_pick_keep_line(const uint8_t * base, int pitch, int height)
 {
-    if (!buf) return;
+    if (height < 2) return;
 
-    get_yuv422_vram();
-    if (vram_lv.pitch <= 0 || vram_lv.height <= 0)
-        return;
+    int avg0 = 0;
+    int avg1 = 0;
+    int n = 0;
 
-    uint8_t * base = (uint8_t *) CACHEABLE(buf);
-
-    static int detect_aux = INT_MIN;
-    if (!lv_stripe_valid || should_run_polling_action(1000, &detect_aux))
-        isoless_lv_detect_stripes(base, vram_lv.pitch, vram_lv.height);
-
-    /* Dual ISO always alternates every 2 lines; don't stall on weak detection. */
-    if (!lv_stripe_valid && dual_iso_is_active())
+    for (int y = 0; y < height - 1; y += 2)
     {
-        lv_stripe_period = 2;
-        lv_stripe_keep = 0;
-        lv_stripe_valid = 1;
+        for (int x = 0; x < vram_lv.width; x += 32)
+        {
+            avg0 += isoless_yuv_luma(base, pitch, x, y);
+            avg1 += isoless_yuv_luma(base, pitch, x, y + 1);
+            n++;
+        }
     }
 
-    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
+    if (!n) return;
+
+    lv_stripe_period = 2;
+    lv_stripe_keep = (avg0 >= avg1) ? 0 : 1;
+    lv_stripe_valid = 1;
 }
 
 /* Called from core at display vsync — patch the buffer actually on screen. */
@@ -715,15 +652,18 @@ void dual_iso_vsync_display_hook(void)
         return;
     }
 
-    isoless_lv_destripe_one(get_lcd_422_buf());
-    isoless_lv_destripe_one(get_fastrefresh_422_buf());
-}
+    get_yuv422_vram();
+    void * buf = get_lcd_422_buf();
+    if (!buf || vram_lv.pitch <= 0 || vram_lv.height <= 0)
+        return;
 
-static unsigned int isoless_vsync_cbr(unsigned int unused)
-{
-    (void) unused;
-    dual_iso_vsync_display_hook();
-    return CBR_RET_CONTINUE;
+    uint8_t * base = (uint8_t *) CACHEABLE(buf);
+
+    static int detect_aux = INT_MIN;
+    if (!lv_stripe_valid || should_run_polling_action(2000, &detect_aux))
+        isoless_lv_pick_keep_line(base, vram_lv.pitch, vram_lv.height);
+
+    isoless_yuv_destripe_lv_fast(base, vram_lv.pitch, vram_lv.height);
 }
 
 /* Normal dual-ISO display: keep Canon YUV preview (de-striped), not ML raw preview. */
@@ -1388,7 +1328,6 @@ MODULE_INFO_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
-    MODULE_CBR(CBR_VSYNC, isoless_vsync_cbr, 0)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
 MODULE_CBRS_END()
 

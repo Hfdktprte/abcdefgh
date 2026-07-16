@@ -4381,6 +4381,11 @@ livev_hipriority_task( void* unused )
                             hist_draw_image(os.x_max - HIST_WIDTH - 5, os.y0 + 100);
                     }
 #endif
+#ifdef FEATURE_AUDIO_METERS
+                    /* Same BMP_LOCK as RAW zebras/histogram — avoids lock starvation from audio_common_task. */
+                    if (audio_meters_are_drawn())
+                        audio_meters_redraw_fast();
+#endif
 #endif
                 )
             }
@@ -4413,6 +4418,9 @@ livev_hipriority_task( void* unused )
                 
         int m = 100;
         if (lens_display_dirty) m = 10;
+#ifdef CONFIG_SLIM_MENUS
+        if (audio_meters_are_drawn()) m = MIN(m, 20);
+#endif
         if (should_draw_zoom_overlay()) m = 100;
         
         int kmm = k % m;

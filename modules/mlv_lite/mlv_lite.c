@@ -89,8 +89,14 @@ static GUARDED_BY(GuiMainTask) int show_edmac = 0;
 /* from mlv_play module */
 extern WEAK_FUNC(ret_0) void mlv_play_file(char *filename);
 
-/* from dual_iso module */
-extern WEAK_FUNC(ret_0) int dual_iso_prefers_yuv_preview(void);
+/* Dual ISO Normal LV: read dual_iso config directly (weak cross-module calls are unreliable). */
+static int dual_iso_normal_lv(void)
+{
+    if (!is_movie_mode()) return 0;
+    if (get_config_var("isoless.hdr") == 0) return 0;
+    if (get_config_var("isoless.display") != 0) return 0; /* 0 = Normal */
+    return 1;
+}
 
 static int updowntoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(updowntoggle) Arrows_U_D;
@@ -4717,8 +4723,8 @@ static int raw_rec_should_preview(void)
     if (!raw_video_enabled) return 0;
     if (!is_movie_mode()) return 0;
 
-    /* Dual ISO Normal display: use de-striped Canon YUV, not striped raw preview. */
-    if (dual_iso_prefers_yuv_preview())
+    /* Dual ISO Normal display: Canon YUV only (no striped ML raw preview). */
+    if (dual_iso_normal_lv())
         return 0;
 
     /* keep x10 mode unaltered, for focusing */

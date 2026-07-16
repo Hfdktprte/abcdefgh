@@ -652,7 +652,7 @@ int sound_recording_enabled();
 /* true if audio meters are displayed */
 int audio_meters_are_drawn();
 
-/* Redraw VU meters only (fast path for hiprio; needs lvinfo layout first). */
+/* Redraw VU meters only (call from zebra BMP_LOCK after RAW scan). */
 void audio_meters_redraw_fast(void);
 
 /* sound-related tricks from fps-engio.c */

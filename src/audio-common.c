@@ -3,6 +3,7 @@
 #include "module.h"
 #include "raw.h"
 #include "zebra.h"
+#include "bmp.h"
 #include "ml-cbr.h"
 #ifdef CONFIG_SLIM_MENUS
 #include "menu-grid.h"
@@ -245,6 +246,8 @@ draw_meter(
 {
     const uint32_t pitch = BMPPITCH;
     uint32_t * row = (uint32_t*) bmp_vram();
+    uint32_t * mrow = NULL;
+    uint8_t * mir = get_bvram_mirror();
     if( !row )
         return;
     
@@ -252,6 +255,8 @@ draw_meter(
     // space for the numerical levels
     // .. and the space for showing the channel and source.
     row += (pitch/4) * y_origin + AUDIO_METER_OFFSET + x_origin/4;
+    if (mir)
+        mrow = (uint32_t*)mir + (pitch/4) * y_origin + AUDIO_METER_OFFSET + x_origin/4;
     
     const int32_t db_peak_fast = audio_level_to_db( level->peak_fast );
     const int32_t db_peak = audio_level_to_db( level->peak );
@@ -277,21 +282,27 @@ draw_meter(
             if( x < x_db_peak_fast )
             {
                 row[x] = bar_color_word;
+                if (mrow) mrow[x] = bar_color_word;
             }
             else if( x < x_db_peak )
             {
                 row[x] = bg_color_word;
+                if (mrow) mrow[x] = bg_color_word;
             }
             else if( x < x_db_peak + 4 )
             {
                 row[x] = peak_color_word;
+                if (mrow) mrow[x] = peak_color_word;
             }
             else
             {
                 row[x] = bg_color_word;
+                if (mrow) mrow[x] = bg_color_word;
             }
         }
         row += pitch / 4;
+        if (mrow)
+            mrow += pitch / 4;
     }
     
     // Write the current level
@@ -309,11 +320,15 @@ draw_ticks(
 {
     const int pitch = BMPPITCH;
     uint16_t * row = (uint16_t*) bmp_vram();
+    uint16_t * mrow = NULL;
+    uint8_t * mir = get_bvram_mirror();
 
     if( !row )
         return;
 
     row += (pitch/2) * y_origin + AUDIO_METER_OFFSET*2 + x_origin/2;
+    if (mir)
+        mrow = (uint16_t*)(mir + pitch * y_origin + AUDIO_METER_OFFSET * 4 + x_origin);
     
     const uint16_t white_word = 0
         | ( COLOR_WHITE <<  8 )
@@ -326,7 +341,14 @@ draw_ticks(
             const uint32_t x_db = width + db * width / 40;
             row[x_db/2-1] = white_word;
             row[x_db/2] = white_word;
+            if (mrow)
+            {
+                mrow[x_db/2-1] = white_word;
+                mrow[x_db/2] = white_word;
+            }
         }
+        if (mrow)
+            mrow += pitch/2;
     }
 }
 
@@ -478,14 +500,28 @@ compute_audio_levels(
     level->peak_fast = ( level->peak_fast * 3 + level->avg ) / 4;
 }
 
+static void audio_meters_sync_layout(void)
+{
+#ifdef FEATURE_AUDIO_METERS
+    int y = get_ml_topbar_pos();
+    int label_width = AUDIO_METER_OFFSET * 4;
+    int width = 360 / 40 * 40;
+
+    audio_meter_y = y;
+    if (audio_meter_width == INT_MIN)
+        audio_meter_width = width - label_width;
+    if (audio_meter_x == INT_MIN)
+        audio_meter_x = 360 - width / 2;
+#endif
+}
+
 void audio_meters_redraw_fast(void)
 {
 #ifdef FEATURE_AUDIO_METERS
     if (!audio_meters_are_drawn())
         return;
+    audio_meters_sync_layout();
     if (audio_meter_x == INT_MIN || audio_meter_y == INT_MIN || audio_meter_width == INT_MIN)
-        return;
-    if (is_mvr_buffer_almost_full())
         return;
     draw_meters();
 #endif
@@ -534,9 +570,14 @@ static int audio_meters_step( int reconfig_audio )
 
     if(audio_meters_are_drawn())
     {
-        if(!is_mvr_buffer_almost_full())
+#ifdef CONFIG_SLIM_MENUS
+        if (!zebra_draw_enabled())
+#endif
         {
-            BMP_LOCK( draw_meters(); );
+            if(!is_mvr_buffer_almost_full())
+            {
+                BMP_LOCK( draw_meters(); );
+            }
         }
 
         if(RECORDING)

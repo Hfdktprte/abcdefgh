@@ -48,3 +48,5 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Cursor IDE (local editor config; not part of Magic Lantern)
+.cursor/

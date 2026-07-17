@@ -38,6 +38,7 @@
 #include "histogram.h"
 #include "fileprefix.h"
 #include "beep.h"
+#include "../modules/crop_rec/crop_rec.h"
 #include "zebra.h"
 #include "cropmarks.h"
 #include "focus.h"
@@ -1824,7 +1825,12 @@ shutter_toggle(void* priv, int sign)
         i = new_i;
         if (codes_shutter[i] == 0) continue;
         if (is_movie_mode() && codes_shutter[i] < SHUTTER_1_25) { k--; continue; }  /* there are many values to skip */
-        if (lens_set_rawshutter(codes_shutter[i])) break;
+        if (lens_set_rawshutter(codes_shutter[i]))
+        {
+            if (is_movie_mode())
+                crop_rec_note_user_shutter(get_current_shutter_reciprocal_x1000());
+            break;
+        }
     }
 }
 

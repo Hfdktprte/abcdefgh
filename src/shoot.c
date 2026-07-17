@@ -4678,6 +4678,11 @@ static struct menu_entry expo_menus[] = {
     #endif
 
     MENU_PLACEHOLDER("Dual ISO"),
+#ifdef CONFIG_SLIM_MENUS
+#ifdef FEATURE_EXPO_OVERRIDE
+    MENU_PLACEHOLDER("Expo Override"),
+#endif
+#endif
 };
 
 #ifndef CONFIG_SLIM_MENUS
@@ -6762,7 +6767,7 @@ static void shoot_init()
     
     //~ menu_add( "Tweaks", vid_menus, COUNT(vid_menus) );
 
-    #if defined(FEATURE_EXPO_OVERRIDE) && !defined(CONFIG_SLIM_MENUS)
+    #if defined(FEATURE_EXPO_OVERRIDE)
     extern struct menu_entry expo_override_menus[];
     menu_add( "Expo", expo_override_menus, 1 );
     #endif

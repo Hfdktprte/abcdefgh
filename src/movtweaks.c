@@ -1057,11 +1057,19 @@ static struct menu_entry movie_tweaks_menus[] =
 #ifdef FEATURE_EXPO_OVERRIDE
 struct menu_entry expo_override_menus[] = {
     {
+#ifdef CONFIG_SLIM_MENUS
+        .name = "Expo Override",
+        .min = 0,
+        .max = 1,
+        .choices = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+#else
         .name = "Expo. Override",
+        .max = 1,
+#endif
         .priv = &bv_auto,
         .select     = bv_toggle,
         .update     = bv_display,
-        .max = 1,
         .help       = "Low-level manual exposure controls (bypasses Canon limits).",
         .help2      = "Useful for long exposures, manual lenses, manual video ctl.",
         .depends_on = DEP_LIVEVIEW,

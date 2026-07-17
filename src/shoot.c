@@ -38,7 +38,6 @@
 #include "histogram.h"
 #include "fileprefix.h"
 #include "beep.h"
-#include "../modules/crop_rec/crop_rec.h"
 #include "zebra.h"
 #include "cropmarks.h"
 #include "focus.h"
@@ -1748,30 +1747,6 @@ iso_toggle( void * priv, int sign )
 
 #ifdef FEATURE_EXPO_SHUTTER
 
-static int shutter_toggle_start_index(void)
-{
-    if (lens_info.raw_shutter)
-        return raw2index_shutter(lens_info.raw_shutter);
-
-    /* Movie/crop_rec: Expo shows hardware blanking; Canon Tv may still be auto. */
-    if (!is_movie_mode())
-        return -1;
-
-    int s = get_current_shutter_reciprocal_x1000();
-    if (s <= 0)
-        return -1;
-
-    int ms = (1000000 + s / 2) / s;
-    return raw2index_shutter(shutter_ms_to_raw(ms));
-}
-
-static void shutter_note_movie_crop_rec(int raw_code)
-{
-    int ms = raw2shutter_ms(raw_code);
-    if (ms > 0)
-        crop_rec_note_user_shutter((1000000 + ms / 2) / ms);
-}
-
 static MENU_UPDATE_FUNC(shutter_display)
 {
     if (is_movie_mode())
@@ -1836,10 +1811,8 @@ static MENU_UPDATE_FUNC(shutter_display)
 void
 shutter_toggle(void* priv, int sign)
 {
-    int i = shutter_toggle_start_index();
-    if (i < 0)
-        return;
-
+    if (!lens_info.raw_shutter) return;
+    int i = raw2index_shutter(lens_info.raw_shutter);
     int k;
     for (k = 0; k < 15; k++)
     {
@@ -1853,18 +1826,7 @@ shutter_toggle(void* priv, int sign)
         i = new_i;
         if (codes_shutter[i] == 0) continue;
         if (is_movie_mode() && codes_shutter[i] < SHUTTER_1_25) { k--; continue; }  /* there are many values to skip */
-        if (lens_set_rawshutter(codes_shutter[i]))
-        {
-            if (is_movie_mode())
-                shutter_note_movie_crop_rec(codes_shutter[i]);
-            break;
-        }
-        else if (is_movie_mode())
-        {
-            /* crop_rec sets exposure via blanking even when Canon Tv stays auto. */
-            shutter_note_movie_crop_rec(codes_shutter[i]);
-            break;
-        }
+        if (lens_set_rawshutter(codes_shutter[i])) break;
     }
 }
 

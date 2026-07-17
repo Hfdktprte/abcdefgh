@@ -63,11 +63,6 @@ static CONFIG_INT("crop.preset", crop_preset_index, 2);
 static CONFIG_INT("crop.shutter_range", shutter_range, 0);
 static CONFIG_INT("crop.fix_dual_iso_flicker", fix_dual_iso_flicker, 1);
 
-/* User-selected movie shutter (1/s * 1000); survives crop mode/preset changes (EOS M slim).
- * Module builds lack CONFIG_EOSM — use runtime is_EOSM, not compile-time guards. */
-static int crop_user_shutter_r_x1000 = 0;
-static int shutter_blanking_prev = -1;
-
 CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
 #define OUTPUT_14BIT (bit_depth_analog == 0)
 #define OUTPUT_12BIT (bit_depth_analog == 1)
@@ -1552,13 +1547,15 @@ static int adjust_shutter_blanking(int old)
     /* sensor duty cycle: range 0 ... timer B */
     int current_blanking = nrzi_decode(old);
     
-    if (ABS(current_blanking - shutter_blanking_prev) == 1)
+    static int previous_blanking = -1;
+    
+    if (ABS(current_blanking - previous_blanking) == 1) 
     {
-        current_blanking = shutter_blanking_prev;
-    }
-    else
+        current_blanking = previous_blanking;
+    } 
+    else 
     {
-        shutter_blanking_prev = current_blanking;
+       previous_blanking = current_blanking;
     }
 
     int video_mode = get_video_mode_index();
@@ -1584,25 +1581,19 @@ static int adjust_shutter_blanking(int old)
 
     float orig_shutter = frame_duration_orig * current_exposure / fps_timer_b_orig;
 
-    float new_shutter;
-    /* Locked Expo shutter: keep exact exposure time across Timer B / crop changes. */
-    if (is_EOSM && crop_user_shutter_r_x1000 > 0)
-    {
-        new_shutter = 1000.0f / (float) crop_user_shutter_r_x1000;
-    }
-    else if (shutter_range == 0)
-    {
-        /* original shutter speed from the altered video mode */
-        new_shutter = orig_shutter;
-    }
-    else
-    {
-        /* map the available range of 1/4000...1/30 (24-30p) or 1/4000...1/60 (50-60p)
-         * from minimum allowed (1/15000 with full-res LV) to 1/fps */
-        int max_fps_shutter = (video_mode_fps <= 30) ? 33333 : 64000;
-        int default_fps_adj = 1e9 / (1e9 / max_fps_shutter - 250);
-        new_shutter = (orig_shutter - 250e-6) * default_fps_adj / current_fps;
-    }
+    float new_shutter =
+        (shutter_range == 0) ?
+        ({
+            /* original shutter speed from the altered video mode */
+            orig_shutter;
+        }) :
+        ({
+            /* map the available range of 1/4000...1/30 (24-30p) or 1/4000...1/60 (50-60p)
+             * from minimum allowed (1/15000 with full-res LV) to 1/fps */
+            int max_fps_shutter = (video_mode_fps <= 30) ? 33333 : 64000;
+            int default_fps_adj = 1e9 / (1e9 / max_fps_shutter - 250);
+            (orig_shutter - 250e-6) * default_fps_adj / current_fps;
+        });
 
     /* what value is actually used for timer B? (possibly after our overrides) */
     int fps_timer_b = (shamem_read(0xC0F06014) & 0xFFFF) + 1;
@@ -5512,48 +5503,6 @@ static struct menu_entry slim_more_hacks_menu[] = {
     },
 };
 
-static void crop_rec_reset_blanking_track(void)
-{
-    shutter_blanking_prev = -1;
-}
-
-int crop_rec_note_user_shutter(int reciprocal_x1000)
-{
-    if (is_EOSM && reciprocal_x1000 > 0)
-    {
-        crop_user_shutter_r_x1000 = reciprocal_x1000;
-        crop_rec_reset_blanking_track();
-    }
-    return 0;
-}
-
-/* Snapshot displayed shutter before crop settings change (must run first). */
-static void slim_crop_capture_shutter_lock(void)
-{
-    if (!is_EOSM || !lens_info.raw_shutter || lens_info.raw_shutter == SHUTTER_BULB)
-        return;
-    int s = get_current_shutter_reciprocal_x1000();
-    if (s > 0)
-        crop_user_shutter_r_x1000 = s;
-}
-
-/* Re-apply Canon Tv after crop mode/preset changes so Expo shutter stays put. */
-static void slim_crop_reapply_shutter(void)
-{
-    if (!is_EOSM || crop_user_shutter_r_x1000 <= 0)
-        return;
-    crop_rec_reset_blanking_track();
-    if (lens_info.raw_shutter && lens_info.raw_shutter != SHUTTER_BULB)
-        lens_set_rawshutter(lens_info.raw_shutter);
-}
-
-static MENU_SELECT_FUNC(expo_shutter_range_select)
-{
-    menu_numeric_toggle(&shutter_range, delta, 0, 1);
-    crop_rec_reset_blanking_track();
-    slim_crop_reapply_shutter();
-}
-
 /* Expo → Shutter range (EOS M slim; dial L/R like Mode / Aspect). */
 static struct menu_entry expo_shutter_range_eosm[] = {
     {
@@ -5562,7 +5511,6 @@ static struct menu_entry expo_shutter_range_eosm[] = {
         .min        = 0,
         .max        = 1,
         .choices    = CHOICES("Original", "Full range"),
-        .select     = expo_shutter_range_select,
         .edit_mode  = EM_INLINE_ADJUST,
         .help       = "Choose the available shutter speed range:",
         .help2      = "Original: default range used by Canon in selected video mode.\n"
@@ -5777,8 +5725,6 @@ static void slim_crop_apply_unified_preset(void)
 
 static void slim_crop_apply_mode(void)
 {
-    slim_crop_capture_shutter_lock();
-
     slim_mode_ui = COERCE(slim_mode_ui, 0, 3);
 
     if (slim_mode_ui == 3)
@@ -5802,7 +5748,6 @@ static void slim_crop_apply_mode(void)
             slim_crop_apply_unified_preset();
     }
     slim_crop_clamp_fps();
-    slim_crop_reapply_shutter();
 }
 
 static void slim_crop_apply_bit_depth(void)
@@ -5935,7 +5880,6 @@ static void slim_crop_clamp_fps(void)
 
 static MENU_SELECT_FUNC(slim_crop_mode_select)
 {
-    slim_crop_capture_shutter_lock();
     slim_mode_ui = MOD(COERCE(slim_mode_ui, 0, 3) + delta, 4);
     slim_crop_apply_mode();
 }
@@ -5950,8 +5894,6 @@ static MENU_SELECT_FUNC(slim_crop_preset_select)
     int n = slim_preset_choice_count();
     if (n <= 1)
         return;
-
-    slim_crop_capture_shutter_lock();
 
     /* Both L and R: Medium → Higher → Highest → Medium… (never reverse).
      * For 1x1 2.35:1 (2 choices): Higher → Highest → Higher… */
@@ -5972,7 +5914,6 @@ static MENU_SELECT_FUNC(slim_crop_preset_select)
 
     slim_crop_apply_unified_preset();
     slim_crop_clamp_fps();
-    slim_crop_reapply_shutter();
 }
 
 static MENU_UPDATE_FUNC(slim_crop_preset_update)
@@ -6036,8 +5977,6 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
     if (slim_mode_ui == 3)
         return; /* LV: Aspect fixed 3:2 */
 
-    slim_crop_capture_shutter_lock();
-
     if (slim_mode_ui == 0)
     {
         slim_1x1_ar = MOD(slim_1x1_ar + delta, 4);
@@ -6071,8 +6010,6 @@ static MENU_SELECT_FUNC(slim_crop_fps_select)
     if (slim_mode_ui == 3)
         return; /* LV: 3 fps only */
 
-    slim_crop_capture_shutter_lock();
-
     int mask = slim_crop_fps_mask();
     int bits = (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1);
     if (bits <= 1)
@@ -6085,7 +6022,6 @@ static MENU_SELECT_FUNC(slim_crop_fps_select)
         if (mask & (1 << pos))
         {
             crop_preset_fps_menu = pos;
-            slim_crop_reapply_shutter();
             return;
         }
     }
@@ -7065,7 +7001,6 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     /* for 650D / 700D / EOSM/M2 / 100D */
     if (check_if_settings_changed())
     {
-        slim_crop_reapply_shutter();
 #ifdef CONFIG_EOSM
         crop_rec_lv_dirty = 1;
 #else

@@ -358,11 +358,17 @@ static int slim_handle_main_dial_shutter(unsigned int key)
     return 0;
 }
 
+static int slim_lv_base_zoom(void)
+{
+    return is_movie_mode() ? 5 : 1;
+}
+
 static void slim_zoom_to_x10(void)
 {
     extern int kill_canon_gui_mode;
 
-    if (!lv || RECORDING || lv_dispsize != 5) return;
+    int base = slim_lv_base_zoom();
+    if (!lv || RECORDING || lv_dispsize != base) return;
     if (lv_disp_mode != 0) return;
 
     set_zoom(10);
@@ -380,9 +386,12 @@ static void slim_zoom_from_x10(void)
     if (!lv || RECORDING || lv_dispsize != 10) return;
 
     set_zoom(1);
-    msleep(50);
-    set_zoom(5);
-    kill_canon_gui_mode = 1;
+    if (is_movie_mode())
+    {
+        msleep(50);
+        set_zoom(5);
+    }
+    kill_canon_gui_mode = is_movie_mode() ? 1 : 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
     wait_lv_frames(1);
@@ -395,13 +404,15 @@ static void slim_zoom_from_x10(void)
 /* Settings → Shutter zoom: half-shutter x10 like SET (hold or sticky). */
 static int slim_handle_shutter_zoom(unsigned int key)
 {
-    if (!Shutter_zoom || !is_EOSM || !is_movie_mode()) return 0;
+    if (!Shutter_zoom || !is_EOSM) return 0;
     if (!lv || gui_menu_shown() || RECORDING) return 0;
     if (lv_disp_mode != 0) return 0;
 
+    int base = slim_lv_base_zoom();
+
     if (Shutter_zoom == 1)
     {
-        if (key == MODULE_KEY_PRESS_HALFSHUTTER && lv_dispsize == 5)
+        if (key == MODULE_KEY_PRESS_HALFSHUTTER && lv_dispsize == base)
         {
             slim_zoom_to_x10();
             return 1;
@@ -416,7 +427,7 @@ static int slim_handle_shutter_zoom(unsigned int key)
     {
         if (key == MODULE_KEY_PRESS_HALFSHUTTER)
         {
-            if (lv_dispsize == 5)
+            if (lv_dispsize == base)
                 slim_zoom_to_x10();
             else if (lv_dispsize == 10)
                 slim_zoom_from_x10();
@@ -497,6 +508,9 @@ static unsigned int photo_keypress_cbr(unsigned int key)
     
     if (lv && !gui_menu_shown() && !is_movie_mode())
     {
+        if (is_EOSM && slim_handle_shutter_zoom(key))
+            return 0;
+
         if (slim_handle_main_dial_shutter(key))
             return 0;
 
@@ -513,7 +527,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         {
             if (((key == MODULE_KEY_PRESS_SET         ) && SET_button  == 1)                 ||
                 ((key == MODULE_KEY_INFO              ) && !is_EOSM && INFO_button == 1)     ||
-                ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter) )
+                (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter) )
             {
             if (key == MODULE_KEY_PRESS_HALFSHUTTER && Half_Shutter)
             {
@@ -538,8 +552,8 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         {
             if (((key == MODULE_KEY_PRESS_SET           ) && SET_button  == 1)                 ||
                 ((key == MODULE_KEY_INFO                ) && !is_EOSM && INFO_button == 1)     ||
-                ((key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
-                ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
+                (!is_EOSM && (key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
+                (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
             {
                 set_zoom(1); // Get to x1 first, sometime we get black preview when going x10 --> x5
 
@@ -7388,7 +7402,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             {
                 if (((key == MODULE_KEY_PRESS_SET         ) && SET_button  == 1)                 ||
                     ((key == MODULE_KEY_INFO              ) && !is_EOSM && INFO_button == 1)     ||
-                    ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter && is_manual_focus()) )
+                    (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter && is_manual_focus()) )
                 {
                     if(lv_disp_mode != 0){
                         // Use INFO key to cycle LV as normal when not in the LV with ML overlays
@@ -7416,8 +7430,8 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 
                 if (((key == MODULE_KEY_PRESS_SET           ) && SET_button  == 1)                 ||
                     ((key == MODULE_KEY_INFO                ) && !is_EOSM && INFO_button == 1)     ||
-                    ((key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
-                    ((key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
+                    (!is_EOSM && (key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
+                    (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
                 {
                     set_zoom(1); // Get to x1 first, sometime we get black preview when going x10 --> x5
                     msleep(50);
@@ -8245,6 +8259,7 @@ static unsigned int crop_rec_init()
 
         /* Restore control defaults every boot/flash (overrides crop_rec.cfg). */
         SET_button  = 1; /* Zoom x10 */
+        Half_Shutter = 0; /* EOS M slim: half-shutter x10 only via Shutter zoom setting */
         Arrows_U_D  = 1; /* ISO */
         Arrows_L_R  = 2; /* Aperture (inactive without electronic lens) */
         /* INFO Button persists via Settings (0=OFF .. 4=framing). */

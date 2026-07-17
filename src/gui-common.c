@@ -38,7 +38,8 @@ static int handle_slim_rec_touch_block(struct event * event)
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
 #endif
-        if (RECORDING || (lv && is_movie_mode() && !gui_menu_shown()))
+        /* Block touch from opening ML menu / grid in LV (photo and movie). */
+        if (RECORDING || (lv && !gui_menu_shown()))
             return 0;
         break;
     }

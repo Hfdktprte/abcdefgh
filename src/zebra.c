@@ -671,14 +671,15 @@ hist_build()
 #define ZEBRA_COLOR_WORD_SOLID(x) ( (x) | (x)<<8 | (x)<<16 | (x)<<24 )
 
 #ifdef CONFIG_SLIM_MENUS
-/* Dedicated palette slots: punchy zebras without touching global COLOR_* indices. */
-#define ZEBRA_PAL_CLIP_RGB  COLOR_DARK_GREEN1_MOD
-#define ZEBRA_PAL_GREEN     COLOR_DARK_GREEN2_MOD
-#define ZEBRA_PAL_YELLOW    COLOR_DARK_ORANGE_MOD
-#define ZEBRA_PAL_CYAN      COLOR_DARK_CYAN1_MOD
-#define ZEBRA_PAL_MAGENTA   COLOR_DARK_CYAN2_MOD
-#define ZEBRA_PAL_RED       26
-#define ZEBRA_PAL_BLUE      27
+/* Dedicated palette slots — never use COLOR_DARK_*_MOD (21-25); Canon draws
+ * x10 focus-box arrows with those indices. */
+#define ZEBRA_PAL_CLIP_RGB  26
+#define ZEBRA_PAL_GREEN     27
+#define ZEBRA_PAL_YELLOW    28
+#define ZEBRA_PAL_CYAN      29
+#define ZEBRA_PAL_MAGENTA   30
+#define ZEBRA_PAL_RED       31
+#define ZEBRA_PAL_BLUE      32
 
 static void zebra_slim_palette_entry(int color, int base_color,
     int luma_scale, int chroma_scale, int opacity)

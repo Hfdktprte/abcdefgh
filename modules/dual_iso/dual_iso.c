@@ -70,6 +70,7 @@
 #include <raw.h>
 #include <patch.h>
 #include <vram.h>
+#include <lvinfo.h>
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
 
@@ -306,6 +307,9 @@ static unsigned int isoless_refresh(unsigned int ctx)
     if (!job_state_ready_to_take_pic())
         return 0;
 
+    if (!isoless_sem)
+        return 0;
+
     take_semaphore(isoless_sem, 0);
 
     static uint32_t backup_lv[20];
@@ -398,7 +402,7 @@ int dual_iso_set_enabled(bool enabled)
     else
         isoless_hdr = 0;
 
-    isoless_refresh(CTX_SHOOT_TASK);
+    lens_display_set_dirty();
     return 1; // module is loaded & responded != ret_0
 }
 
@@ -1182,7 +1186,10 @@ static unsigned int isoless_init()
 
     if (FRAME_CMOS_ISO_START || PHOTO_CMOS_ISO_START)
     {
+        isoless_sem = create_named_semaphore("isoless_sem", 1);
         menu_add("Expo", isoless_expo_menu, COUNT(isoless_expo_menu));
+        if (isoless_hdr)
+            isoless_refresh(CTX_SHOOT_TASK);
     }
     else
     {

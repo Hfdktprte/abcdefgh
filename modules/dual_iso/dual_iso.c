@@ -70,7 +70,6 @@
 #include <raw.h>
 #include <patch.h>
 #include <vram.h>
-#include <lvinfo.h>
 #include "../mlv_rec/mlv.h"
 #include "../mlv_rec/mlv_rec_interface.h"
 
@@ -399,6 +398,7 @@ int dual_iso_set_enabled(bool enabled)
     else
         isoless_hdr = 0;
 
+    isoless_refresh(CTX_SHOOT_TASK);
     return 1; // module is loaded & responded != ret_0
 }
 
@@ -414,7 +414,7 @@ int dual_iso_is_active()
 
 int dual_iso_get_recovery_iso()
 {
-    if (!dual_iso_is_active())
+    if (!dual_iso_is_enabled())
         return 0;
     
     return 72 + isoless_recovery_iso_index() * 8;
@@ -615,40 +615,6 @@ static int slim_dual_primary_iso(void)
         return raw2iso(lens_info.iso_analog_raw / 8 * 8);
     return 100;
 }
-
-static int dual_iso_lvinfo_hidden_by_shortcut(void)
-{
-    if (get_config_var("crop.button_INFO") == 4)
-        return 1;
-    if (get_config_var("crop.button_SET") == 4)
-        return 1;
-    return 0;
-}
-
-static LVINFO_UPDATE_FUNC(dual_iso_lvinfo)
-{
-    LVINFO_BUFFER(16);
-
-    if (!isoless_hdr || dual_iso_lvinfo_hidden_by_shortcut())
-        return;
-
-    int primary = slim_dual_primary_iso();
-    int recovery = raw2iso(72 + isoless_recovery_iso_index() * 8);
-
-    if (recovery <= primary)
-        return;
-
-    snprintf(buffer, sizeof(buffer), "%d/%d", primary, recovery);
-    item->color_fg = COLOR_YELLOW;
-}
-
-static struct lvinfo_item dual_iso_lvinfo_item = {
-    .name = "Dual ISO",
-    .which_bar = LV_BOTTOM_BAR_ONLY,
-    .update = dual_iso_lvinfo,
-    .preferred_position = -64,
-    .priority = 2,
-};
 
 static int slim_dual_rec_to_index(int rec_iso)
 {
@@ -1217,7 +1183,6 @@ static unsigned int isoless_init()
     if (FRAME_CMOS_ISO_START || PHOTO_CMOS_ISO_START)
     {
         menu_add("Expo", isoless_expo_menu, COUNT(isoless_expo_menu));
-        lvinfo_add_item(&dual_iso_lvinfo_item);
     }
     else
     {

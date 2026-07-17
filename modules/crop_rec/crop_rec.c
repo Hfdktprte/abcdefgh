@@ -5520,7 +5520,10 @@ static void crop_rec_reset_blanking_track(void)
 int crop_rec_note_user_shutter(int reciprocal_x1000)
 {
     if (is_EOSM && reciprocal_x1000 > 0)
+    {
         crop_user_shutter_r_x1000 = reciprocal_x1000;
+        crop_rec_reset_blanking_track();
+    }
     return 0;
 }
 

@@ -1828,7 +1828,12 @@ shutter_toggle(void* priv, int sign)
         if (lens_set_rawshutter(codes_shutter[i]))
         {
             if (is_movie_mode())
-                crop_rec_note_user_shutter(get_current_shutter_reciprocal_x1000());
+            {
+                /* Lock from chosen Canon Tv — get_current still reflects old blanking here. */
+                int ms = raw2shutter_ms(codes_shutter[i]);
+                if (ms > 0)
+                    crop_rec_note_user_shutter((1000000 + ms / 2) / ms);
+            }
             break;
         }
     }

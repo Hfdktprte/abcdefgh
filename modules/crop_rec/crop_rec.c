@@ -6047,6 +6047,17 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         return;
     }
 
+    /* EOS M 1x3 Highest 2:1 (1600x2400) runs at 23.300, not 23.976. */
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3
+        && COERCE(crop_preset_1x3_res_menu, 0, 2) == 0
+        && crop_preset_ar_menu == 1
+        && (is_EOSM || is_100D))
+    {
+        MENU_SET_VALUE("23.300");
+        MENU_SET_ENABLED(0);
+        return;
+    }
+
     static const char * labels[] = { "23.976", "25", "30" };
     MENU_SET_VALUE("%s", labels[COERCE(crop_preset_fps_menu, 0, 2)]);
 

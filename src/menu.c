@@ -6450,6 +6450,46 @@ void select_menu_recursive(struct menu * selected_menu, const char * entry_name)
     }
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static void menu_select_first_visible_entry(struct menu * menu)
+{
+    if (!menu)
+        return;
+
+    for (struct menu_entry * entry = menu->children; entry; entry = entry->next)
+        entry->selected = 0;
+
+    for (struct menu_entry * entry = menu->children; entry; entry = entry->next)
+    {
+        if (entry_is_slim_navigable(entry))
+        {
+            entry->selected = 1;
+            caret_position = entry->unit == UNIT_TIME ? 1 : 0;
+            break;
+        }
+    }
+
+    menu->scroll_pos = 0;
+}
+
+EXCLUDES(menu_sem)
+void menu_select_first_entry(char* name)
+{
+    take_semaphore(menu_sem, 0);
+
+    for (struct menu * menu = menus; menu; menu = menu->next)
+    {
+        if (streq(menu->name, name))
+        {
+            menu_select_first_visible_entry(menu);
+            break;
+        }
+    }
+
+    give_semaphore(menu_sem);
+}
+#endif
+
 EXCLUDES(menu_sem)
 void select_menu_by_name(char* name, const char* entry_name)
 {

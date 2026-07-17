@@ -2,7 +2,6 @@
 #include "dryos.h"
 #include "bmp.h"
 #include "font.h"
-#include "config.h"
 #include "menu.h"
 #include "menu-grid.h"
 
@@ -20,7 +19,8 @@
 
 static int grid_active = 0;
 static int grid_launched = 0;
-static CONFIG_INT("menu.grid.sel", grid_sel, 0);
+/* Session-only: top-left on boot; remembered while camera stays on. */
+static int grid_sel = 0;
 
 typedef struct
 {
@@ -111,6 +111,7 @@ static void menu_grid_launch(int idx)
     if (idx < 0 || idx >= GRID_COUNT) return;
 
     select_menu_by_name((char *) grid_tiles[idx].menu_name, 0);
+    menu_select_first_entry((char *) grid_tiles[idx].menu_name);
     grid_active = 0;
     grid_launched = 1;
     grid_sel = idx;

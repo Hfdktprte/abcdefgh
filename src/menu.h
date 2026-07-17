@@ -316,6 +316,11 @@ extern void menu_remove(const char * name, struct menu_entry * old_entry, int co
 
 extern void select_menu_by_name(char* name, const char* entry_name);
 
+#ifdef CONFIG_SLIM_MENUS
+/** Select the first navigable entry in a top-level menu (grid launcher category). */
+extern void menu_select_first_entry(char* name);
+#endif
+
 extern void
 menu_init( void );
 

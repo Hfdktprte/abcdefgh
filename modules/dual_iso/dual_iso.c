@@ -805,8 +805,13 @@ static void isoless_mlv_rec_cbr (uint32_t event, void *ctx, mlv_hdr_t *hdr)
     mlv_set_type((mlv_hdr_t *)dual_iso_block, "DISO");
     dual_iso_block->blockSize = sizeof(mlv_diso_hdr_t);
     
-    /* and fill with data */
-    dual_iso_block->dualMode = dual_iso_is_active();
+    /* DISO is written at MLV_REC_EVENT_PREPARING, before RECORDING_RAW and
+     * before the FRAME CMOS dual-ISO patch is applied (single-ISO preview).
+     * Use isoless_hdr for movie metadata, not enabled_lv. */
+    if (is_movie_mode())
+        dual_iso_block->dualMode = dual_iso_is_enabled() ? 1 : 0;
+    else
+        dual_iso_block->dualMode = dual_iso_is_active() ? 1 : 0;
     dual_iso_block->isoValue = isoless_recovery_iso;
     
     /* finally pass it to mlv_rec which will free the block when it has been processed */

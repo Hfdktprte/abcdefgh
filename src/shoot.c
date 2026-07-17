@@ -1748,6 +1748,30 @@ iso_toggle( void * priv, int sign )
 
 #ifdef FEATURE_EXPO_SHUTTER
 
+static int shutter_toggle_start_index(void)
+{
+    if (lens_info.raw_shutter)
+        return raw2index_shutter(lens_info.raw_shutter);
+
+    /* Movie/crop_rec: Expo shows hardware blanking; Canon Tv may still be auto. */
+    if (!is_movie_mode())
+        return -1;
+
+    int s = get_current_shutter_reciprocal_x1000();
+    if (s <= 0)
+        return -1;
+
+    int ms = (1000000 + s / 2) / s;
+    return raw2index_shutter(shutter_ms_to_raw(ms));
+}
+
+static void shutter_note_movie_crop_rec(int raw_code)
+{
+    int ms = raw2shutter_ms(raw_code);
+    if (ms > 0)
+        crop_rec_note_user_shutter((1000000 + ms / 2) / ms);
+}
+
 static MENU_UPDATE_FUNC(shutter_display)
 {
     if (is_movie_mode())
@@ -1801,8 +1825,10 @@ static MENU_UPDATE_FUNC(shutter_display)
         MENU_SET_ICON(MNI_PERCENT, (lens_info.raw_shutter - SHUTTER_MIN) * 100 / (SHUTTER_MAX - SHUTTER_MIN));
         MENU_SET_ENABLED(1);
     }
-    else 
+    else if (!is_movie_mode())
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Shutter speed is automatic - cannot adjust manually.");
+    else
+        MENU_SET_ENABLED(1); /* movie: value from ADTG blanking above */
 
     MENU_SET_SHORT_NAME(" "); // obvious from value
 }
@@ -1810,8 +1836,10 @@ static MENU_UPDATE_FUNC(shutter_display)
 void
 shutter_toggle(void* priv, int sign)
 {
-    if (!lens_info.raw_shutter) return;
-    int i = raw2index_shutter(lens_info.raw_shutter);
+    int i = shutter_toggle_start_index();
+    if (i < 0)
+        return;
+
     int k;
     for (k = 0; k < 15; k++)
     {
@@ -1828,12 +1856,13 @@ shutter_toggle(void* priv, int sign)
         if (lens_set_rawshutter(codes_shutter[i]))
         {
             if (is_movie_mode())
-            {
-                /* Lock from chosen Canon Tv — get_current still reflects old blanking here. */
-                int ms = raw2shutter_ms(codes_shutter[i]);
-                if (ms > 0)
-                    crop_rec_note_user_shutter((1000000 + ms / 2) / ms);
-            }
+                shutter_note_movie_crop_rec(codes_shutter[i]);
+            break;
+        }
+        else if (is_movie_mode())
+        {
+            /* crop_rec sets exposure via blanking even when Canon Tv stays auto. */
+            shutter_note_movie_crop_rec(codes_shutter[i]);
             break;
         }
     }

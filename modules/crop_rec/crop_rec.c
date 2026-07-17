@@ -430,6 +430,17 @@ static int slim_handle_shutter_zoom(unsigned int key)
     return 0;
 }
 
+/* Instant Dual ISO on/off for INFO/SET shortcuts: config + bottom bar only.
+ * CMOS refresh runs from CBR_SHOOT_TASK (do not block the key handler). */
+static void slim_toggle_dual_iso(void)
+{
+    if (RECORDING)
+        return;
+    int en = get_config_var("isoless.hdr");
+    set_config_var("isoless.hdr", en ? 0 : 1);
+    lens_display_set_dirty();
+}
+
 /* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
@@ -468,9 +479,7 @@ static int slim_handle_info_button(unsigned int key)
         }
 
         case 3: /* Dual ISO on/off */
-            if (RECORDING)
-                return 1;
-            dual_iso_set_enabled(!dual_iso_is_enabled());
+            slim_toggle_dual_iso();
             return 1;
 
         case 4: /* framing ↔ real-time (MLV Lite Preview → Framing) */
@@ -650,7 +659,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             {
                 if (!RECORDING)
                 {
-                    dual_iso_set_enabled(!dual_iso_is_enabled());
+                    slim_toggle_dual_iso();
                     return 0;
                 }
             }
@@ -7475,7 +7484,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     
                     if (!RECORDING)
                     {
-                        dual_iso_set_enabled(!dual_iso_is_enabled());
+                        slim_toggle_dual_iso();
                         return 0;
                     }
                 }

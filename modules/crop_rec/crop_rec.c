@@ -5708,6 +5708,16 @@ static void slim_crop_apply_unified_preset(void)
         crop_preset_1x3_res_menu = slim_unified_preset;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+/* Re-apply Canon Tv after crop mode/preset changes so Expo shutter stays put. */
+static void slim_crop_reapply_shutter(void)
+{
+    int tv = lens_info.raw_shutter;
+    if (tv && tv != SHUTTER_BULB)
+        lens_set_rawshutter(tv);
+}
+#endif
+
 static void slim_crop_apply_mode(void)
 {
     slim_mode_ui = COERCE(slim_mode_ui, 0, 3);
@@ -5733,6 +5743,9 @@ static void slim_crop_apply_mode(void)
             slim_crop_apply_unified_preset();
     }
     slim_crop_clamp_fps();
+#ifdef CONFIG_SLIM_MENUS
+    slim_crop_reapply_shutter();
+#endif
 }
 
 static void slim_crop_apply_bit_depth(void)
@@ -6576,6 +6589,9 @@ static struct menu_entry crop_rec_menu[] =
                     .priv       = &shutter_range,
                     .max        = 1,
                     .choices    = CHOICES("Original", "Full range"),
+#ifdef CONFIG_SLIM_MENUS
+                    .edit_mode  = EM_INLINE_ADJUST,
+#endif
                     .help       = "Choose the available shutter speed range:",
                     .help2      = "Original: default range used by Canon in selected video mode.\n"
                                   "Full range: from 1/FPS to minimum exposure time allowed by hardware."
@@ -6834,6 +6850,7 @@ static int old_diso_fix;
 static int old_bit_depth;
 static int old_crop_preset_fps_reduce;
 static int old_fps_over;
+static int old_shutter_range;
 
 int check_if_settings_changed()
 {
@@ -6846,7 +6863,8 @@ int check_if_settings_changed()
         (old_bit_depth  != bit_depth_analog && Anam_FLV)         ||
         old_diso_fix   != fix_dual_iso_flicker      ||
         old_crop_preset_fps_reduce != crop_preset_fps_reduce ||
-        old_fps_over != fps_over)
+        old_fps_over != fps_over ||
+        old_shutter_range != shutter_range)
     {
         return 1;
     }
@@ -6984,6 +7002,9 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     /* for 650D / 700D / EOSM/M2 / 100D */
     if (check_if_settings_changed())
     {
+#ifdef CONFIG_SLIM_MENUS
+        slim_crop_reapply_shutter();
+#endif
 #ifdef CONFIG_EOSM
         crop_rec_lv_dirty = 1;
 #else
@@ -7227,6 +7248,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             old_diso_fix   = fix_dual_iso_flicker;
             old_crop_preset_fps_reduce = crop_preset_fps_reduce;
             old_fps_over = fps_over;
+            old_shutter_range = shutter_range;
             if (Anam_FLV)
             {
                 old_bit_depth  = bit_depth_analog;
@@ -8224,7 +8246,6 @@ static unsigned int crop_rec_init()
         slim_crop_apply_mode();
         slim_crop_apply_bit_depth();
         more_hacks = 1;
-        shutter_range = 1; /* Full range — menu hidden */
 
         /* Restore control defaults every boot/flash (overrides crop_rec.cfg). */
         SET_button  = 1; /* Zoom x10 */
@@ -8236,6 +8257,7 @@ static unsigned int crop_rec_init()
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
+        menu_add("Expo", movie_menu_shutter_range, COUNT(movie_menu_shutter_range));
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));

@@ -67,6 +67,7 @@ int fix_bad_pixels = 1;
 int use_fullres = 1;
 int use_alias_map = 1;
 int use_stripe_fix = 1;
+int use_row_bleed_fix = 1;
 float soft_film_ev = 0;
 
 int exif_wb = 0;
@@ -105,6 +106,7 @@ void check_shortcuts()
         use_alias_map = 0;
         use_fullres = 0;
         use_stripe_fix = 0;
+        use_row_bleed_fix = 0;
         shortcut_fast = 0;
         fix_bad_pixels = 0;
     }
@@ -185,6 +187,8 @@ struct cmd_group options[] = {
             { &use_alias_map,   1, "--alias-map",        NULL},
             { &use_stripe_fix,  0, "--no-stripe-fix",    "disable horizontal stripe fix" },
             { &use_stripe_fix,  1, "--stripe-fix",       NULL},
+            { &use_row_bleed_fix, 0, "--no-row-bleed-fix", "disable shadow edge row-bleed repair" },
+            { &use_row_bleed_fix, 1, "--row-bleed-fix",    NULL},
             OPTION_EOL
         },
     },
@@ -2004,6 +2008,116 @@ static int soft_film_bakedwb(double raw, double exposure, int in_black, int in_w
     return round(raw_adjusted + fast_randn05());
 }
 
+/* SNAP-R helpers: reduce horizontal row bleed at shadow edges */
+
+static inline int diso_raw2ev_sample(int * raw2ev, uint32_t v)
+{
+    return raw2ev[COERCE(v, 0, (1<<20)-1)];
+}
+
+static inline int diso_ev_gradient_at(const uint32_t * img, int * raw2ev, int w, int x, int y)
+{
+    int c = diso_raw2ev_sample(raw2ev, img[x + y*w]);
+    int gv = ABS(c - diso_raw2ev_sample(raw2ev, img[x + (y-2)*w]));
+    int gh = ABS(c - diso_raw2ev_sample(raw2ev, img[(x-2) + y*w]));
+    return MAX(gv, gh);
+}
+
+static inline int diso_median4(int a, int b, int c, int d)
+{
+    int t;
+    #define DISO_SORT2(x,y) if ((x) > (y)) { t = (x); (x) = (y); (y) = t; }
+    DISO_SORT2(a, b);
+    DISO_SORT2(c, d);
+    DISO_SORT2(a, c);
+    DISO_SORT2(b, d);
+    DISO_SORT2(b, c);
+    #undef DISO_SORT2
+    return (b + c) / 2;
+}
+
+static inline int diso_in_shadow(double * fullres_curve, uint32_t signal)
+{
+    return fullres_curve[COERCE(signal, 0, (1<<20)-1)] < 0.35;
+}
+
+static void diso_stripe_fix_robust(int w, int h, uint32_t * dark, uint32_t * bright,
+    int white_darkened, int x1, int x2, int y1, int y2, int * raw2ev)
+{
+    int * delta = malloc(w * sizeof(delta[0]));
+    const int grad_thr = EV_RESOLUTION / 4;
+
+    for (int y = y1; y < y2; y ++)
+    {
+        int delta_num = 0;
+        for (int x = x1; x < x2; x ++)
+        {
+            int b = bright[x + y*w];
+            int d = dark[x + y*w];
+            if (MAX(b, d) >= white_darkened)
+                continue;
+            if (diso_ev_gradient_at(bright, raw2ev, w, x, y) > grad_thr)
+                continue;
+            if (diso_ev_gradient_at(dark, raw2ev, w, x, y) > grad_thr)
+                continue;
+            delta[delta_num++] = b - d;
+        }
+
+        if (delta_num < 200)
+            continue;
+
+        int med_delta = median_int_wirth(delta, delta_num);
+        if (ABS(med_delta) > 200*16)
+        {
+            printf("%d: offset too large (%d)\n", y, med_delta);
+            continue;
+        }
+
+        for (int x = 0; x < w; x ++)
+            dark[x + y*w] = COERCE(dark[x + y*w] + med_delta, 0, 0xFFFFF);
+    }
+    free(delta);
+}
+
+static void diso_repair_row_bleed(int w, int h, uint32_t * buffer, int * raw2ev, int * ev2raw,
+    int black, int dark_noise, double * fullres_curve)
+{
+    const int bleed_thr = COERCE((int)(dark_noise * 2.5), 64*8, 64*256);
+    const int edge_thr = EV_RESOLUTION / 3;
+    const int shadow_floor = black + (int)(4 * dark_noise);
+
+    for (int y = 4; y < h - 4; y ++)
+    {
+        for (int x = 4; x < w - 4; x ++)
+        {
+            int p = buffer[x + y*w];
+            if (p <= shadow_floor)
+                continue;
+            if (!diso_in_shadow(fullres_curve, p))
+                continue;
+            if (diso_ev_gradient_at(buffer, raw2ev, w, x, y) < edge_thr)
+                continue;
+
+            int row_ref = diso_median4(
+                buffer[x-4 + y*w],
+                buffer[x-2 + y*w],
+                buffer[x+2 + y*w],
+                buffer[x+4 + y*w]);
+
+            if (ABS(p - row_ref) < bleed_thr)
+                continue;
+
+            int vev = diso_median4(
+                diso_raw2ev_sample(raw2ev, buffer[x + (y-4)*w]),
+                diso_raw2ev_sample(raw2ev, buffer[x + (y-2)*w]),
+                diso_raw2ev_sample(raw2ev, buffer[x + (y+2)*w]),
+                diso_raw2ev_sample(raw2ev, buffer[x + (y+4)*w]));
+
+            buffer[x + y*w] = ev2raw[vev];
+        }
+    }
+}
+
 static int hdr_interpolate()
 {
     int w = raw_info.width;
@@ -2415,6 +2529,12 @@ static int hdr_interpolate()
                     {
                         /* deep shadows, unlikely to use fullres, so we need a good interpolation */
                         deep_shadow++;
+                        /* at shadow edges, vertical-only interpolation avoids horizontal row bleed */
+                        if (!debug_edge && diso_ev_gradient_at(gray, raw2ev, w, x, y) > EV_RESOLUTION/3)
+                        {
+                            dmin = d0;
+                            dmax = d0;
+                        }
                     }
                 }
                 else if (raw_get_pixel32(x, y) < white_darkened && !debug_edge)
@@ -2428,6 +2548,11 @@ static int hdr_interpolate()
                 {
                     /* interpolating dark exposure, but the bright one is clipped */
                     semi_overexposed++;
+                    if (!debug_edge && diso_ev_gradient_at(gray, raw2ev, w, x, y) > EV_RESOLUTION/3)
+                    {
+                        dmin = d0;
+                        dmax = d0;
+                    }
                 }
 
                 if (dmin == dmax)
@@ -2458,7 +2583,12 @@ static int hdr_interpolate()
                         
                         /* add a small penalty for diagonal directions */
                         /* (the improvement should be significant in order to choose one of these) */
-                        e += ABS(d - d0) * EV_RESOLUTION/8;
+                        {
+                            int dir_penalty = EV_RESOLUTION/8;
+                            if (diso_in_shadow(fullres_curve, raw_get_pixel32(x, y)))
+                                dir_penalty = EV_RESOLUTION/3;
+                            e += ABS(d - d0) * dir_penalty;
+                        }
                         
                         if (e < e_best)
                         {
@@ -2693,46 +2823,10 @@ static int hdr_interpolate()
     
     if (use_stripe_fix)
     {
-        printf("Horizontal stripe fix...\n");
-        int* delta = malloc(w * sizeof(delta[0]));
-
-        /* adjust dark lines to match the bright ones */
-        for (int y = raw_info.active_area.y1; y < raw_info.active_area.y2; y ++)
-        {
-            /* apply a constant offset (estimated from unclipped areas) */
-            int delta_num = 0;
-            for (int x = raw_info.active_area.x1; x < raw_info.active_area.x2; x ++)
-            {
-                int b = bright[x + y*w];
-                int d = dark[x + y*w];
-                if (MAX(b,d) < white_darkened)
-                {
-                    delta[delta_num++] = b - d;
-                }
-            }
-
-            if (delta_num < 200)
-            {
-                //~ printf("%d: too few points (%d)\n", y, delta_num);
-                continue;
-            }
-
-            /* compute median difference */
-            int med_delta = median_int_wirth(delta, delta_num);
-
-            if (ABS(med_delta) > 200*16)
-            {
-                printf("%d: offset too large (%d)\n", y, med_delta);
-                continue;
-            }
-
-            /* shift the dark lines */
-            for (int x = 0; x < w; x ++)
-            {
-                dark[x + y*w] = COERCE(dark[x + y*w] + med_delta, 0, 0xFFFFF);
-            }
-        }
-        free(delta);
+        printf("Horizontal stripe fix (structure-aware)...\n");
+        diso_stripe_fix_robust(w, h, dark, bright, white_darkened,
+            raw_info.active_area.x1, raw_info.active_area.x2,
+            raw_info.active_area.y1, raw_info.active_area.y2, raw2ev);
     }
 
     /* reconstruct a full-resolution image (discard interpolated fields whenever possible) */
@@ -3171,6 +3265,9 @@ static int hdr_interpolate()
                 {
                     int co = alias_map[x + y*w];
                     c = COERCE(co / (double) ALIAS_MAP_MAX, 0, 1);
+                    /* in shadows, do not let alias map force fullres (main cause of row bleed) */
+                    if (diso_in_shadow(fullres_curve, b))
+                        c = MIN(c, fullres_curve[b & 0xFFFFF] * 0.25);
                 }
 
                 double ovf = COERCE(overexposed[x + y*w] / 200.0, 0, 1);
@@ -3206,6 +3303,12 @@ static int hdr_interpolate()
             /* back to linear space and commit */
             raw_set_pixel32(x, y, ev2raw[output]);
         }
+    }
+
+    if (use_row_bleed_fix)
+    {
+        printf("Row bleed repair...\n");
+        diso_repair_row_bleed(w, h, raw_buffer_32, raw2ev, ev2raw, black, dark_noise, fullres_curve);
     }
 
     /* let's see how much dynamic range we actually got */

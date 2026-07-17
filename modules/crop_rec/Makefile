@@ -6,6 +6,10 @@ TOP_DIR=../..
 MODULE_NAME=crop_rec
 MODULE_OBJS=crop_rec.o
 MODULE_CFLAGS += -Wno-switch
+# When built from platform/MODEL.*, pass CONFIG_EOSM etc. into the module.
+ifdef MODEL
+MODULE_CFLAGS += -DCONFIG_$(MODEL)=1
+endif
 
 # include modules environment
 include $(TOP_DIR)/modules/Makefile.modules

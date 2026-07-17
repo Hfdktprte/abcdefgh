@@ -670,6 +670,55 @@ hist_build()
 
 #define ZEBRA_COLOR_WORD_SOLID(x) ( (x) | (x)<<8 | (x)<<16 | (x)<<24 )
 
+#ifdef CONFIG_SLIM_MENUS
+/* Dedicated palette slots: punchy zebras without touching global COLOR_* indices. */
+#define ZEBRA_PAL_CLIP_RGB  COLOR_DARK_GREEN1_MOD
+#define ZEBRA_PAL_GREEN     COLOR_DARK_GREEN2_MOD
+#define ZEBRA_PAL_YELLOW    COLOR_DARK_ORANGE_MOD
+#define ZEBRA_PAL_CYAN      COLOR_DARK_CYAN1_MOD
+#define ZEBRA_PAL_MAGENTA   COLOR_DARK_CYAN2_MOD
+#define ZEBRA_PAL_RED       26
+#define ZEBRA_PAL_BLUE      27
+
+static void zebra_slim_palette_entry(int color, int base_color,
+    int luma_scale, int chroma_scale, int opacity)
+{
+#ifndef CONFIG_VXWORKS
+    if (!DISPLAY_IS_ON || !bmp_is_on()) return;
+
+    int orig_palette_entry = LCD_Palette[3*base_color + 2];
+    uint8_t orig_y = (orig_palette_entry >> 16) & 0xFF;
+    int8_t  orig_u = (orig_palette_entry >>  8) & 0xFF;
+    int8_t  orig_v = (orig_palette_entry >>  0) & 0xFF;
+
+    int y = COERCE((int)orig_y * luma_scale / 256, 0, 255);
+    int u = COERCE((int)orig_u * chroma_scale / 256, -127, 127);
+    int v = COERCE((int)orig_v * chroma_scale / 256, -127, 127);
+
+    int new_palette_entry =
+        ((opacity & 0xFF) << 24) |
+        ((y       & 0xFF) << 16) |
+        ((u       & 0xFF) <<  8) |
+        ((v       & 0xFF));
+
+    EngDrvOut(LCD_Palette[3*color], new_palette_entry);
+    EngDrvOut(LCD_Palette[3*color+0x300], new_palette_entry);
+#endif
+}
+
+static void zebra_init_slim_palette(void)
+{
+    /* Higher opacity + chroma so zebras read clearly over LiveView. */
+    zebra_slim_palette_entry(ZEBRA_PAL_CLIP_RGB, COLOR_BLACK,  120, 256, 248);
+    zebra_slim_palette_entry(ZEBRA_PAL_GREEN,    COLOR_GREEN2, 320, 480, 228);
+    zebra_slim_palette_entry(ZEBRA_PAL_CYAN,     COLOR_CYAN,   320, 480, 228);
+    zebra_slim_palette_entry(ZEBRA_PAL_YELLOW,   COLOR_YELLOW, 320, 400, 220);
+    zebra_slim_palette_entry(ZEBRA_PAL_MAGENTA,  COLOR_MAGENTA,320, 400, 220);
+    zebra_slim_palette_entry(ZEBRA_PAL_RED,      COLOR_RED,    340, 420, 220);
+    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_BLUE,   320, 420, 220);
+}
+#endif
+
 static int raw_zebra_color_at(int x, int y, int white, int underexposed);
 
 #ifdef CONFIG_SLIM_MENUS
@@ -907,6 +956,12 @@ static void FAST draw_zebras_raw_lv()
     if (!raw_overlay_calibration_ready())
         return;
 
+#ifdef CONFIG_SLIM_MENUS
+    static int slim_zebra_palette_aux = INT_MIN;
+    if (should_run_polling_action(3000, &slim_zebra_palette_aux))
+        zebra_init_slim_palette();
+#endif
+
     uint8_t * const bvram = bmp_vram_real();
     if (!bvram) return;
     uint8_t * const bvram_mirror = get_bvram_mirror();
@@ -1070,6 +1125,15 @@ static int zebra_rgb_solid_color(int underexposed, int clipR, int clipG, int cli
             (clipG ? 2 : 0) |
             (clipB ? 1 : 0))
     {
+#ifdef CONFIG_SLIM_MENUS
+        case 0b111: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_CLIP_RGB);
+        case 0b110: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_YELLOW);
+        case 0b101: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_MAGENTA);
+        case 0b011: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_CYAN);
+        case 0b100: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_RED);
+        case 0b001: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_BLUE);
+        case 0b010: return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_GREEN);
+#else
         case 0b111: return ZEBRA_COLOR_WORD_SOLID(COLOR_BLACK);
         case 0b110: return ZEBRA_COLOR_WORD_SOLID(COLOR_YELLOW);
         case 0b101: return ZEBRA_COLOR_WORD_SOLID(COLOR_MAGENTA);
@@ -1077,6 +1141,7 @@ static int zebra_rgb_solid_color(int underexposed, int clipR, int clipG, int cli
         case 0b100: return ZEBRA_COLOR_WORD_SOLID(COLOR_RED);
         case 0b001: return ZEBRA_COLOR_WORD_SOLID(COLOR_BLUE);
         case 0b010: return ZEBRA_COLOR_WORD_SOLID(COLOR_GREEN2);
+#endif
         default: return 0;
     }
 }
@@ -4751,6 +4816,7 @@ static void zebra_init()
     hist_log = 0;
     hist_meter = 0;
     hist_warn = 1; /* slim has no Clip warning menu; dots always follow histogram */
+    zebra_init_slim_palette();
 #endif
     precompute_yuv2rgb();
     menu_add( "Overlay", zebra_menus, COUNT(zebra_menus) );

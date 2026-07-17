@@ -470,10 +470,7 @@ static int slim_handle_info_button(unsigned int key)
         case 3: /* Dual ISO on/off */
             if (RECORDING)
                 return 1;
-            if (!dual_iso_is_enabled())
-                menu_set_str_value_from_script("Expo", "Dual ISO", "ON", 1);
-            else
-                menu_set_str_value_from_script("Expo", "Dual ISO", "OFF", 0);
+            dual_iso_set_enabled(!dual_iso_is_enabled());
             return 1;
 
         case 4: /* framing ↔ real-time (MLV Lite Preview → Framing) */
@@ -653,16 +650,8 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             {
                 if (!RECORDING)
                 {
-                    if (!dual_iso_is_enabled())
-                    {
-                        menu_set_str_value_from_script("Expo", "Dual ISO", "ON", 1);
-                        return 0;
-                    }
-                    if (dual_iso_is_enabled())
-                    {
-                        menu_set_str_value_from_script("Expo", "Dual ISO", "OFF", 0);
-                        return 0;
-                    }
+                    dual_iso_set_enabled(!dual_iso_is_enabled());
+                    return 0;
                 }
             }
             
@@ -7486,16 +7475,8 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     
                     if (!RECORDING)
                     {
-                        if (!dual_iso_is_enabled())
-                        {
-                            menu_set_str_value_from_script("Expo", "Dual ISO", "ON", 1);
-                            return 0;
-                        }
-                        if (dual_iso_is_enabled())
-                        {
-                            menu_set_str_value_from_script("Expo", "Dual ISO", "OFF", 0);
-                            return 0;
-                        }
+                        dual_iso_set_enabled(!dual_iso_is_enabled());
+                        return 0;
                     }
                 }
 

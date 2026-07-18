@@ -458,13 +458,12 @@ static void crop_rec_adjust_iso(int sign)
     if (lens_info.raw_iso == 0x0)
         return;
 
-#ifdef CONFIG_SLIM_MENUS
-    if (get_config_var("isoless.hdr"))
+    /* Module .mo builds lack CONFIG_SLIM_MENUS; use dual_iso_is_enabled() like the bottom bar. */
+    if (dual_iso_is_enabled())
     {
         dual_iso_slim_step_pair(sign > 0 ? 1 : -1);
         return;
     }
-#endif
 
     if (sign > 0)
     {

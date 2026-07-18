@@ -452,6 +452,33 @@ static void slim_toggle_dual_iso(void)
     lens_display_set_dirty();
 }
 
+/* ISO arrow shortcuts: when Dual ISO is ON, step primary+recovery as a pair. */
+static void crop_rec_adjust_iso(int sign)
+{
+    if (lens_info.raw_iso == 0x0)
+        return;
+
+#ifdef CONFIG_SLIM_MENUS
+    if (get_config_var("isoless.hdr"))
+    {
+        dual_iso_slim_step_pair(sign > 0 ? 1 : -1);
+        return;
+    }
+#endif
+
+    if (sign > 0)
+    {
+        if (lens_info.raw_iso == ISO_6400)
+            return;
+    }
+    else
+    {
+        if (lens_info.raw_iso == ISO_100)
+            return;
+    }
+    iso_toggle(0, sign);
+}
+
 /* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
@@ -571,7 +598,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             {
                 if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                 if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
-                iso_toggle(0, 2);
+                crop_rec_adjust_iso(2);
                 return 0;
             }
             if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
@@ -579,13 +606,13 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             {
                 if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                 if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
-                iso_toggle(0, -2);
+                crop_rec_adjust_iso(-2);
                 return 0;
             }
             if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
             {
-                iso_toggle(0, 2);
+                crop_rec_adjust_iso(2);
                 return 0;
             }
             
@@ -596,7 +623,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                 if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
                 //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                iso_toggle(0, 2);
+                crop_rec_adjust_iso(2);
                 return 0;
             }
             if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
@@ -605,13 +632,13 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                 if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
                 //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                iso_toggle(0, -2);
+                crop_rec_adjust_iso(-2);
                 return 0;
             }
             if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
             {
-                iso_toggle(0, 2);
+                crop_rec_adjust_iso(2);
                 return 0;
             }
             
@@ -7456,7 +7483,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                     if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
                     //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                    iso_toggle(0, 2);
+                    crop_rec_adjust_iso(2);
                     return 0;
                 }
                 if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
@@ -7466,7 +7493,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
                     if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
                     //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                    iso_toggle(0, -2);
+                    crop_rec_adjust_iso(-2);
                     return 0;
                 }
                 if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
@@ -7478,7 +7505,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     }
                     
                     if (more_hacks && RECORDING) return 0;
-                    iso_toggle(0, 2);
+                    crop_rec_adjust_iso(2);
                     return 0;
                 }
 

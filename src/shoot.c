@@ -59,59 +59,18 @@
 
 #ifdef CONFIG_SLIM_MENUS
 #include "../modules/dual_iso/dual_iso.h"
-static int (*dual_iso_set_recovery_iso_fn)(int) = MODULE_FUNCTION(dual_iso_set_recovery_iso);
+static int (*dual_iso_is_enabled_fn)() = MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_slim_step_pair_fn)(int) = MODULE_FUNCTION(dual_iso_slim_step_pair);
 
 static int slim_dual_iso_step_pair(int sign)
 {
-    static const int primaries[] = { 100, 200, 400, 800 };
-    static const int recovery_raw[] = { 80, 88, 96, 104 };
-    static const int primary_raw[] = { 72, 80, 88, 96 };
-
-    if (!get_config_var("isoless.hdr"))
+    if (!dual_iso_is_enabled_fn || !dual_iso_is_enabled_fn())
         return 0;
 
-    int primary = lens_info.iso_analog_raw
-        ? raw2iso(lens_info.iso_analog_raw / 8 * 8)
-        : 100;
-    int idx = -1;
+    if (!dual_iso_slim_step_pair_fn)
+        return 0;
 
-    for (unsigned i = 0; i < COUNT(primaries); i++)
-    {
-        if (primary == primaries[i])
-        {
-            idx = (int)i;
-            break;
-        }
-    }
-
-    if (idx < 0)
-    {
-        for (unsigned i = 0; i < COUNT(primaries); i++)
-        {
-            if (primary <= primaries[i])
-            {
-                idx = (int)i;
-                break;
-            }
-        }
-        if (idx < 0)
-            idx = COUNT(primaries) - 1;
-    }
-
-    int delta = sign > 0 ? 1 : -1;
-    int new_idx = idx + delta;
-    if (new_idx < 0 || new_idx >= (int)COUNT(primaries))
-        return 1;
-
-    if (!lens_set_rawiso(primary_raw[new_idx]))
-        return 1;
-
-    if (dual_iso_set_recovery_iso_fn)
-        dual_iso_set_recovery_iso_fn(recovery_raw[new_idx]);
-
-    set_config_var("isoless.hdr", 1);
-    lens_display_set_dirty();
-    return 1;
+    return dual_iso_slim_step_pair_fn(sign > 0 ? 1 : -1);
 }
 #endif
 

@@ -57,6 +57,12 @@
 #include "tskmon.h"
 #include "module.h"
 
+#ifdef CONFIG_SLIM_MENUS
+#include "../modules/dual_iso/dual_iso.h"
+static int (*dual_iso_is_enabled_fn)() = MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_slim_step_pair_fn)(int) = MODULE_FUNCTION(dual_iso_slim_step_pair);
+#endif
+
 static struct recursive_lock * shoot_task_rlock = NULL;
 
 static CONFIG_INT( "shoot.num", pics_to_take_at_once, 0);
@@ -1685,6 +1691,14 @@ void
 iso_toggle( void * priv, int sign )
 {
 #ifdef CONFIG_SLIM_MENUS
+    /* Dual ISO ON: UP/DOWN steps both ISOs as a pair (100/200 .. 800/1600). */
+    if (dual_iso_is_enabled_fn && dual_iso_is_enabled_fn())
+    {
+        if (dual_iso_slim_step_pair_fn)
+            dual_iso_slim_step_pair_fn(sign);
+        return;
+    }
+
     int (*iso_checker)(int) = is_slim_menu_iso;
 
     /* Auto or non-list value: land on ISO 100 (or 6400 when dialing down from junk). */

@@ -726,6 +726,58 @@ static void slim_dual_sync_primary(int primary)
     slim_dual_set_cycle_pos(primary, 1);
 }
 
+/* Recording-screen UP/DOWN (ISO arrows): step primary + recovery together.
+ * 100/200 -> 200/400 -> 400/800 -> 800/1600; clamp at ends. Dual ISO must be ON. */
+int dual_iso_slim_step_pair(int delta)
+{
+    static const int primaries[] = { 100, 200, 400, 800 };
+    static const int recoveries[] = { 200, 400, 800, 1600 };
+    static const int primary_raw[] = { 72, 80, 88, 96 };
+
+    if (!isoless_hdr || delta == 0)
+        return 0;
+
+    int primary = slim_dual_primary_iso();
+    int idx = -1;
+
+    for (unsigned i = 0; i < COUNT(primaries); i++)
+    {
+        if (primary == primaries[i])
+        {
+            idx = (int)i;
+            break;
+        }
+    }
+
+    if (idx < 0)
+    {
+        /* Misaligned (e.g. primary moved without recovery) — anchor from primary. */
+        for (unsigned i = 0; i < COUNT(primaries); i++)
+        {
+            if (primary <= primaries[i])
+            {
+                idx = (int)i;
+                break;
+            }
+        }
+        if (idx < 0)
+            idx = COUNT(primaries) - 1;
+    }
+
+    int new_idx = idx + (delta > 0 ? 1 : -1);
+    if (new_idx < 0 || new_idx >= (int)COUNT(primaries))
+        return 0;
+
+    if (!lens_set_rawiso(primary_raw[new_idx]))
+        return 0;
+
+    isoless_hdr = 1;
+    isoless_recovery_iso = slim_dual_rec_to_index(recoveries[new_idx]);
+    isoless_refresh(CTX_SET_RECOVERY_ISO);
+    lens_display_set_dirty();
+    return 1;
+}
+
 static MENU_UPDATE_FUNC(isoless_update)
 {
     static int last_primary = -1;

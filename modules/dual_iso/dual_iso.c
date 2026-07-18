@@ -90,6 +90,7 @@ extern WEAK_FUNC(ret_0) float raw_to_ev(int ev);
 
 int dual_iso_set_enabled(bool enabled);
 int dual_iso_is_enabled();
+int dual_iso_slim_step_pair(int delta);
 int dual_iso_is_active();
 
 /* camera-specific constants */
@@ -737,7 +738,10 @@ int dual_iso_slim_step_pair(int delta)
     if (!isoless_hdr || delta == 0)
         return 0;
 
-    int primary = slim_dual_primary_iso();
+    /* Match bottom-bar display (lens.c iso_update): analog ISO, full stops. */
+    int primary = lens_info.iso_analog_raw
+        ? raw2iso(lens_info.iso_analog_raw / 8 * 8)
+        : slim_dual_primary_iso();
     int idx = -1;
 
     for (unsigned i = 0; i < COUNT(primaries); i++)

@@ -1131,6 +1131,14 @@ static inline int get_default_yres()
         (video_mode_fps <= 30) ? 1290 : 672;
 }
 
+/* EOS M 1:1 sub-presets (2.5K/3K/…) use CROP_PRESET_1X1 hooks but need 3K yres table row. */
+static inline enum crop_preset crop_preset_yres_lookup(void)
+{
+    if (crop_preset == CROP_PRESET_1X1 && CROP_3K)
+        return CROP_PRESET_3K;
+    return crop_preset;
+}
+
 /* skip_top from unmodified video mode (raw.c, LiveView skip offsets) */
 static inline int get_default_skip_top()
 {
@@ -1157,7 +1165,7 @@ static int max_resolutions[NUM_CROP_PRESETS][6] = {
 static inline int FAST calc_yres_delta()
 {
     int desired_yres = (target_yres) ? target_yres
-        : max_resolutions[crop_preset][get_video_mode_index()];
+        : max_resolutions[crop_preset_yres_lookup()][get_video_mode_index()];
 
     if (desired_yres)
     {
@@ -2697,10 +2705,13 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
 
     if (CROP_3K)
     {
+        /* Active RAW 3072x1308 (2.35:1). Old RAW_V 0x521 gave ~1284 lines (2.39:1). */
+        enum { CROP_3K_RAW_V_EXTRA = 0x18 }; /* +24 lines → 1308 active height */
+
         if (is_650D || is_700D || is_EOSM)
         {
             RAW_H    = 0x322 + reg_width;
-            RAW_V    = 0x521 + reg_height;
+            RAW_V    = 0x521 + reg_height + CROP_3K_RAW_V_EXTRA;
             TimerB   = 0x60F;
             TimerA   = 0x35B;
         }
@@ -2708,14 +2719,14 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
         if (is_100D)
         {
             RAW_H    = 0x32B;
-            RAW_V    = 0x53D;
+            RAW_V    = 0x53D + CROP_3K_RAW_V_EXTRA;
             TimerB   = 0x60B;
             TimerA   = 0x35D;
         }
 
         Preview_H         = 2868;  // black bar above 2868
-        Preview_V         = 1284;
-        Preview_V_Recover = 284;   // trial and error
+        Preview_V         = 1308;
+        Preview_V_Recover = 284 + CROP_3K_RAW_V_EXTRA;
 
         Preview_R     = 0x190028;
         REG_C0F383DC_Tuning = -26; 
@@ -5344,7 +5355,7 @@ static MENU_UPDATE_FUNC(crop_preset_ar_update)
     {
         if (crop_preset_1x1_res_menu == 0) MENU_SET_VALUE("2.33:1");  // CROP_2_5K
         if (crop_preset_1x1_res_menu == 1) MENU_SET_VALUE("2.39:1");  // CROP_2_8K
-        if (crop_preset_1x1_res_menu == 2) MENU_SET_VALUE("2.39:1");  // CROP_3K
+        if (crop_preset_1x1_res_menu == 2) MENU_SET_VALUE("2.35:1");  // CROP_3K 3072x1308
         if (crop_preset_1x1_res_menu == 3) MENU_SET_VALUE("16:9");    // CROP_1440p
         if (crop_preset_1x1_res_menu == 4) MENU_SET_VALUE("3:2");     // CROP_1280p
         if (crop_preset_1x1_res_menu == 5) MENU_SET_VALUE("3:2");     // CROP_Full_Res

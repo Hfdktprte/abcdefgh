@@ -16,8 +16,6 @@
 #include "../mlv_lite/mlv_lite.h"
 #include "../dual_iso/dual_iso.h"
 #include "histogram.h"
-#include "zebra.h"
-#include "falsecolor.h"
 
 #undef CROP_DEBUG
 
@@ -504,16 +502,24 @@ static int slim_handle_info_button(unsigned int key)
             return 1;
 
         case 2: /* Histogram Off ↔ Performance */
-            monitoring_toggle_tool(&hist_draw);
-            if (!hist_draw) redraw();
+        {
+            int h = get_config_var("hist.draw");
+            set_config_var("hist.draw", h ? 0 : 1);
+            if (!get_config_var("hist.draw")) redraw();
             return 1;
+        }
 
         case 3: /* Waveform Off ↔ Performance */
-            monitoring_toggle_tool(&waveform_draw);
-            if (!waveform_draw) redraw();
+        {
+            int w = get_config_var("waveform.draw");
+            set_config_var("waveform.draw", w ? 0 : 1);
+            if (!get_config_var("waveform.draw")) redraw();
             return 1;
+        }
 
         case 4: /* False Color toggle */
+        {
+            extern int falsecolor_draw;
             if (!falsecolor_draw)
                 falsecolor_draw = 1;
             else
@@ -522,6 +528,7 @@ static int slim_handle_info_button(unsigned int key)
                 redraw();
             }
             return 1;
+        }
 
         case 5: /* framing ↔ real-time (MLV Lite Preview → Framing) */
             mlv_lite_info_framing_toggle();

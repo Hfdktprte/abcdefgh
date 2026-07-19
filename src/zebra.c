@@ -4059,6 +4059,11 @@ int monitoring_hist_menu_countdown(void)
         cd = MIN(cd, 1);
     return cd;
 }
+
+int monitoring_slim_precision_scan(void)
+{
+    return monitoring_precision(hist_draw) || monitoring_precision(waveform_draw);
+}
 #endif
 
 #ifdef FEATURE_OVERLAYS_IN_PLAYBACK_MODE

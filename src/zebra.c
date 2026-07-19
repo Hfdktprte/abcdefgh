@@ -325,7 +325,7 @@ int focus_peaking_as_display_filter()
     #endif
 }
 
-static CONFIG_INT( "waveform.draw", waveform_draw,
+CONFIG_INT( "waveform.draw", waveform_draw,
 #ifdef CONFIG_4_3_SCREEN
 1
 #else

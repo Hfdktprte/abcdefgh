@@ -2251,6 +2251,7 @@ static MENU_UPDATE_FUNC(monitoring_mode_display)
         MENU_SET_VALUE("%s", labels[v]);
 }
 #endif
+#ifdef FEATURE_ZEBRA
 static MENU_UPDATE_FUNC(zebra_draw_display)
 {
     unsigned z = CURRENT_VALUE;

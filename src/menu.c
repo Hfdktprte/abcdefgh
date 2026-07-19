@@ -105,6 +105,16 @@ static int menu_shown = false;
 static int menu_lv_transparent_mode; // for ISO, kelvin...
 static int config_dirty = 0;
 
+#ifdef CONFIG_SLIM_MENUS
+/* Last highlighted menu row — recording-screen touch opens this (persists across boot). */
+static char last_sel_menu[40];
+static char last_sel_entry[48];
+static int last_sel_dirty = 0;
+static int menu_open_direct = 0;
+static char menu_open_target_menu[40];
+static char menu_open_target_entry[48];
+#endif
+
 static int menu_flags_save_dirty = 0;
 static int menu_flags_load_dirty = 1;
 
@@ -5109,6 +5119,9 @@ void menu_entry_move(
 
     // Select the new one, which might be the same as the old one
     entry->selected = 1;
+#ifdef CONFIG_SLIM_MENUS
+    menu_remember_selection(entry);
+#endif
     
     if (!menu_lv_transparent_mode)
     {
@@ -6048,6 +6061,95 @@ gui_open_menu( )
         give_semaphore(gui_sem);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static void menu_last_sel_path(char * path, unsigned n)
+{
+    snprintf(path, n, "%sLASTSEL.CFG", get_config_dir());
+}
+
+static void menu_last_sel_load(void)
+{
+    char path[64];
+    menu_last_sel_path(path, sizeof(path));
+    FILE * f = FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (!f) return;
+    char buf[96];
+    int n = FIO_ReadFile(f, buf, sizeof(buf) - 1);
+    FIO_CloseFile(f);
+    if (n <= 0) return;
+    buf[n] = 0;
+    char * nl = strchr(buf, '\n');
+    if (!nl) return;
+    *nl = 0;
+    char * entry = nl + 1;
+    char * nl2 = strchr(entry, '\n');
+    if (nl2) *nl2 = 0;
+    if (!buf[0] || !entry[0]) return;
+    snprintf(last_sel_menu, sizeof(last_sel_menu), "%s", buf);
+    snprintf(last_sel_entry, sizeof(last_sel_entry), "%s", entry);
+}
+
+static void menu_last_sel_save(void)
+{
+    if (!last_sel_dirty || !last_sel_menu[0] || !last_sel_entry[0])
+        return;
+    char path[64];
+    menu_last_sel_path(path, sizeof(path));
+    FILE * f = FIO_CreateFile(path);
+    if (!f) return;
+    my_fprintf(f, "%s\n%s\n", last_sel_menu, last_sel_entry);
+    FIO_CloseFile(f);
+    last_sel_dirty = 0;
+}
+
+void menu_remember_selection(struct menu_entry * entry)
+{
+    if (!entry || !entry->name || !entry->name[0])
+        return;
+    if (!entry->parent_menu || !entry->parent_menu->name || !entry->parent_menu->name[0])
+        return;
+    if (entry->parent_menu->no_name_lookup)
+        return;
+
+    if (streq(last_sel_menu, entry->parent_menu->name) &&
+        streq(last_sel_entry, entry->name))
+        return;
+
+    snprintf(last_sel_menu, sizeof(last_sel_menu), "%s", entry->parent_menu->name);
+    snprintf(last_sel_entry, sizeof(last_sel_entry), "%s", entry->name);
+    last_sel_dirty = 1;
+}
+
+void gui_open_menu_at_entry(const char * menu_name, const char * entry_name)
+{
+    if (!menu_name || !menu_name[0] || !entry_name || !entry_name[0])
+        return;
+
+    snprintf(menu_open_target_menu, sizeof(menu_open_target_menu), "%s", menu_name);
+    snprintf(menu_open_target_entry, sizeof(menu_open_target_entry), "%s", entry_name);
+    menu_open_direct = 1;
+
+    if (gui_menu_shown())
+    {
+        select_menu_by_name(menu_open_target_menu, menu_open_target_entry);
+        menu_grid_enter_launched();
+        menu_open_direct = 0;
+        menu_redraw_full();
+        return;
+    }
+
+    give_semaphore(gui_sem);
+}
+
+void gui_open_last_menu_selection(void)
+{
+    if (last_sel_menu[0] && last_sel_entry[0])
+        gui_open_menu_at_entry(last_sel_menu, last_sel_entry);
+    else
+        gui_open_menu_at_entry("Movie", "Mode");
+}
+#endif
+
 int FAST
 gui_menu_shown( void )
 {
@@ -6163,7 +6265,17 @@ static void menu_open()
     menu_shown = 1;
     //~ menu_hidden_should_display_help = 0;
 #ifdef CONFIG_SLIM_MENUS
-    menu_grid_open();
+    if (menu_open_direct)
+    {
+        select_menu_by_name(menu_open_target_menu, menu_open_target_entry);
+        menu_grid_enter_launched();
+        menu_open_direct = 0;
+        menu_remember_selection(get_selected_menu_entry(get_current_menu_or_submenu()));
+    }
+    else
+    {
+        menu_grid_open();
+    }
 #endif
     if (lv) menu_zebras_mirror_dirty = 1;
 
@@ -6181,6 +6293,7 @@ static void menu_close()
     menu_shown = false;
 
 #ifdef CONFIG_SLIM_MENUS
+    menu_last_sel_save();
     menu_grid_close();
 #endif
     customize_mode = 0;
@@ -6218,6 +6331,10 @@ menu_task( void* unused )
     extern int ml_started;
     while (!ml_started) msleep(100);
     
+#ifdef CONFIG_SLIM_MENUS
+    menu_last_sel_load();
+#endif
+
     debug_menu_init();
     
     int initial_mode = 0; // shooting mode when menu was opened (if changed, menu should close)
@@ -6486,6 +6603,7 @@ void menu_select_first_entry(char* name)
         if (streq(menu->name, name))
         {
             menu_select_first_visible_entry(menu);
+            menu_remember_selection(get_selected_menu_entry(menu));
             break;
         }
     }

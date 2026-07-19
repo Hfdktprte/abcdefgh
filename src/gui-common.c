@@ -32,13 +32,19 @@ static int handle_slim_rec_touch_block(struct event * event)
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
+        /* While recording: allow 1-finger tap through to open last menu setting. */
+        if (RECORDING)
+            return 1;
+        /* Block other LV touch (opens grid / stray taps). */
+        if (lv && !gui_menu_shown())
+            return 0;
+        break;
     case BGMT_TOUCH_2_FINGER:
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
 #endif
-        /* Block touch from opening ML menu / grid in LV (photo and movie). */
         if (RECORDING || (lv && !gui_menu_shown()))
             return 0;
         break;

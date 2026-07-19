@@ -2463,7 +2463,7 @@ void hack_liveview(int unhack)
                     else
                     {
                         //Exclude certatin custom settings in crop rec.
-                        if (!Arrows_U_D && INFO_button != 2 && INFO_button != 3 && SET_button != 2 && SET_button != 3 && is_manual_focus())
+                        if (Arrows_U_D != 3 && Arrows_L_R != 3 && SET_button != 2 && SET_button != 3 && is_manual_focus())
                         {
                             aewbSuspend();
                         }
@@ -4730,7 +4730,7 @@ static int raw_rec_should_preview(void)
     if (lv_dispsize == 10) return 0;
 
     /* EOS M Settings → INFO Button = framing: toggle ML framing vs real-time LV. */
-    if (cam_eos_m && INFO_button == 4)
+    if (cam_eos_m && INFO_button == 5)
         return slim_info_framing_active;
 
     /* framing is incorrect in modes with high resolutions

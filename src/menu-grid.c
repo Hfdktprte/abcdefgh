@@ -106,6 +106,12 @@ void menu_grid_return(void)
     grid_sel = COERCE(grid_sel, 0, GRID_COUNT - 1);
 }
 
+void menu_grid_enter_launched(void)
+{
+    grid_active = 0;
+    grid_launched = 1;
+}
+
 static void menu_grid_launch(int idx)
 {
     if (idx < 0 || idx >= GRID_COUNT) return;
@@ -215,6 +221,7 @@ int menu_grid_is_launched(void) { return 0; }
 void menu_grid_open(void)       { }
 void menu_grid_close(void)      { }
 void menu_grid_return(void)    { }
+void menu_grid_enter_launched(void) { }
 void menu_grid_draw(void)       { }
 int menu_grid_handle_key(int button_code, int *needs_full_redraw)
 {

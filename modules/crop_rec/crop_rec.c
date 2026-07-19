@@ -16,6 +16,8 @@
 #include "../mlv_lite/mlv_lite.h"
 #include "../dual_iso/dual_iso.h"
 #include "histogram.h"
+#include "zebra.h"
+#include "falsecolor.h"
 
 #undef CROP_DEBUG
 
@@ -113,16 +115,19 @@ static int crop_preset_fps = 0;
 #define Framerate_30   (crop_preset_fps == 2)
 
 /* customized buttons variables
- * EOS M slim defaults (also forced every boot in crop_rec_init):
- *   SET = Zoom x10, U/D = ISO, L/R = Aperture; INFO off so main dial keeps shutter.
+ * EOS M slim defaults:
+ *   SET = Zoom x10; U/D = ISO; L/R = Aperture; INFO off.
+ * Arrow modes: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO
+ * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=False Color, 5=framing
  */
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
 CONFIG_INT("crop.button_INFO",      INFO_button, 0);
 CONFIG_INT("crop.shutter_zoom", Shutter_zoom, 0); /* EOS M slim: 0=OFF, 1=hold x10, 2=sticky x10 */
-CONFIG_INT("crop.arrows_U_D",       Arrows_U_D, 1);
+CONFIG_INT("crop.arrows_U_D",       Arrows_U_D, 3); /* ISO */
 CONFIG_INT("crop.more_hacks",       more_hacks, 1);
-static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 2);
+static CONFIG_INT("crop.arrows_L_R",       Arrows_L_R, 2); /* Aperture */
+static CONFIG_INT("crop.button_map_v",     button_map_v, 0); /* remap old configs once */
 
 enum crop_preset {
     CROP_PRESET_OFF = 0,
@@ -478,7 +483,8 @@ static void crop_rec_adjust_iso(int sign)
     iso_toggle(0, sign);
 }
 
-/* EOS M Settings → INFO Button: 0=OFF, 1=Aperture+, 2=false colors, 3=Dual ISO, 4=framing.
+/* EOS M Settings → INFO Button:
+ * 0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=False Color, 5=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
 {
@@ -488,23 +494,26 @@ static int slim_handle_info_button(unsigned int key)
         return 0; /* OFF — Canon INFO / LV cycle */
 
     /* Outside ML overlay LV, keep Canon INFO for non-framing modes only. */
-    if (INFO_button != 4 && lv_disp_mode != 0)
+    if (INFO_button != 5 && lv_disp_mode != 0)
         return -1;
 
     switch (INFO_button)
     {
-        case 1: /* Aperture + — wrap at max back to min */
-            if (!lens_info.aperture)
-                return 1; /* no electronic iris — no effect */
-            if (more_hacks && RECORDING)
-                return 1;
-            /* priv != -1 → aperture_toggle wraps min↔max */
-            aperture_toggle(0, 1);
+        case 1: /* Dual ISO on/off */
+            slim_toggle_dual_iso();
             return 1;
 
-        case 2: /* false colors toggle */
-        {
-            extern int falsecolor_draw;
+        case 2: /* Histogram Off ↔ Performance */
+            monitoring_toggle_tool(&hist_draw);
+            if (!hist_draw) redraw();
+            return 1;
+
+        case 3: /* Waveform Off ↔ Performance */
+            monitoring_toggle_tool(&waveform_draw);
+            if (!waveform_draw) redraw();
+            return 1;
+
+        case 4: /* False Color toggle */
             if (!falsecolor_draw)
                 falsecolor_draw = 1;
             else
@@ -513,19 +522,67 @@ static int slim_handle_info_button(unsigned int key)
                 redraw();
             }
             return 1;
-        }
 
-        case 3: /* Dual ISO on/off */
-            slim_toggle_dual_iso();
-            return 1;
-
-        case 4: /* framing ↔ real-time (MLV Lite Preview → Framing) */
+        case 5: /* framing ↔ real-time (MLV Lite Preview → Framing) */
             mlv_lite_info_framing_toggle();
             return 1;
 
         default:
             return 0;
     }
+}
+
+/* Arrow assignment: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO.
+ * dir: +1 = UP/RIGHT, -1 = DOWN/LEFT. Returns 1 if consumed. */
+static int slim_handle_arrow_adjust(int mode, int dir)
+{
+    if (!mode)
+        return 0;
+    if (more_hacks && RECORDING)
+        return 1;
+
+    if (mode == 1) /* Shutter */
+    {
+        shutter_toggle(0, dir);
+        return 1;
+    }
+    if (mode == 2) /* Aperture */
+    {
+        if (!lens_info.aperture)
+            return 1;
+        if (dir > 0)
+        {
+            if (lens_info.raw_aperture == lens_info.raw_aperture_max)
+                return 1;
+            aperture_toggle(0, 1);
+        }
+        else
+        {
+            if (lens_info.raw_aperture == lens_info.raw_aperture_min)
+                return 1;
+            aperture_toggle(0, -1);
+        }
+        return 1;
+    }
+    if (mode == 3) /* ISO */
+    {
+        if (lens_info.raw_iso == 0x0)
+            return 1;
+        if (dir > 0)
+        {
+            if (lens_info.raw_iso == ISO_6400)
+                return 1;
+            crop_rec_adjust_iso(2);
+        }
+        else
+        {
+            if (lens_info.raw_iso == ISO_100)
+                return 1;
+            crop_rec_adjust_iso(-2);
+        }
+        return 1;
+    }
+    return 0;
 }
 
 /* customize buttons and buttons shortcuts, FIXME: implement these as feature in ML core? */
@@ -591,95 +648,21 @@ static unsigned int photo_keypress_cbr(unsigned int key)
         
         if (lv_dispsize != 10)
         {
-            /* ISO change shortcuts */
-            if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 1) ||
-                ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 1)  )
-            {
-                if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
-                crop_rec_adjust_iso(2);
+            /* U/D and L/R: Shutter / Aperture / ISO (Settings → Up/Down / Left/Right Button) */
+            if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))
                 return 0;
-            }
-            if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
-                ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 1)  )
-            {
-                if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
-                crop_rec_adjust_iso(-2);
+            if (key == MODULE_KEY_PRESS_DOWN && slim_handle_arrow_adjust(Arrows_U_D, -1))
                 return 0;
-            }
+            if (key == MODULE_KEY_PRESS_RIGHT && slim_handle_arrow_adjust(Arrows_L_R, 1))
+                return 0;
+            if (key == MODULE_KEY_PRESS_LEFT && slim_handle_arrow_adjust(Arrows_L_R, -1))
+                return 0;
+
+            /* Legacy SET / non-EOSM INFO ISO/aperture shortcuts (unchanged mappings) */
             if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                 ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
             {
                 crop_rec_adjust_iso(2);
-                return 0;
-            }
-            
-            /* ISO change shortcuts */
-            if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 1) ||
-                ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 1)  )
-            {
-                if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
-                //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                crop_rec_adjust_iso(2);
-                return 0;
-            }
-            if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
-                ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 1)  )
-            {
-                if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
-                //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                crop_rec_adjust_iso(-2);
-                return 0;
-            }
-            if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
-                ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
-            {
-                crop_rec_adjust_iso(2);
-                return 0;
-            }
-            
-            /* Aperture change shortcuts */
-            if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 2) ||
-                ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 2)  )
-            {
-                if (lens_info.raw_aperture == lens_info.raw_aperture_max) return 0; // We reached max aperture, don't do anything
-                aperture_toggle(0, 1);
-                return 0;
-            }
-            if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 2) ||
-                ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 2)  )
-            {
-                if (lens_info.raw_aperture == lens_info.raw_aperture_min) return 0; // We reached min aperture, don't do anything
-                aperture_toggle(0, -1);
-                return 0;
-            }
-            if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
-            {
-                aperture_toggle(0, -1);
-                return 0;
-            }
-            if (key == MODULE_KEY_PRESS_SET && INFO_button == 3)
-            {
-                aperture_toggle(0, 1);
-                return 0;
-            }
-                        
-            /* Aperture change shortcuts */
-            if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 2) ||
-                ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 2)  )
-            {
-                if (lens_info.raw_aperture == lens_info.raw_aperture_max) return 0; // We reached max aperture, don't do anything
-                aperture_toggle(0, 1);
-                return 0;
-            }
-            if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 2) ||
-                ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 2)  )
-            {
-                if (lens_info.raw_aperture == lens_info.raw_aperture_min) return 0; // We reached min aperture, don't do anything
-                aperture_toggle(0, -1);
                 return 0;
             }
             if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
@@ -4020,7 +4003,7 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
         if ((brighten_lv_method == 0 && RECORDING) || (brighten_lv_method == 0 && RAW_HISTOGRAM_ENABLED))//When RAW histogram is used turn off the temporary 14bit stuff
         {
             //Workaround when small_hacks is set to More in mlv_lite.c
-            if ((!Arrows_U_D && INFO_button != 2 && INFO_button != 3 && SET_button != 2 && SET_button != 3) || more_hacks)
+            if ((!Arrows_U_D && Arrows_L_R != 3 && SET_button != 2 && SET_button != 3) || more_hacks)
             {
                 if (OUTPUT_12BIT)
                 {
@@ -5572,24 +5555,43 @@ static struct menu_entry expo_shutter_range_eosm[] = {
 static MENU_UPDATE_FUNC(slim_info_button_update)
 {
     static int last_info_button = -1;
-    if (last_info_button == 4 && INFO_button != 4)
+    if (last_info_button == 5 && INFO_button != 5)
         mlv_lite_info_framing_reset();
     last_info_button = INFO_button;
 }
 
-/* Settings → INFO Button + Shutter zoom (EOS M slim). */
+/* Settings → INFO / Up-Down / Left-Right / Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
         .priv      = &INFO_button,
-        .max       = 4,
-        .choices   = CHOICES("OFF", "Aperture", "false colors", "Dual ISO", "framing"),
+        .max       = 5,
+        .choices   = CHOICES("OFF", "Dual ISO", "Histogram", "Waveform", "False Color", "framing"),
         .edit_mode = EM_INLINE_ADJUST,
         .update    = slim_info_button_update,
-        /* IT_DICE: do not treat OFF as disabled (slim greys IT_PERCENT_OFF when value==0). */
         .icon_type = IT_DICE,
-        .help      = "Assign INFO: OFF (Canon), Aperture +, false colors, Dual ISO, framing toggle.",
-        .help2     = "Framing: each INFO press toggles low-res correct framing vs real-time LV.",
+        .help      = "INFO toggles: Dual ISO, Histogram, Waveform, False Color, or framing.",
+        .help2     = "OFF uses Canon INFO. Framing toggles low-res correct framing vs real-time LV.",
+    },
+    {
+        .name      = "Up/Down Button",
+        .priv      = &Arrows_U_D,
+        .max       = 3,
+        .choices   = CHOICES("OFF", "Shutter", "Aperture", "ISO"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "What UP/DOWN adjust during LiveView / recording.",
+        .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down.",
+    },
+    {
+        .name      = "Left/Right Button",
+        .priv      = &Arrows_L_R,
+        .max       = 3,
+        .choices   = CHOICES("OFF", "Shutter", "Aperture", "ISO"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "What LEFT/RIGHT adjust during LiveView / recording.",
+        .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down.",
     },
     {
         .name      = "Shutter zoom",
@@ -7312,13 +7314,19 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     extern int kill_canon_gui_mode;
 
 #ifdef CONFIG_SLIM_MENUS
-    if (lv && is_movie_mode() && !gui_menu_shown())
+    /* Recording: 1-finger tap opens last highlighted menu setting; other touch blocked. */
+    if (RECORDING)
     {
-        if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
+        if (key == MODULE_KEY_TOUCH_1_FINGER)
+        {
+            gui_open_last_menu_selection();
+            return 0;
+        }
+        if (key == MODULE_KEY_UNTOUCH_1_FINGER
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
             return 0;
     }
-    if (RECORDING)
+    else if (lv && is_movie_mode() && !gui_menu_shown())
     {
         if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
@@ -7485,27 +7493,16 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 
             if (lv_dispsize == 5)
             {
-                /* ISO change shortcuts */
-                if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 1) ||
-                    ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 1)  )
-                {
-                    if (more_hacks && RECORDING) return 0;
-                    if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                    if (lens_info.raw_iso == ISO_6400) return 0; // We reached highest ISO, don't do anything
-                    //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                    crop_rec_adjust_iso(2);
+                /* U/D and L/R: Shutter / Aperture / ISO */
+                if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))
                     return 0;
-                }
-                if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 1) ||
-                    ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 1)  )
-                {
-                    if (more_hacks && RECORDING) return 0;
-                    if (lens_info.raw_iso == 0x0) return 0; // Don't change ISO when it's set to Auto
-                    if (lens_info.raw_iso == ISO_100) return 0; // We reached lowest ISO, don't do anything
-                    //if (Anam_FLV && OUTPUT_10BIT && RECORDING)  return 0;
-                    crop_rec_adjust_iso(-2);
+                if (key == MODULE_KEY_PRESS_DOWN && slim_handle_arrow_adjust(Arrows_U_D, -1))
                     return 0;
-                }
+                if (key == MODULE_KEY_PRESS_RIGHT && slim_handle_arrow_adjust(Arrows_L_R, 1))
+                    return 0;
+                if (key == MODULE_KEY_PRESS_LEFT && slim_handle_arrow_adjust(Arrows_L_R, -1))
+                    return 0;
+
                 if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                     ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
                 {
@@ -7519,23 +7516,6 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     return 0;
                 }
 
-                /* Aperture change shortcuts */
-                if (((key == MODULE_KEY_PRESS_UP)    && Arrows_U_D == 2) ||
-                    ((key == MODULE_KEY_PRESS_RIGHT) && Arrows_L_R == 2)  )
-                {
-                    if (more_hacks && RECORDING) return 0;
-                    if (lens_info.raw_aperture == lens_info.raw_aperture_max) return 0; // We reached max aperture, don't do anything
-                    aperture_toggle(0, 1);
-                    return 0;
-                }
-                if (((key == MODULE_KEY_PRESS_DOWN)  && Arrows_U_D == 2) ||
-                    ((key == MODULE_KEY_PRESS_LEFT)  && Arrows_L_R == 2)  )
-                {
-                    if (more_hacks && RECORDING) return 0;
-                    if (lens_info.raw_aperture == lens_info.raw_aperture_min) return 0; // We reached min aperture, don't do anything
-                    aperture_toggle(0, -1);
-                    return 0;
-                }
                 if (key == MODULE_KEY_INFO && !is_EOSM && INFO_button == 3)
                 {
                     if(lv_disp_mode != 0){
@@ -8294,14 +8274,27 @@ static unsigned int crop_rec_init()
         slim_crop_apply_bit_depth();
         more_hacks = 1;
 
-        /* Restore control defaults every boot/flash (overrides crop_rec.cfg). */
+        /* Restore control defaults that should not stick from old configs. */
         SET_button  = 1; /* Zoom x10 */
         Half_Shutter = 0; /* EOS M slim: half-shutter x10 only via Shutter zoom setting */
-        Arrows_U_D  = 1; /* ISO */
-        Arrows_L_R  = 2; /* Aperture (inactive without electronic lens) */
-        /* INFO Button persists via Settings (0=OFF .. 4=framing). */
-        if (INFO_button < 0 || INFO_button > 4)
-            INFO_button = 0;
+
+        /* One-time remap: old arrow/INFO meanings → new Settings options. */
+        if (button_map_v < 1)
+        {
+            /* Old arrows: 0=OFF, 1=ISO, 2=Aperture → New: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO */
+            if (Arrows_U_D == 1) Arrows_U_D = 3;
+            if (Arrows_L_R == 1) Arrows_L_R = 3;
+            /* Old INFO: 0=OFF,1=Aperture,2=FC,3=DualISO,4=framing
+             * New INFO: 0=OFF,1=DualISO,2=Hist,3=Wave,4=FC,5=framing */
+            if (INFO_button == 1) INFO_button = 0;
+            else if (INFO_button == 2) INFO_button = 4;
+            else if (INFO_button == 3) INFO_button = 1;
+            else if (INFO_button == 4) INFO_button = 5;
+            button_map_v = 1;
+        }
+        if (Arrows_U_D < 0 || Arrows_U_D > 3) Arrows_U_D = 3;
+        if (Arrows_L_R < 0 || Arrows_L_R > 3) Arrows_L_R = 2;
+        if (INFO_button < 0 || INFO_button > 5) INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
@@ -8356,6 +8349,7 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(Arrows_L_R)
     MODULE_CONFIG(Arrows_U_D)
     MODULE_CONFIG(more_hacks)
+    MODULE_CONFIG(button_map_v)
 MODULE_CONFIGS_END()
 
 MODULE_CBRS_START()

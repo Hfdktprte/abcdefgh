@@ -30,10 +30,23 @@ static inline int monitoring_precision(int mode) { return mode == MONITOR_PRECIS
 int monitoring_hist_menu_countdown(void);
 /** True when slim RAW scan should use precision sampling (hist and/or waveform). */
 int monitoring_slim_precision_scan(void);
+/** Toggle monitoring tool between OFF and Performance (INFO button). */
+static inline void monitoring_toggle_tool(int *mode)
+{
+    if (!mode) return;
+    *mode = monitoring_enabled(*mode) ? MONITOR_OFF : MONITOR_PERFORMANCE;
+}
 #else
 static inline int monitoring_enabled(int mode) { return mode; }
 static inline int monitoring_precision(int mode) { return 0; }
+static inline void monitoring_toggle_tool(int *mode)
+{
+    if (!mode) return;
+    *mode = *mode ? 0 : 1;
+}
 #endif
+
+extern int waveform_draw;
 
 /* returns true if the setting is enabled (does not check preconditions) */
 int get_global_draw_setting();

@@ -319,6 +319,10 @@ extern void select_menu_by_name(char* name, const char* entry_name);
 #ifdef CONFIG_SLIM_MENUS
 /** Select the first navigable entry in a top-level menu (grid launcher category). */
 extern void menu_select_first_entry(char* name);
+/** Remember highlighted setting and reopen it from recording-screen touch. */
+extern void menu_remember_selection(struct menu_entry * entry);
+extern void gui_open_menu_at_entry(const char * menu_name, const char * entry_name);
+extern void gui_open_last_menu_selection(void);
 #endif
 
 extern void

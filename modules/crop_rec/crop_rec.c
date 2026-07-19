@@ -5575,7 +5575,7 @@ static MENU_UPDATE_FUNC(slim_info_button_update)
     last_info_button = INFO_button;
 }
 
-/* Settings → INFO / Up-Down / Left-Right / Shutter zoom (EOS M slim). */
+/* Settings → INFO / Up-Down / Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
@@ -5597,16 +5597,6 @@ static struct menu_entry slim_info_button_menu[] = {
         .icon_type = IT_DICE,
         .help      = "What UP/DOWN adjust on the movie LiveView screen (not while recording).",
         .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down.",
-    },
-    {
-        .name      = "Left/Right Button",
-        .priv      = &Arrows_L_R,
-        .max       = 3,
-        .choices   = CHOICES("OFF", "Shutter", "Aperture", "ISO"),
-        .edit_mode = EM_INLINE_ADJUST,
-        .icon_type = IT_DICE,
-        .help      = "What LEFT/RIGHT adjust on the movie LiveView screen (not while recording).",
-        .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down. Blocks Canon L/R menus.",
     },
     {
         .name      = "Shutter zoom",
@@ -7487,20 +7477,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
             }
 
-            /* EOS M idle movie LV + ML overlays: apply Settings remaps.
-             * Canon never sees L/R (gui-common also eats UNPRESS_LEFT/RIGHT). */
+            /* EOS M idle movie LV + ML overlays: Up/Down Settings remaps only. */
             if (is_EOSM && !RECORDING && lv_dispsize != 10 && lv_disp_mode == 0)
             {
-                if (key == MODULE_KEY_PRESS_RIGHT)
-                {
-                    slim_handle_arrow_adjust(Arrows_L_R, 1);
-                    return 0;
-                }
-                if (key == MODULE_KEY_PRESS_LEFT)
-                {
-                    slim_handle_arrow_adjust(Arrows_L_R, -1);
-                    return 0;
-                }
                 if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))
                     return 0;
                 if (key == MODULE_KEY_PRESS_DOWN && slim_handle_arrow_adjust(Arrows_U_D, -1))
@@ -8319,7 +8298,8 @@ static unsigned int crop_rec_init()
             button_map_v = 2;
         }
         if (Arrows_U_D < 0 || Arrows_U_D > 3) Arrows_U_D = 3;
-        if (Arrows_L_R < 0 || Arrows_L_R > 3) Arrows_L_R = 2;
+        /* Slim: no Left/Right Button remap — leave L/R to Canon. */
+        Arrows_L_R = 0;
         if (INFO_button < 0 || INFO_button > 6) INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */

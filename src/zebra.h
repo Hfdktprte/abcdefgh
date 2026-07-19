@@ -18,6 +18,21 @@ int zebra_should_run();
 /* returns true if zebra overlay is enabled in menu */
 int zebra_draw_enabled(void);
 
+#ifdef CONFIG_SLIM_MENUS
+#define MONITOR_OFF         0
+#define MONITOR_PERFORMANCE 1
+#define MONITOR_PRECISION   2
+
+static inline int monitoring_enabled(int mode) { return mode != MONITOR_OFF; }
+static inline int monitoring_precision(int mode) { return mode == MONITOR_PRECISION; }
+
+/* Initial hist/waveform refresh countdown while Monitoring menu is transparent. */
+int monitoring_hist_menu_countdown(void);
+#else
+static inline int monitoring_enabled(int mode) { return mode; }
+static inline int monitoring_precision(int mode) { return 0; }
+#endif
+
 /* returns true if the setting is enabled (does not check preconditions) */
 int get_global_draw_setting();
 

@@ -91,17 +91,34 @@ static void hist_smooth_3tap(const uint32_t *src, uint32_t *dst)
     }
 }
 
+static void hist_smooth_5tap(const uint32_t *src, uint32_t *dst)
+{
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        int l2 = src[i > 1 ? i - 2 : 0];
+        int l1 = src[i > 0 ? i - 1 : 0];
+        int c  = src[i];
+        int r1 = src[i < HIST_WIDTH - 1 ? i + 1 : HIST_WIDTH - 1];
+        int r2 = src[i < HIST_WIDTH - 2 ? i + 2 : HIST_WIDTH - 1];
+        dst[i] = (l2 + 2 * l1 + 4 * c + 2 * r1 + r2) / 10;
+    }
+}
+
 static void hist_prepare_smooth_display(void)
 {
-    /* Spatial smooth only — peaks follow the scene on the next draw. */
-    hist_smooth_3tap(histogram.hist, hist_smooth);
+    if (monitoring_precision(hist_draw))
+        hist_smooth_5tap(histogram.hist, hist_smooth);
+    else
+        hist_smooth_3tap(histogram.hist, hist_smooth);
 }
 
 static int hist_slim_scan_raw_pixels(int accumulate_hist)
 {
     if (!raw_update_params()) return 0;
 
-    int step = lv ? 4 : 2;
+    int precision_scan = monitoring_precision(hist_draw) || monitoring_precision(waveform_draw);
+    int step = lv ? (precision_scan ? 2 : 4) : 2;
+    int x_step = precision_scan ? 4 : 8;
     hist_build_r2ev_cache();
 
 #if defined(FEATURE_WAVEFORM)
@@ -113,7 +130,7 @@ static int hist_slim_scan_raw_pixels(int accumulate_hist)
         int y = BM2RAW_Y(i);
         if (y < raw_info.active_area.y1+8 || y > raw_info.active_area.y2-8) continue;
 
-        for (int j = os.x0; j < os.x_max; j += 8)
+        for (int j = os.x0; j < os.x_max; j += x_step)
         {
             int x = BM2RAW_X(j);
             if (x < raw_info.active_area.x1+8 || x > raw_info.active_area.x2-8) continue;
@@ -450,7 +467,7 @@ void hist_draw_image(
 #if defined(FEATURE_HISTOGRAM)
         /* draw clip warnings */
 #ifdef CONFIG_SLIM_MENUS
-        if (hist_draw && i == HIST_WIDTH - 1)
+        if (monitoring_enabled(hist_draw) && i == HIST_WIDTH - 1)
 #else
         if (hist_warn && i == HIST_WIDTH - 1)
 #endif

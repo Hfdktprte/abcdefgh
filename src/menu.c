@@ -289,7 +289,7 @@ static int redraw_flood_stop = 0;
 
 #define MENU_REDRAW 1
 
-static int hist_countdown = 3; // histogram is slow, so draw it less often
+static int hist_countdown = 3; // throttled while Monitoring menu is transparent
 
 int is_submenu_or_edit_mode_active() { return gui_menu_shown() && SUBMENU_OR_EDIT; }
 int get_menu_edit_mode() { return edit_mode; }
@@ -4885,7 +4885,7 @@ void menu_entry_select(
                 if (!submenu_level)
                     menu_toggle_submenu();
             }
-            /* No children (Monitoring ON/OFF etc.): SET does nothing. */
+            /* No children (Monitoring Off/Performance/Precision etc.): SET does nothing. */
             entry_used = 1;
         }
         else if (IS_BOOL(entry) && !entry->children)
@@ -5959,7 +5959,11 @@ handle_ml_menu_keys(struct event * event)
     if (menu_needs_full_redraw) menu_redraw_full();
     else menu_redraw();
     keyrepeat_ack(button_code);
+#ifdef CONFIG_SLIM_MENUS
+    hist_countdown = monitoring_hist_menu_countdown();
+#else
     hist_countdown = 3;
+#endif
     return 0;
 }
 

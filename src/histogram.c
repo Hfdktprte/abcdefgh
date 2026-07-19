@@ -116,7 +116,7 @@ static int hist_slim_scan_raw_pixels(int accumulate_hist)
 {
     if (!raw_update_params()) return 0;
 
-    int precision_scan = monitoring_precision(hist_draw) || monitoring_precision(waveform_draw);
+    int precision_scan = monitoring_slim_precision_scan();
     int step = lv ? (precision_scan ? 2 : 4) : 2;
     int x_step = precision_scan ? 4 : 8;
     hist_build_r2ev_cache();

@@ -28,6 +28,8 @@ static inline int monitoring_precision(int mode) { return mode == MONITOR_PRECIS
 
 /* Initial hist/waveform refresh countdown while Monitoring menu is transparent. */
 int monitoring_hist_menu_countdown(void);
+/** True when slim RAW scan should use precision sampling (hist and/or waveform). */
+int monitoring_slim_precision_scan(void);
 #else
 static inline int monitoring_enabled(int mode) { return mode; }
 static inline int monitoring_precision(int mode) { return 0; }

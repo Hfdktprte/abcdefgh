@@ -15,7 +15,6 @@ static struct menu_entry custom_menu_placeholders[] =
     { .name = "Screen Layout",       .placeholder = 1 },
     { .name = "INFO Button",         .placeholder = 1 },
     { .name = "Up/Down Button",      .placeholder = 1 },
-    { .name = "Left/Right Button",   .placeholder = 1 },
     { .name = "Shutter zoom",        .placeholder = 1 },
     { .name = "HDMI Output",         .placeholder = 1 },
     { .name = "HDMI Resolution",     .placeholder = 1 },

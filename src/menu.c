@@ -4975,6 +4975,10 @@ void menu_entry_select(
         if (entry_used)
         {
             menu_update_usage_counters(entry);
+#ifdef CONFIG_SLIM_MENUS
+            /* Touch reopen uses this — remember the setting that was changed. */
+            menu_remember_selection(entry);
+#endif
         }
     }
 
@@ -6603,7 +6607,7 @@ void menu_select_first_entry(char* name)
         if (streq(menu->name, name))
         {
             menu_select_first_visible_entry(menu);
-            menu_remember_selection(get_selected_menu_entry(menu));
+            /* Do not remember here — would overwrite last changed setting. */
             break;
         }
     }

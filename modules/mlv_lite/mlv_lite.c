@@ -4733,7 +4733,7 @@ static int raw_rec_should_preview(void)
     if (lv_dispsize == 10) return 0;
 
     /* EOS M Settings → INFO Button = framing: toggle ML framing vs real-time LV. */
-    if (cam_eos_m && INFO_button == 5)
+    if (cam_eos_m && INFO_button == 6)
         return slim_info_framing_active;
 
     /* framing is incorrect in modes with high resolutions

@@ -33,12 +33,9 @@ static int handle_slim_rec_touch_block(struct event * event)
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
-        /* While recording: tap opens last highlighted menu setting. */
+        /* While recording: let crop_rec open last menu (do not consume here). */
         if (RECORDING)
-        {
-            gui_open_last_menu_selection();
-            return 0;
-        }
+            return 1;
         /* Block other LV touch (opens grid / stray taps). */
         if (lv && !gui_menu_shown())
             return 0;

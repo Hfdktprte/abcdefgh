@@ -116,8 +116,9 @@ static int crop_preset_fps = 0;
  * EOS M slim defaults:
  *   SET = Zoom x10; U/D = ISO; L/R = Aperture; INFO off.
  * Arrow modes: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO
- * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=False Color, 5=framing
+ * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color, 6=framing
  */
+extern void WEAK_FUNC(ret_0) gui_open_last_menu_selection(void);
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
 CONFIG_INT("crop.button_INFO",      INFO_button, 0);
@@ -482,7 +483,7 @@ static void crop_rec_adjust_iso(int sign)
 }
 
 /* EOS M Settings → INFO Button:
- * 0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=False Color, 5=framing.
+ * 0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color, 6=framing.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
 {
@@ -492,7 +493,7 @@ static int slim_handle_info_button(unsigned int key)
         return 0; /* OFF — Canon INFO / LV cycle */
 
     /* Outside ML overlay LV, keep Canon INFO for non-framing modes only. */
-    if (INFO_button != 5 && lv_disp_mode != 0)
+    if (INFO_button != 6 && lv_disp_mode != 0)
         return -1;
 
     switch (INFO_button)
@@ -517,7 +518,15 @@ static int slim_handle_info_button(unsigned int key)
             return 1;
         }
 
-        case 4: /* False Color toggle */
+        case 4: /* Zebras Off ↔ Performance */
+        {
+            int z = get_config_var("zebra.draw");
+            set_config_var("zebra.draw", z ? 0 : 1);
+            if (!get_config_var("zebra.draw")) redraw();
+            return 1;
+        }
+
+        case 5: /* False Color toggle */
         {
             extern int falsecolor_draw;
             if (!falsecolor_draw)
@@ -530,7 +539,7 @@ static int slim_handle_info_button(unsigned int key)
             return 1;
         }
 
-        case 5: /* framing ↔ real-time (MLV Lite Preview → Framing) */
+        case 6: /* framing ↔ real-time (MLV Lite Preview → Framing) */
             mlv_lite_info_framing_toggle();
             return 1;
 
@@ -5562,7 +5571,7 @@ static struct menu_entry expo_shutter_range_eosm[] = {
 static MENU_UPDATE_FUNC(slim_info_button_update)
 {
     static int last_info_button = -1;
-    if (last_info_button == 5 && INFO_button != 5)
+    if (last_info_button == 6 && INFO_button != 6)
         mlv_lite_info_framing_reset();
     last_info_button = INFO_button;
 }
@@ -5572,12 +5581,12 @@ static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
         .priv      = &INFO_button,
-        .max       = 5,
-        .choices   = CHOICES("OFF", "Dual ISO", "Histogram", "Waveform", "False Color", "framing"),
+        .max       = 6,
+        .choices   = CHOICES("OFF", "Dual ISO", "Histogram", "Waveform", "Zebras", "False Color", "framing"),
         .edit_mode = EM_INLINE_ADJUST,
         .update    = slim_info_button_update,
         .icon_type = IT_DICE,
-        .help      = "INFO toggles: Dual ISO, Histogram, Waveform, False Color, or framing.",
+        .help      = "INFO toggles: Dual ISO, Histogram, Waveform, Zebras, False Color, or framing.",
         .help2     = "OFF uses Canon INFO. Framing toggles low-res correct framing vs real-time LV.",
     },
     {
@@ -5587,7 +5596,7 @@ static struct menu_entry slim_info_button_menu[] = {
         .choices   = CHOICES("OFF", "Shutter", "Aperture", "ISO"),
         .edit_mode = EM_INLINE_ADJUST,
         .icon_type = IT_DICE,
-        .help      = "What UP/DOWN adjust during LiveView / recording.",
+        .help      = "What UP/DOWN adjust on the movie LiveView screen (not while recording).",
         .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down.",
     },
     {
@@ -5597,8 +5606,8 @@ static struct menu_entry slim_info_button_menu[] = {
         .choices   = CHOICES("OFF", "Shutter", "Aperture", "ISO"),
         .edit_mode = EM_INLINE_ADJUST,
         .icon_type = IT_DICE,
-        .help      = "What LEFT/RIGHT adjust during LiveView / recording.",
-        .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down.",
+        .help      = "What LEFT/RIGHT adjust on the movie LiveView screen (not while recording).",
+        .help2     = "Shutter: faster/slower. Aperture: open/close. ISO: up/down. Blocks Canon L/R menus.",
     },
     {
         .name      = "Shutter zoom",
@@ -7321,8 +7330,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     extern int kill_canon_gui_mode;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Non-recording movie LV: block touch (grid/stray taps). Recording taps are
-     * handled in gui-common → gui_open_last_menu_selection(). */
+    /* Non-recording movie LV: block touch (grid/stray taps). */
     if (lv && is_movie_mode() && !gui_menu_shown() && !RECORDING)
     {
         if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
@@ -7330,6 +7338,19 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             return 0;
     }
 #endif
+
+    /* Recording: 1-finger tap opens last highlighted menu setting. */
+    if (is_EOSM && RECORDING)
+    {
+        if (key == MODULE_KEY_TOUCH_1_FINGER)
+        {
+            gui_open_last_menu_selection();
+            return 0;
+        }
+        if (key == MODULE_KEY_UNTOUCH_1_FINGER
+            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
+            return 0;
+    }
 
     //Reset zoom when stopping recording
     
@@ -7488,17 +7509,40 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
             }
 
-            if (lv_dispsize == 5)
+            /* EOS M idle movie LV: ML arrow remaps; always block Canon L/R menus.
+             * Adjustments run only when not recording (more_hacks still guards REC). */
+            if (is_EOSM && !RECORDING && lv_dispsize != 10)
             {
-                /* U/D and L/R: Shutter / Aperture / ISO */
+                if (key == MODULE_KEY_PRESS_LEFT || key == MODULE_KEY_PRESS_RIGHT)
+                {
+                    /* Dismiss Canon Q / info panels so they can't steal L/R. */
+                    SetGUIRequestMode(0);
+                    if (key == MODULE_KEY_PRESS_RIGHT)
+                        slim_handle_arrow_adjust(Arrows_L_R, 1);
+                    else
+                        slim_handle_arrow_adjust(Arrows_L_R, -1);
+                    return 0;
+                }
                 if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))
                     return 0;
                 if (key == MODULE_KEY_PRESS_DOWN && slim_handle_arrow_adjust(Arrows_U_D, -1))
                     return 0;
-                if (key == MODULE_KEY_PRESS_RIGHT && slim_handle_arrow_adjust(Arrows_L_R, 1))
-                    return 0;
-                if (key == MODULE_KEY_PRESS_LEFT && slim_handle_arrow_adjust(Arrows_L_R, -1))
-                    return 0;
+            }
+
+            if (lv_dispsize == 5)
+            {
+                /* Non-EOSM (or during REC): legacy U/D L/R shortcuts */
+                if (!is_EOSM || RECORDING)
+                {
+                    if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))
+                        return 0;
+                    if (key == MODULE_KEY_PRESS_DOWN && slim_handle_arrow_adjust(Arrows_U_D, -1))
+                        return 0;
+                    if (key == MODULE_KEY_PRESS_RIGHT && slim_handle_arrow_adjust(Arrows_L_R, 1))
+                        return 0;
+                    if (key == MODULE_KEY_PRESS_LEFT && slim_handle_arrow_adjust(Arrows_L_R, -1))
+                        return 0;
+                }
 
                 if (((key == MODULE_KEY_INFO)       && !is_EOSM && INFO_button == 2) ||
                     ((key == MODULE_KEY_PRESS_SET)  && SET_button  == 2))
@@ -8289,9 +8333,16 @@ static unsigned int crop_rec_init()
             else if (INFO_button == 4) INFO_button = 5;
             button_map_v = 1;
         }
+        /* v1 INFO: 4=False Color, 5=framing → v2: 4=Zebras, 5=False Color, 6=framing */
+        if (button_map_v < 2)
+        {
+            if (INFO_button == 5) INFO_button = 6;
+            else if (INFO_button == 4) INFO_button = 5;
+            button_map_v = 2;
+        }
         if (Arrows_U_D < 0 || Arrows_U_D > 3) Arrows_U_D = 3;
         if (Arrows_L_R < 0 || Arrows_L_R > 3) Arrows_L_R = 2;
-        if (INFO_button < 0 || INFO_button > 5) INFO_button = 0;
+        if (INFO_button < 0 || INFO_button > 6) INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));

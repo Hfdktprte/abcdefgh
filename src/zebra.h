@@ -46,7 +46,9 @@ static inline void monitoring_toggle_tool(int *mode)
 }
 #endif
 
+#ifdef FEATURE_WAVEFORM
 extern int waveform_draw;
+#endif
 
 /* returns true if the setting is enabled (does not check preconditions) */
 int get_global_draw_setting();

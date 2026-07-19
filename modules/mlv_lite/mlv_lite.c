@@ -100,6 +100,9 @@ static int dual_iso_skip_raw_preview(void)
 static int updowntoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(updowntoggle) Arrows_U_D;
 
+static int leftrighttoggle = 0; /* coming from crop_rec.c */
+extern int WEAK_FUNC(leftrighttoggle) Arrows_L_R;
+
 static int morehack = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(morehack) more_hacks;
 
@@ -4730,7 +4733,7 @@ static int raw_rec_should_preview(void)
     if (lv_dispsize == 10) return 0;
 
     /* EOS M Settings → INFO Button = framing: toggle ML framing vs real-time LV. */
-    if (cam_eos_m && INFO_button == 5)
+    if (cam_eos_m && INFO_button == 6)
         return slim_info_framing_active;
 
     /* framing is incorrect in modes with high resolutions

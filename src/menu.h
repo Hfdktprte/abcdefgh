@@ -319,11 +319,14 @@ extern void select_menu_by_name(char* name, const char* entry_name);
 #ifdef CONFIG_SLIM_MENUS
 /** Select the first navigable entry in a top-level menu (grid launcher category). */
 extern void menu_select_first_entry(char* name);
-/** Remember highlighted setting and reopen it from recording-screen touch. */
+/** Remember highlighted setting (updated while browsing the ML menu). */
 extern void menu_remember_selection(struct menu_entry * entry);
-extern void gui_open_menu_at_entry(const char * menu_name, const char * entry_name);
-extern void gui_open_last_menu_selection(void);
 #endif
+
+/** Open ML menu at a specific entry, skipping slim grid launcher when needed. */
+extern void gui_open_menu_at_entry(const char * menu_name, const char * entry_name);
+/** Open last highlighted menu setting (recording-screen touch). */
+extern void gui_open_last_menu_selection(void);
 
 extern void
 menu_init( void );

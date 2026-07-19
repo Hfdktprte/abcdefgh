@@ -7339,6 +7339,19 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
             return 0;
     }
+#else
+    /* Modules are built without CONFIG_SLIM_MENUS — EOS M uses runtime is_EOSM. */
+    if (is_EOSM && RECORDING)
+    {
+        if (key == MODULE_KEY_TOUCH_1_FINGER)
+        {
+            gui_open_last_menu_selection();
+            return 0;
+        }
+        if (key == MODULE_KEY_UNTOUCH_1_FINGER
+            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
+            return 0;
+    }
 #endif
 
     //Reset zoom when stopping recording

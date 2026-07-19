@@ -11,6 +11,7 @@
 #include <lens.h>
 #include <config.h>
 #include <lvinfo.h>
+#include <menu.h>
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -32,9 +33,12 @@ static int handle_slim_rec_touch_block(struct event * event)
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
-        /* While recording: allow 1-finger tap through to open last menu setting. */
+        /* While recording: tap opens last highlighted menu setting. */
         if (RECORDING)
-            return 1;
+        {
+            gui_open_last_menu_selection();
+            return 0;
+        }
         /* Block other LV touch (opens grid / stray taps). */
         if (lv && !gui_menu_shown())
             return 0;

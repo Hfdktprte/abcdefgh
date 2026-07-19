@@ -7321,34 +7321,11 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     extern int kill_canon_gui_mode;
 
 #ifdef CONFIG_SLIM_MENUS
-    /* Recording: 1-finger tap opens last highlighted menu setting; other touch blocked. */
-    if (RECORDING)
-    {
-        if (key == MODULE_KEY_TOUCH_1_FINGER)
-        {
-            gui_open_last_menu_selection();
-            return 0;
-        }
-        if (key == MODULE_KEY_UNTOUCH_1_FINGER
-            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
-            return 0;
-    }
-    else if (lv && is_movie_mode() && !gui_menu_shown())
+    /* Non-recording movie LV: block touch (grid/stray taps). Recording taps are
+     * handled in gui-common → gui_open_last_menu_selection(). */
+    if (lv && is_movie_mode() && !gui_menu_shown() && !RECORDING)
     {
         if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
-            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
-            return 0;
-    }
-#else
-    /* Modules are built without CONFIG_SLIM_MENUS — EOS M uses runtime is_EOSM. */
-    if (is_EOSM && RECORDING)
-    {
-        if (key == MODULE_KEY_TOUCH_1_FINGER)
-        {
-            gui_open_last_menu_selection();
-            return 0;
-        }
-        if (key == MODULE_KEY_UNTOUCH_1_FINGER
             || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
             return 0;
     }

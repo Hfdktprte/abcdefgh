@@ -100,6 +100,9 @@ static int dual_iso_skip_raw_preview(void)
 static int updowntoggle = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(updowntoggle) Arrows_U_D;
 
+static int leftrighttoggle = 0; /* coming from crop_rec.c */
+extern int WEAK_FUNC(leftrighttoggle) Arrows_L_R;
+
 static int morehack = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(morehack) more_hacks;
 

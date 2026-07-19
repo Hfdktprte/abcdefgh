@@ -118,7 +118,6 @@ static int crop_preset_fps = 0;
  * Arrow modes: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO
  * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color, 6=framing
  */
-extern void WEAK_FUNC(ret_0) gui_open_last_menu_selection(void);
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
 CONFIG_INT("crop.button_INFO",      INFO_button, 0);
@@ -7329,28 +7328,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 {
     extern int kill_canon_gui_mode;
 
-#ifdef CONFIG_SLIM_MENUS
-    /* Non-recording movie LV: block touch (grid/stray taps). */
-    if (lv && is_movie_mode() && !gui_menu_shown() && !RECORDING)
-    {
-        if (key == MODULE_KEY_TOUCH_1_FINGER || key == MODULE_KEY_UNTOUCH_1_FINGER
-            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
-            return 0;
-    }
-#endif
-
-    /* Recording: 1-finger tap opens last highlighted menu setting. */
-    if (is_EOSM && RECORDING)
-    {
-        if (key == MODULE_KEY_TOUCH_1_FINGER)
-        {
-            gui_open_last_menu_selection();
-            return 0;
-        }
-        if (key == MODULE_KEY_UNTOUCH_1_FINGER
-            || key == MODULE_KEY_TOUCH_2_FINGER || key == MODULE_KEY_UNTOUCH_2_FINGER)
-            return 0;
-    }
+    /* Recording: touch is blocked in gui-common (idle LV touch is allowed). */
 
     //Reset zoom when stopping recording
     
@@ -7509,18 +7487,18 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                 }
             }
 
-            /* EOS M idle movie LV: ML arrow remaps; always block Canon L/R menus.
-             * Adjustments run only when not recording (more_hacks still guards REC). */
-            if (is_EOSM && !RECORDING && lv_dispsize != 10)
+            /* EOS M idle movie LV + ML overlays: apply Settings remaps.
+             * Canon never sees L/R (gui-common also eats UNPRESS_LEFT/RIGHT). */
+            if (is_EOSM && !RECORDING && lv_dispsize != 10 && lv_disp_mode == 0)
             {
-                if (key == MODULE_KEY_PRESS_LEFT || key == MODULE_KEY_PRESS_RIGHT)
+                if (key == MODULE_KEY_PRESS_RIGHT)
                 {
-                    /* Dismiss Canon Q / info panels so they can't steal L/R. */
-                    SetGUIRequestMode(0);
-                    if (key == MODULE_KEY_PRESS_RIGHT)
-                        slim_handle_arrow_adjust(Arrows_L_R, 1);
-                    else
-                        slim_handle_arrow_adjust(Arrows_L_R, -1);
+                    slim_handle_arrow_adjust(Arrows_L_R, 1);
+                    return 0;
+                }
+                if (key == MODULE_KEY_PRESS_LEFT)
+                {
+                    slim_handle_arrow_adjust(Arrows_L_R, -1);
                     return 0;
                 }
                 if (key == MODULE_KEY_PRESS_UP && slim_handle_arrow_adjust(Arrows_U_D, 1))

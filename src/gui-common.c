@@ -28,27 +28,52 @@ int is_canon_bottom_bar_dirty() { return bottom_bar_dirty; }
 int get_last_time_active() { return last_time_active; }
 
 #ifdef CONFIG_SLIM_MENUS
+/* Idle LiveView: touch reaches Canon (INFO menus, AF, etc.).
+ * While recording: ignore all touch. */
 static int handle_slim_rec_touch_block(struct event * event)
 {
+    if (!RECORDING)
+        return 1;
+
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
-        /* While recording: let crop_rec open last menu (do not consume here). */
-        if (RECORDING)
-            return 1;
-        /* Block other LV touch (opens grid / stray taps). */
-        if (lv && !gui_menu_shown())
-            return 0;
-        break;
     case BGMT_TOUCH_2_FINGER:
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
 #endif
-        if (RECORDING || (lv && !gui_menu_shown()))
-            return 0;
-        break;
+#ifdef BGMT_TOUCH_PINCH_START
+    case BGMT_TOUCH_PINCH_START:
+#endif
+#ifdef BGMT_TOUCH_PINCH_STOP
+    case BGMT_TOUCH_PINCH_STOP:
+#endif
+        return 0;
+    }
+    return 1;
+}
+
+/* EOS M: Canon still receives UNPRESS_LEFT/RIGHT (not mapped to module keys).
+ * When ML overlay LV is on, eat L/R press+unpress so Canon GUI never sees them. */
+static int handle_slim_lr_canon_block(struct event * event)
+{
+    if (!lv || gui_menu_shown() || RECORDING)
+        return 1;
+    if (!is_movie_mode())
+        return 1;
+    /* lv_disp_mode != 0: user opened Canon INFO screens — leave L/R to Canon. */
+    if (lv_disp_mode != 0)
+        return 1;
+
+    switch (event->param)
+    {
+    case BGMT_PRESS_LEFT:
+    case BGMT_PRESS_RIGHT:
+    case BGMT_UNPRESS_LEFT:
+    case BGMT_UNPRESS_RIGHT:
+        return 0;
     }
     return 1;
 }
@@ -533,6 +558,10 @@ int handle_common_events_by_feature(struct event * event)
     #endif
 
     if (handle_module_keys(event) == 0) return 0;
+#ifdef CONFIG_SLIM_MENUS
+    /* After modules (PRESS already handled/consumed): block leftover L/R from Canon. */
+    if (handle_slim_lr_canon_block(event) == 0) return 0;
+#endif
     if (handle_flexinfo_keys(event) == 0) return 0;
 
     #ifdef FEATURE_DIGITAL_ZOOM_SHORTCUT

@@ -444,6 +444,24 @@ static int slim_handle_shutter_zoom(unsigned int key)
     return 0;
 }
 
+/* EOS M Settings -> SET Button. Keep this independent of the legacy SET
+ * assignments below: value 2 used to mean ISO on other cameras. */
+static int slim_handle_set_button(unsigned int key)
+{
+    if (!is_EOSM || SET_button != 2 || key != MODULE_KEY_PRESS_SET)
+        return 0;
+
+    /* Same policy as idle-LiveView touch: never open menus while recording. */
+    if (RECORDING)
+        return 1;
+
+    if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        gui_open_last_menu_selection();
+
+    /* Do not fall through to legacy SET=2 (ISO) handling. */
+    return 1;
+}
+
 /* Instant Dual ISO on/off for INFO/SET shortcuts: config + bottom bar only.
  * CMOS refresh runs from CBR_SHOOT_TASK (do not block the key handler). */
 static void slim_toggle_dual_iso(void)
@@ -5579,6 +5597,17 @@ static MENU_UPDATE_FUNC(slim_info_button_update)
 /* Settings → INFO / Up-Down / Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
+        .name      = "SET Button",
+        .priv      = &SET_button,
+        .min       = 1,
+        .max       = 2,
+        .choices   = CHOICES("x10 zoom", "Last settings"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Choose what SET does on the movie LiveView screen.",
+        .help2     = "Last settings opens the last changed ML setting, like a LiveView screen tap.",
+    },
+    {
         .name      = "INFO Button",
         .priv      = &INFO_button,
         .max       = 6,
@@ -7446,6 +7475,9 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
             if (slim_handle_shutter_zoom(key))
                 return 0;
 
+            if (slim_handle_set_button(key))
+                return 0;
+
             {
                 int info = slim_handle_info_button(key);
                 if (info == 1) return 0;
@@ -8299,8 +8331,9 @@ static unsigned int crop_rec_init()
         slim_crop_apply_bit_depth();
         more_hacks = 1;
 
-        /* Restore control defaults that should not stick from old configs. */
-        SET_button  = 1; /* Zoom x10 */
+        /* Preserve SET Button choice; migrate old assignments to x10 zoom. */
+        if (SET_button != 1 && SET_button != 2)
+            SET_button = 1;
         Half_Shutter = 0; /* EOS M slim: half-shutter x10 only via Shutter zoom setting */
 
         /* One-time remap: old arrow/INFO meanings → new Settings options. */

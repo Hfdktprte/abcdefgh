@@ -5811,8 +5811,11 @@ static void slim_crop_apply_mode(void)
 static void slim_crop_apply_bit_depth(void)
 {
     static const int map[] = { 3, 1, 0 }; /* 10, 12, 14 */
+    int prev = bit_depth_analog;
     slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 2);
     bit_depth_analog = map[slim_bit_depth_ui];
+    if (bit_depth_analog != prev)
+        raw_invalidate_lv_calibration();
 }
 
 /* Expected RAW WxH for EOS M (from crop_rec help / reg_override). */
@@ -7873,14 +7876,12 @@ static struct lvinfo_item info_items[] = {
 /* better put here too from raw.c since eosm is more or less 100% crop_rec based */
 int raw_lv_settings_still_valid()
 {
-    /* 10bit */
+    /* Analog-gain bit depths: fixed whites matching 10/12-bit clip points.
+     * 14-bit: keep raw_info.white_level from LV calibration/autodetect —
+     * forcing 16200 hid real clipping on zebras/histogram. */
     if (OUTPUT_10BIT) raw_info.white_level = 2870;
-    //11bit
     if (OUTPUT_11BIT) raw_info.white_level = 3692;
-    /* 12bit */
     if (OUTPUT_12BIT) raw_info.white_level = 5336;
-    /* 14bit 4k timelapse only. Flag set in crop_rec.c */
-    if (OUTPUT_14BIT) raw_info.white_level = 16200;
     return 1;
 }
 

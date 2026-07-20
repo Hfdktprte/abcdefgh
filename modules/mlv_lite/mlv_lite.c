@@ -3369,14 +3369,11 @@ void init_mlv_chunk_headers(struct raw_info * raw_info)
     
     if (cam_eos_m)
     {
-        /* 10bit */
+        /* Analog-gain bit depths: fixed whites (same clip points as LV zebras/hist).
+         * 14-bit: keep calibrated/autodetected white from raw_info (do not force 16200). */
         if (OUTPUT_10BIT) rawi_hdr.raw_info.white_level = 2870;
-        //11bit
         if (OUTPUT_11BIT) rawi_hdr.raw_info.white_level = 3692;
-        /* 12bit */
         if (OUTPUT_12BIT) rawi_hdr.raw_info.white_level = 5336;
-        /* 14bit */
-        if (OUTPUT_14BIT) rawi_hdr.raw_info.white_level = 16200;
     }
 
     mlv_fill_idnt(&idnt_hdr, mlv_start_timestamp);

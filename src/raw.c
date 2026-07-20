@@ -1232,8 +1232,19 @@ int raw_update_params_work()
         
         dbg_printf("dynamic range: %d.%02d EV (iso=%d)\n", raw_info.dynamic_range/100, raw_info.dynamic_range%100, raw2iso(iso));
     }
-    else /* movie mode, no tricks here */
+    else /* movie mode */
     {
+        /* 10/11/12-bit analog-gain modes keep calibrated fixed whites from
+         * get_default_white_level(). Full 14-bit must not assume 16200 —
+         * EOS M (and others) often clip lower, which made zebras/histogram
+         * miss real clipping while 12-bit stayed correct. */
+        if (BitDepth_Analog == 14)
+        {
+            int canon_white = shamem_read(0xC0F12054) >> 16;
+            if (canon_white < 1000 || canon_white > 16383)
+                canon_white = WHITE_LEVEL;
+            raw_info.white_level = autodetect_white_level(canon_white);
+        }
         raw_info.dynamic_range = compute_dynamic_range(black_mean, black_stdev_x100, raw_info.white_level);
     }
 #endif

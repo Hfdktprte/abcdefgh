@@ -5357,6 +5357,7 @@ static MENU_UPDATE_FUNC(crop_preset_ar_update)
         if (crop_preset_1x1_res_menu == 3) MENU_SET_VALUE("16:9");    // CROP_1440p
         if (crop_preset_1x1_res_menu == 4) MENU_SET_VALUE("3:2");     // CROP_1280p
         if (crop_preset_1x1_res_menu == 5) MENU_SET_VALUE("3:2");     // CROP_Full_Res
+        if (crop_preset_1x1_res_menu == 6) MENU_SET_VALUE("4:3");     // CROP_1620p
         if (crop_preset_1x1_res_menu == 7) MENU_SET_VALUE("16:9");    // CROP_1080p
         MENU_SET_WARNING(MENU_WARN_ADVICE, "This option doesn't work in 1:1 crop.");
     }
@@ -5615,10 +5616,10 @@ static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
 static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
 
-/* 1x1 Aspect Ratio UI: 0=2.33:1, 1=2.35:1, 2=16:9, 3=3:2 */
+/* 1x1 Aspect Ratio UI: 0=2.33:1, 1=2.35:1, 2=16:9, 3=3:2, 4=4:3 */
 static int slim_1x1_ar = 2; /* default 16:9 */
-static const char * const slim_1x1_ar_labels[4] = {
-    "2.33:1", "2.35:1", "16:9", "3:2"
+static const char * const slim_1x1_ar_labels[5] = {
+    "2.33:1", "2.35:1", "16:9", "3:2", "4:3"
 };
 
 static void slim_crop_apply_mode(void);
@@ -5662,7 +5663,7 @@ static void slim_crop_apply_3x3_from_ar(void)
 /* Map 1x1 AR (+ Preset for 2.35:1) → res index, WxH, FPS mask. */
 static void slim_1x1_resolve(int *res_idx, int *w, int *h, int *fps_mask)
 {
-    slim_1x1_ar = COERCE(slim_1x1_ar, 0, 3);
+    slim_1x1_ar = COERCE(slim_1x1_ar, 0, 4);
 
     if (slim_1x1_ar == 0)
     {
@@ -5699,12 +5700,20 @@ static void slim_1x1_resolve(int *res_idx, int *w, int *h, int *fps_mask)
         *fps_mask = 0x3;
         slim_unified_preset = 0;
     }
-    else
+    else if (slim_1x1_ar == 3)
     {
         /* 3:2 → 1920x1280 @ 24/25 — Highest only */
         *res_idx = 4;
         *w = 1920; *h = 1280;
         *fps_mask = 0x3;
+        slim_unified_preset = 0;
+    }
+    else
+    {
+        /* 4:3 → 2160x1620 @ 24 FPS (dannephoto CROP_1620p) — Highest only */
+        *res_idx = 6;
+        *w = 2160; *h = 1620;
+        *fps_mask = 0x1;
         slim_unified_preset = 0;
     }
 }
@@ -5739,6 +5748,10 @@ static void slim_crop_sync_from_backend(void)
                 break;
             case 4: /* 1280p */
                 slim_1x1_ar = 3;
+                slim_unified_preset = 0;
+                break;
+            case 6: /* 1620p 4:3 */
+                slim_1x1_ar = 4;
                 slim_unified_preset = 0;
                 break;
             default:
@@ -6015,7 +6028,7 @@ static MENU_UPDATE_FUNC(slim_crop_ar_update)
     }
     if (slim_mode_ui == 0)
     {
-        slim_1x1_ar = COERCE(slim_1x1_ar, 0, 3);
+        slim_1x1_ar = COERCE(slim_1x1_ar, 0, 4);
         MENU_SET_VALUE("%s", slim_1x1_ar_labels[slim_1x1_ar]);
         MENU_SET_ENABLED(1);
         return;
@@ -6040,7 +6053,7 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
 
     if (slim_mode_ui == 0)
     {
-        slim_1x1_ar = MOD(slim_1x1_ar + delta, 4);
+        slim_1x1_ar = MOD(slim_1x1_ar + delta, 5);
         /* Entering 2.35:1 defaults to Higher unless already Highest/Higher. */
         if (slim_1x1_ar == 1 && slim_unified_preset > 1)
             slim_unified_preset = 1;
@@ -6111,6 +6124,14 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
             return;
         }
         /* ar == 4 (3:2): fall through to 23.976 / 25 / 30 */
+    }
+
+    /* 1x1 4:3 2160x1620 — dannephoto documents @ 24 FPS (TimerB fixed). */
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu == 6)
+    {
+        MENU_SET_VALUE("24");
+        MENU_SET_ENABLED(0);
+        return;
     }
 
     /* EOS M 1x3 Highest 16:9 runs at 22.250, not 23.976. */

@@ -62,6 +62,151 @@ static int handle_slim_rec_touch_block(struct event * event)
     }
     return 1;
 }
+
+/* Idle movie LV (not recording, ML overlays): open last changed setting from INFO.
+ *
+ * Prefer true long-press (1s) when BGMT_UNPRESS_INFO is observed.
+ * EOS M historically has no INFO unpress in gui.h; qemu also omits it. Until an
+ * unpress is seen, use double-press INFO (2nd press within ~450ms) instead, and
+ * defer the short press so Settings → INFO Button still works on a single tap.
+ *
+ * Short press → re-inject INFO for Settings → INFO Button mapping. */
+static int slim_info_lp_pressed;
+static int slim_info_lp_count;
+static int slim_info_lp_long_fired;
+static int slim_info_have_unpress;   /* latched after first BGMT_UNPRESS_INFO */
+static int slim_info_pending_short;  /* double-press / press-only path */
+
+static int slim_info_lp_context_ok(void)
+{
+    return lv && is_movie_mode() && !RECORDING && !gui_menu_shown() && lv_disp_mode == 0;
+}
+
+static void slim_info_lp_tick(int timer, void * opaque)
+{
+    (void)timer;
+    (void)opaque;
+
+    if (!slim_info_lp_pressed)
+        return;
+
+    if (!slim_info_lp_context_ok())
+    {
+        slim_info_lp_pressed = 0;
+        slim_info_lp_count = 0;
+        return;
+    }
+
+    slim_info_lp_count++;
+    /* 50 * 20ms = 1000ms */
+    if (slim_info_lp_count >= 50)
+    {
+        slim_info_lp_long_fired = 1;
+        slim_info_lp_pressed = 0;
+        slim_info_lp_count = 0;
+        gui_open_last_menu_selection();
+        return;
+    }
+
+    delayed_call(20, slim_info_lp_tick, 0);
+}
+
+static void slim_info_deferred_short(int timer, void * opaque)
+{
+    (void)timer;
+    (void)opaque;
+
+    if (!slim_info_pending_short)
+        return;
+    slim_info_pending_short = 0;
+    if (slim_info_lp_context_ok())
+        fake_simple_button(BGMT_INFO);
+}
+
+static void slim_info_lp_release(int fire_short)
+{
+    int count = slim_info_lp_count;
+    int long_fired = slim_info_lp_long_fired;
+
+    slim_info_lp_pressed = 0;
+    slim_info_lp_count = 0;
+    slim_info_lp_long_fired = 0;
+
+    /* Released before 1s → normal INFO (Settings mapping in crop_rec). */
+    if (fire_short && !long_fired && count < 50)
+        fake_simple_button(BGMT_INFO);
+}
+
+static int handle_slim_info_longpress(struct event * event)
+{
+    /* Fake INFO is our short-press re-inject — never re-arm. */
+    if (event->param == BGMT_INFO && IS_FAKE(event))
+        return 1;
+
+    if (event->param == BGMT_INFO)
+    {
+        if (!slim_info_lp_context_ok())
+            return 1;
+
+        /* True long-press path (INFO release events are available). */
+        if (slim_info_have_unpress)
+        {
+            if (slim_info_lp_pressed)
+            {
+                slim_info_lp_release(1);
+                return 0;
+            }
+            slim_info_lp_pressed = 1;
+            slim_info_lp_count = 0;
+            slim_info_lp_long_fired = 0;
+            delayed_call(20, slim_info_lp_tick, 0);
+            return 0;
+        }
+
+        /* Press-only path: double-press INFO → last setting; single → deferred short. */
+        if (slim_info_pending_short)
+        {
+            slim_info_pending_short = 0;
+            gui_open_last_menu_selection();
+            return 0;
+        }
+        slim_info_pending_short = 1;
+        delayed_call(450, slim_info_deferred_short, 0);
+        return 0;
+    }
+
+#ifdef BGMT_UNPRESS_INFO
+    if (event->param == BGMT_UNPRESS_INFO)
+    {
+        slim_info_have_unpress = 1;
+
+        /* First unpress may arrive while press-only deferred short is pending. */
+        if (slim_info_pending_short)
+        {
+            slim_info_pending_short = 0;
+            fake_simple_button(BGMT_INFO);
+            return 0;
+        }
+
+        if (slim_info_lp_pressed || slim_info_lp_long_fired)
+        {
+            slim_info_lp_release(1);
+            return 0;
+        }
+        return 1;
+    }
+#endif
+
+    /* Other real buttons cancel a pending long-press / deferred short. */
+    if (event->param >= 0 && event->param != GMT_OLC_INFO_CHANGED)
+    {
+        if (slim_info_lp_pressed)
+            slim_info_lp_release(0);
+        slim_info_pending_short = 0;
+    }
+
+    return 1;
+}
 #endif
 
 // disable Canon bottom bar
@@ -524,6 +669,7 @@ int handle_common_events_by_feature(struct event * event)
 
 #ifdef CONFIG_SLIM_MENUS
     if (handle_slim_rec_touch_block(event) == 0) return 0;
+    if (handle_slim_info_longpress(event) == 0) return 0;
 #endif
 
     /* convert Q replacement events into BGMT_Q */

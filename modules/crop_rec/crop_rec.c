@@ -5587,7 +5587,7 @@ static struct menu_entry slim_info_button_menu[] = {
         .update    = slim_info_button_update,
         .icon_type = IT_DICE,
         .help      = "INFO toggles: Dual ISO, Histogram, Waveform, Zebras, False Color, or framing.",
-        .help2     = "OFF uses Canon INFO. Framing toggles low-res correct framing vs real-time LV.",
+        .help2     = "OFF uses Canon INFO. Idle LV: long-press INFO (or double-press) opens last setting; tap screen does too.",
     },
     {
         .name      = "Up/Down Button",

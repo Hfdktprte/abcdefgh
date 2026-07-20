@@ -2561,6 +2561,7 @@ static unsigned YUV_HD_S_V = 0;       // YUV (HD) vertical stretch        0xC0F1
 static unsigned YUV_HD_S_V_E = 0;     // YUV (HD) enable vertical stretch 0xC0F11BC8
 
 /* used to correct aspect ratio on screen */
+static unsigned YUV_LV_S_H = 0;       // YUV (LV) horizontal stretch      0xC0F11A8C
 static unsigned YUV_LV_S_V = 0;       // YUV (LV) vertical stretch        0xC0F11ACC
 static unsigned YUV_LV_Buf = 0;       // YUV (LV) buffer size             0xC0F04210
 
@@ -2784,9 +2785,8 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
             RAW_H    = 0x23E + reg_width;
             RAW_V    = 0x671 + reg_height;
             TimerA   = 0x279;
-            if (Framerate_24) TimerB = 0x838;
-            if (Framerate_25) TimerB = 0x838;
-            if (Framerate_30) TimerB = 0x838;  // 30 Doesn't work, make it 25
+            /* Single supported rate (TimerB identical for 24/25/30 menu indices). */
+            TimerB   = 0x838;
         }
 
         Preview_H     = 2156 + reg_Preview_H;  // 2556 causes preview artifacts
@@ -2797,10 +2797,11 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
         YUV_HD_S_H    = 0x1050220 + reg_YUV_HD_S_H; //+ 50
         YUV_HD_S_V    = 0x1050240 + reg_YUV_HD_S_V;
         
-        //doktorkrek suggestion
+        /* doktorkrek: correct 4:3 AR with side band (uncommented 0xC0F11A8C).
+         * Without YUV_LV_S_H the image fills the 3:2 LCD but stretches horizontally. */
         YUV_LV_Buf = 0x1B505A0;
         YUV_LV_S_V = 0x10501B2;
-        //EngDrvOutLV(0xC0F11A8C, 0x1E0038);
+        YUV_LV_S_H = 0x1E0038;
                         
         Black_Bar     = 2;
         Preview_Control = 1;
@@ -4070,6 +4071,7 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 case 0xC0F11B8C: *(buf+1) = YUV_HD_S_H;                           break;
                 case 0xC0F11BCC: *(buf+1) = YUV_HD_S_V;                           break;
                 case 0xC0F11BC8: *(buf+1) = YUV_HD_S_V_E;                         break;
+                case 0xC0F11A8C: if (YUV_LV_S_H) *(buf+1) = YUV_LV_S_H;           break;
                 case 0xC0F11ACC: *(buf+1) = YUV_LV_S_V;                           break;
                 case 0xC0F04210: *(buf+1) = YUV_LV_Buf;                           break;
             }
@@ -4382,6 +4384,7 @@ void CheckPreviewRegsValuesAndForce()
         shamem_read(0xC0F11B8C) != YUV_HD_S_H                                         ||
         shamem_read(0xC0F11BCC) != YUV_HD_S_V                                         ||
         shamem_read(0xC0F11BC8) != YUV_HD_S_V_E                                       ||
+        (YUV_LV_S_H && shamem_read(0xC0F11A8C) != YUV_LV_S_H)                         ||
         shamem_read(0xC0F11ACC) != YUV_LV_S_V                                         ||
         shamem_read(0xC0F04210) != YUV_LV_Buf                                          )
         {
@@ -4419,6 +4422,7 @@ void CheckPreviewRegsValuesAndForce()
             EngDrvOutLV(0xC0F11B8C, YUV_HD_S_H);
             EngDrvOutLV(0xC0F11BCC, YUV_HD_S_V);
             EngDrvOutLV(0xC0F11BC8, YUV_HD_S_V_E);
+            if (YUV_LV_S_H) EngDrvOutLV(0xC0F11A8C, YUV_LV_S_H);
             EngDrvOutLV(0xC0F11ACC, YUV_LV_S_V);
             EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
         }
@@ -4559,6 +4563,9 @@ int GetShiftValue()
 
 void SetAspectRatioCorrectionValues()
 {
+    /* Clear unless a preset re-enables LV horizontal AR correction. */
+    YUV_LV_S_H = 0;
+
     if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         if (is_LCD_Output())
@@ -4569,6 +4576,9 @@ void SetAspectRatioCorrectionValues()
                 case 1:                                                         // CROP_2_8K
                 case 2:  YUV_LV_Buf = 0x13305A0; YUV_LV_S_V = 0x1050248; break; // CROP_3K
                 case 3:  YUV_LV_Buf = 0x19505A0; YUV_LV_S_V = 0x10501BA; break; // CROP_1440p
+                case 6:  /* CROP_1620p 4:3 — doktorkrek correct AR (side band) */
+                         YUV_LV_Buf = 0x1B505A0; YUV_LV_S_V = 0x10501B2;
+                         YUV_LV_S_H = 0x1E0038; break;
                 default: YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;  break;
             }
         }
@@ -5192,7 +5202,7 @@ static MENU_UPDATE_FUNC(crop_preset_1x1_res_update)
     }
     if (crop_preset_1x1_res_menu == 6)
     {
-        MENU_SET_HELP("2160x1620 @ 24 FPS");
+        MENU_SET_HELP("2160x1620 @ 23.943 FPS");
     }
 }
 
@@ -5710,7 +5720,7 @@ static void slim_1x1_resolve(int *res_idx, int *w, int *h, int *fps_mask)
     }
     else
     {
-        /* 4:3 → 2160x1620 @ 24 FPS (dannephoto CROP_1620p) — Highest only */
+        /* 4:3 → 2160x1620 @ 23.943 FPS (dannephoto CROP_1620p; single TimerB) — Highest only */
         *res_idx = 6;
         *w = 2160; *h = 1620;
         *fps_mask = 0x1;
@@ -6126,10 +6136,10 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
         /* ar == 4 (3:2): fall through to 23.976 / 25 / 30 */
     }
 
-    /* 1x1 4:3 2160x1620 — dannephoto documents @ 24 FPS (TimerB fixed). */
+    /* 1x1 4:3 2160x1620 — single fixed rate (TimerB 0x838); label 23.943. */
     if (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu == 6)
     {
-        MENU_SET_VALUE("24");
+        MENU_SET_VALUE("23.943");
         MENU_SET_ENABLED(0);
         return;
     }
@@ -7739,6 +7749,7 @@ static LVINFO_UPDATE_FUNC(crop_info)
                     if (CROP_1440p)    snprintf(buffer, sizeof(buffer), "1440p");
                     if (CROP_1280p)    snprintf(buffer, sizeof(buffer), "1280p");
                     if (CROP_1080p)    snprintf(buffer, sizeof(buffer), "1080p");
+                    if (CROP_1620p)    snprintf(buffer, sizeof(buffer), "1620p");
                     if (CROP_Full_Res) snprintf(buffer, sizeof(buffer), "FLV");
                     break;
                 case CROP_PRESET_1X3:
@@ -7831,6 +7842,10 @@ static LVINFO_UPDATE_FUNC(crop_info)
     if (raw_lv_is_enabled())
     {
         /* fixme: raw_capture_info is only updated when LV RAW is active */
+
+        /* When not in the zoom-branch naming path above, still name 1620p. */
+        if (!buffer[0] && patch_active && crop_preset == CROP_PRESET_1X1 && CROP_1620p)
+            snprintf(buffer, sizeof(buffer), "1620p");
 
         if (raw_capture_info.binning_x + raw_capture_info.skipping_x == 1 &&
             raw_capture_info.binning_y + raw_capture_info.skipping_y == 1)

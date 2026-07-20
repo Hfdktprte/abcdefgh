@@ -2561,7 +2561,6 @@ static unsigned YUV_HD_S_V = 0;       // YUV (HD) vertical stretch        0xC0F1
 static unsigned YUV_HD_S_V_E = 0;     // YUV (HD) enable vertical stretch 0xC0F11BC8
 
 /* used to correct aspect ratio on screen */
-static unsigned YUV_LV_S_H = 0;       // YUV (LV) horizontal stretch      0xC0F11A8C
 static unsigned YUV_LV_S_V = 0;       // YUV (LV) vertical stretch        0xC0F11ACC
 static unsigned YUV_LV_Buf = 0;       // YUV (LV) buffer size             0xC0F04210
 
@@ -2785,7 +2784,7 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
             RAW_H    = 0x23E + reg_width;
             RAW_V    = 0x671 + reg_height;
             TimerA   = 0x279;
-            /* Single supported rate (TimerB identical for 24/25/30 menu indices). */
+            /* Single supported rate (same TimerB as dannephoto for all menu FPS indices). */
             TimerB   = 0x838;
         }
 
@@ -2797,11 +2796,10 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
         YUV_HD_S_H    = 0x1050220 + reg_YUV_HD_S_H; //+ 50
         YUV_HD_S_V    = 0x1050240 + reg_YUV_HD_S_V;
         
-        /* doktorkrek: correct 4:3 AR with side band (uncommented 0xC0F11A8C).
-         * Without YUV_LV_S_H the image fills the 3:2 LCD but stretches horizontally. */
+        //doktorkrek suggestion (same as dannephoto — leave 0xC0F11A8C alone)
         YUV_LV_Buf = 0x1B505A0;
         YUV_LV_S_V = 0x10501B2;
-        YUV_LV_S_H = 0x1E0038;
+        //EngDrvOutLV(0xC0F11A8C, 0x1E0038);
                         
         Black_Bar     = 2;
         Preview_Control = 1;
@@ -4071,7 +4069,6 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 case 0xC0F11B8C: *(buf+1) = YUV_HD_S_H;                           break;
                 case 0xC0F11BCC: *(buf+1) = YUV_HD_S_V;                           break;
                 case 0xC0F11BC8: *(buf+1) = YUV_HD_S_V_E;                         break;
-                case 0xC0F11A8C: if (YUV_LV_S_H) *(buf+1) = YUV_LV_S_H;           break;
                 case 0xC0F11ACC: *(buf+1) = YUV_LV_S_V;                           break;
                 case 0xC0F04210: *(buf+1) = YUV_LV_Buf;                           break;
             }
@@ -4384,7 +4381,6 @@ void CheckPreviewRegsValuesAndForce()
         shamem_read(0xC0F11B8C) != YUV_HD_S_H                                         ||
         shamem_read(0xC0F11BCC) != YUV_HD_S_V                                         ||
         shamem_read(0xC0F11BC8) != YUV_HD_S_V_E                                       ||
-        (YUV_LV_S_H && shamem_read(0xC0F11A8C) != YUV_LV_S_H)                         ||
         shamem_read(0xC0F11ACC) != YUV_LV_S_V                                         ||
         shamem_read(0xC0F04210) != YUV_LV_Buf                                          )
         {
@@ -4422,7 +4418,6 @@ void CheckPreviewRegsValuesAndForce()
             EngDrvOutLV(0xC0F11B8C, YUV_HD_S_H);
             EngDrvOutLV(0xC0F11BCC, YUV_HD_S_V);
             EngDrvOutLV(0xC0F11BC8, YUV_HD_S_V_E);
-            if (YUV_LV_S_H) EngDrvOutLV(0xC0F11A8C, YUV_LV_S_H);
             EngDrvOutLV(0xC0F11ACC, YUV_LV_S_V);
             EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
         }
@@ -4563,9 +4558,6 @@ int GetShiftValue()
 
 void SetAspectRatioCorrectionValues()
 {
-    /* Clear unless a preset re-enables LV horizontal AR correction. */
-    YUV_LV_S_H = 0;
-
     if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         if (is_LCD_Output())
@@ -4576,9 +4568,7 @@ void SetAspectRatioCorrectionValues()
                 case 1:                                                         // CROP_2_8K
                 case 2:  YUV_LV_Buf = 0x13305A0; YUV_LV_S_V = 0x1050248; break; // CROP_3K
                 case 3:  YUV_LV_Buf = 0x19505A0; YUV_LV_S_V = 0x10501BA; break; // CROP_1440p
-                case 6:  /* CROP_1620p 4:3 — doktorkrek correct AR (side band) */
-                         YUV_LV_Buf = 0x1B505A0; YUV_LV_S_V = 0x10501B2;
-                         YUV_LV_S_H = 0x1E0038; break;
+                case 6:  YUV_LV_Buf = 0x1B505A0; YUV_LV_S_V = 0x10501B2; break; // CROP_1620p (dannephoto)
                 default: YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;  break;
             }
         }

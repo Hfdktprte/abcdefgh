@@ -60,6 +60,7 @@ static CONFIG_INT("crop.fps_over", fps_over, 0);
 static CONFIG_INT("crop.tapdisp", tapdisp, 1);
 static CONFIG_INT("crop.preset_fps", crop_preset_fps_reduce, 1);
 static CONFIG_INT("crop.preset", crop_preset_index, 2);
+static CONFIG_INT("crop.test_1x3_1736x2268", test_1x3_1736x2268, 0);
 static CONFIG_INT("crop.shutter_range", shutter_range, 0);
 static CONFIG_INT("crop.fix_dual_iso_flicker", fix_dual_iso_flicker, 1);
 
@@ -3389,7 +3390,20 @@ static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
         
         if (AR_2_35_1)
         {
-            if (Anam_Highest) /* 1736x2216 @ 23.976 FPS */
+            if (is_EOSM && test_1x3_1736x2268)
+            {
+                /* Temporary test: reuse known 2268-line preview geometry. */
+                RAW_H       = 0x1D4 + reg_width;
+                RAW_V       = 0x8F9 + reg_height;
+                TimerB      = 0xA2D;
+                TimerA      = 0x1FF;
+                Preview_H   = 1728;
+                Preview_V   = 2268;
+                Preview_R   = 0x1D000D;
+                YUV_HD_S_H  = 0x10501B5;
+                YUV_HD_S_V  = 0x1050359;
+            }
+            else if (Anam_Highest) /* 1736x2216 @ 23.976 FPS */
             {
                 if (is_650D || is_700D || is_EOSM)
                 {
@@ -5290,6 +5304,12 @@ static MENU_UPDATE_FUNC(crop_preset_1x3_res_update)
 
     if (crop_preset_ar_menu == 3)  // AR_2_35_1
     {
+        if (is_EOSM && test_1x3_1736x2268)
+        {
+            MENU_SET_VALUE("5.2K TEST");
+            MENU_SET_HELP("1736x2268 @ 23.976 FPS; temporary preview test");
+            return;
+        }
         if (crop_preset_1x3_res_menu == 0) // Anam_Highest
         {
             MENU_SET_VALUE("5.2K");
@@ -5568,6 +5588,19 @@ static struct menu_entry slim_more_hacks_menu[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .icon_type = IT_DICE,
         .help     = "Allow More hacks even when other settings would block them.",
+    },
+};
+
+static struct menu_entry slim_test_presets_menu[] = {
+    {
+        .name      = "1x3 Test preset",
+        .priv      = &test_1x3_1736x2268,
+        .max       = 1,
+        .choices   = CHOICES("OFF", "1736x2268"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Temporary EOS M 1x3 preview test.",
+        .help2     = "Use Mode 1x3 and Aspect Ratio 2.35:1. Disable after testing.",
     },
 };
 
@@ -6102,6 +6135,12 @@ static MENU_UPDATE_FUNC(slim_crop_res_update)
 {
     int w, h;
     slim_crop_sync_from_backend();
+    if (slim_mode_ui == 1 && is_EOSM && test_1x3_1736x2268 && crop_preset_ar_menu == 3)
+    {
+        MENU_SET_VALUE("1736x2268");
+        MENU_SET_ENABLED(0);
+        return;
+    }
     slim_crop_expected_res(&w, &h);
     MENU_SET_VALUE("%dx%d", w, h);
     /* Read-only: greyed via enabled=0 */
@@ -8366,6 +8405,7 @@ static unsigned int crop_rec_init()
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));
         menu_add("Expo", expo_shutter_range_eosm, COUNT(expo_shutter_range_eosm));
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
+        menu_add("Settings", slim_test_presets_menu, COUNT(slim_test_presets_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
@@ -8396,6 +8436,7 @@ MODULE_INFO_END()
 
 MODULE_CONFIGS_START()
     MODULE_CONFIG(crop_preset_index)
+    MODULE_CONFIG(test_1x3_1736x2268)
     MODULE_CONFIG(fps_over)
     MODULE_CONFIG(shutter_range)
     MODULE_CONFIG(bit_depth_analog)

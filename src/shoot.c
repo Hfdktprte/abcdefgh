@@ -1775,6 +1775,7 @@ static const int movie_shutter_angles_tenths[] = {
 static const char *movie_shutter_angle_labels[] = {
     "11.25", "22.5", "45", "90", "144", "172.8", "180", "216", "270", "360"
 };
+static int movie_shutter_angle_target_tenths = -1;
 
 static int movie_shutter_angle_index(int angle_tenths)
 {
@@ -1797,9 +1798,23 @@ static int movie_shutter_angle_current_index(void)
 {
     int s = get_current_shutter_reciprocal_x1000();
     int fps = fps_get_current_x1000();
-    if (s <= 0 || fps <= 0)
-        return 6; /* 180 degrees */
-    return movie_shutter_angle_index((3600 * fps + s / 2) / s);
+    if (movie_shutter_angle_target_tenths < 0)
+    {
+        if (s <= 0 || fps <= 0)
+            movie_shutter_angle_target_tenths = 18000;
+        else
+            movie_shutter_angle_target_tenths = movie_shutter_angles_tenths[
+                movie_shutter_angle_index((3600 * fps + s / 2) / s)];
+    }
+    return movie_shutter_angle_index(movie_shutter_angle_target_tenths);
+}
+
+int movie_shutter_angle_get_tenths(void)
+{
+    if (!is_movie_mode())
+        return 0;
+    (void)movie_shutter_angle_current_index();
+    return movie_shutter_angle_target_tenths;
 }
 
 static int movie_shutter_angle_set(int index)
@@ -1889,6 +1904,7 @@ shutter_toggle(void* priv, int sign)
         int index = MOD(movie_shutter_angle_current_index() + sign,
                         COUNT(movie_shutter_angles_tenths));
         (void)priv;
+        movie_shutter_angle_target_tenths = movie_shutter_angles_tenths[index];
         movie_shutter_angle_set(index);
         return;
     }

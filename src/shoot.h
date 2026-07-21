@@ -3,6 +3,7 @@
 void hdr_shot(int skip0, int wait);
 int expo_value_rounding_ok(int raw, int is_aperture);
 int round_shutter(int tv, int slowest_shutter);
+int movie_shutter_angle_get_tenths(void);
 int round_aperture(int av);
 int is_hdr_bracketing_enabled();
 

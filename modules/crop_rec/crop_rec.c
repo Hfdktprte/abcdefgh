@@ -1659,6 +1659,14 @@ static int adjust_shutter_blanking(int old)
             (orig_shutter - 250e-6) * default_fps_adj / current_fps;
         });
 
+    /* Movie Exposure -> Shutter now selects angle. Keep sensor blanking tied
+     * to requested angle, independent of Original/Full Range mapping. */
+    {
+        int angle_tenths = movie_shutter_angle_get_tenths();
+        if (angle_tenths > 0)
+            new_shutter = angle_tenths / (3600.0f * (current_fps / 1000.0f));
+    }
+
     /* what value is actually used for timer B? (possibly after our overrides) */
     int fps_timer_b = (shamem_read(0xC0F06014) & 0xFFFF) + 1;
 

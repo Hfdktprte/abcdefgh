@@ -5597,17 +5597,6 @@ static MENU_UPDATE_FUNC(slim_info_button_update)
 /* Settings → INFO / Up-Down / Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
-        .name      = "SET Button",
-        .priv      = &SET_button,
-        .min       = 1,
-        .max       = 2,
-        .choices   = CHOICES("x10 zoom", "Last settings"),
-        .edit_mode = EM_INLINE_ADJUST,
-        .icon_type = IT_DICE,
-        .help      = "Choose what SET does on the movie LiveView screen.",
-        .help2     = "Last settings opens the last changed ML setting, like a LiveView screen tap.",
-    },
-    {
         .name      = "INFO Button",
         .priv      = &INFO_button,
         .max       = 6,
@@ -5617,6 +5606,17 @@ static struct menu_entry slim_info_button_menu[] = {
         .icon_type = IT_DICE,
         .help      = "INFO toggles: Dual ISO, Histogram, Waveform, Zebras, False Color, or framing.",
         .help2     = "OFF uses Canon INFO. Idle LV: long-press INFO (or double-press) opens last setting; tap screen does too.",
+    },
+    {
+        .name      = "SET Button",
+        .priv      = &SET_button,
+        .min       = 1,
+        .max       = 2,
+        .choices   = CHOICES("x10 zoom", "Last settings"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Choose what SET does on the movie LiveView screen.",
+        .help2     = "Last settings opens the last changed ML setting, like a LiveView screen tap.",
     },
     {
         .name      = "Up/Down Button",

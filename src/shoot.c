@@ -1768,6 +1768,10 @@ iso_toggle( void * priv, int sign )
 
 #ifdef FEATURE_EXPO_SHUTTER
 
+#ifdef CONFIG_EOSM
+extern void shutter_lock_accept(int shutter);
+#endif
+
 static MENU_UPDATE_FUNC(shutter_display)
 {
     if (is_movie_mode())
@@ -1847,7 +1851,13 @@ shutter_toggle(void* priv, int sign)
         i = new_i;
         if (codes_shutter[i] == 0) continue;
         if (is_movie_mode() && codes_shutter[i] < SHUTTER_1_25) { k--; continue; }  /* there are many values to skip */
-        if (lens_set_rawshutter(codes_shutter[i])) break;
+        if (lens_set_rawshutter(codes_shutter[i]))
+        {
+#ifdef CONFIG_EOSM
+            shutter_lock_accept(codes_shutter[i]);
+#endif
+            break;
+        }
     }
 }
 

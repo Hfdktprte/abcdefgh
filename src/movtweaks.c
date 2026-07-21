@@ -314,6 +314,7 @@ static void shutter_lock_step()
         int exposure_menu =
             is_menu_entry_selected("Expo", "Shutter") ||
             is_menu_entry_selected("Movie", "Shutter range") ||
+            is_menu_entry_selected("Expo", "Shutter range") ||
             is_menu_entry_selected("Movie", "Shutter tuning") ||
             is_menu_entry_selected("Expo", "Shutter tuning") ||
             is_menu_entry_selected("Movie", "Shutter fine-tuning") ||

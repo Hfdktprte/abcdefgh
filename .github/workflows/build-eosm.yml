@@ -80,28 +80,3 @@ jobs:
           name: magiclantern-eosm-zip
           path: platform/EOSM.202/magiclantern-*.zip
           if-no-files-found: error
-
-      - name: Install cr2hdr host build dependencies
-        run: sudo apt-get install -y gcc-multilib
-
-      - name: Build cr2hdr host binary
-        working-directory: modules/dual_iso
-        run: |
-          set -euo pipefail
-          gcc -m32 -mno-ms-bitfields -O2 -Wall -I../../src \
-            -D_FILE_OFFSET_BITS=64 -fno-strict-aliasing -msse -msse2 \
-            -std=gnu99 cr2hdr.c ../../src/chdk-dng.c dcraw-bridge.c \
-            exiftool-bridge.c adobedng-bridge.c amaze_demosaic_RT.c \
-            dither.c timing.c kelvin.c -o cr2hdr -lm
-          ./cr2hdr --help > cr2hdr-help.txt
-          sha256sum cr2hdr > cr2hdr.sha256
-
-      - name: Upload cr2hdr artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cr2hdr-linux-x86
-          path: |
-            modules/dual_iso/cr2hdr
-            modules/dual_iso/cr2hdr-help.txt
-            modules/dual_iso/cr2hdr.sha256
-          if-no-files-found: error

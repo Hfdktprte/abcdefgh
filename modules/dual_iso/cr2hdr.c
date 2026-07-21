@@ -66,7 +66,6 @@ int fix_pink_dots = 0;
 int fix_bad_pixels = 1;
 int use_fullres = 1;
 int use_alias_map = 1;
-int alias_filter_mode = 1;      /* 0: legacy, 1: balanced, 2: strong */
 int use_stripe_fix = 1;
 float soft_film_ev = 0;
 
@@ -184,9 +183,6 @@ struct cmd_group options[] = {
             { &use_fullres,     1, "--fullres",          NULL},
             { &use_alias_map,   0, "--no-alias-map",     "disable alias map, used to fix aliasing in deep shadows" },
             { &use_alias_map,   1, "--alias-map",        NULL},
-            { &alias_filter_mode, 1, "--aa-balanced",    "adaptive alias filter (default)" },
-            { &alias_filter_mode, 2, "--aa-strong",      "stronger anti-moire blending; trades some shadow detail" },
-            { &alias_filter_mode, 0, "--aa-legacy",      "use legacy fixed alias-map threshold" },
             { &use_stripe_fix,  0, "--no-stripe-fix",    "disable horizontal stripe fix" },
             { &use_stripe_fix,  1, "--stripe-fix",       NULL},
             OPTION_EOL
@@ -2919,7 +2915,7 @@ static int hdr_interpolate()
 
 
     /* trial and error - too high = aliasing, too low = noisy */
-    int ALIAS_MAP_MAX = alias_filter_mode == 2 ? 11000 : 15000;
+    int ALIAS_MAP_MAX = 15000;
     
     if (use_alias_map)
     {
@@ -3056,12 +3052,6 @@ static int hdr_interpolate()
                     (alias_aux[x-2 + (y-6) * w] + alias_aux[x+2 + (y-6) * w] + alias_aux[x-6 + (y-2) * w] + alias_aux[x+6 + (y-2) * w] + alias_aux[x-6 + (y+2) * w] + alias_aux[x+6 + (y+2) * w] + alias_aux[x-2 + (y+6) * w] + alias_aux[x+2 + (y+6) * w]) * 111 / 1024 + 
                     (alias_aux[x-2 + (y-6) * w] + alias_aux[x+2 + (y-6) * w] + alias_aux[x-6 + (y-2) * w] + alias_aux[x+6 + (y-2) * w] + alias_aux[x-6 + (y+2) * w] + alias_aux[x+6 + (y+2) * w] + alias_aux[x-2 + (y+6) * w] + alias_aux[x+2 + (y+6) * w]) * 57 / 1024;
                 alias_map[x + y * w] = c;
-                if (alias_filter_mode == 2)
-                {
-                    int support = (alias_aux[x-2 + y*w] + alias_aux[x+2 + y*w]
-                                 + alias_aux[x + (y-2)*w] + alias_aux[x + (y+2)*w]) / 4;
-                    alias_map[x + y*w] = MAX(c, support * 3 / 4);
-                }
             }
         }
 

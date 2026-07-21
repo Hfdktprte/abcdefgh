@@ -1807,11 +1807,22 @@ static int movie_shutter_angle_set(int index)
     int fps = fps_get_current_x1000();
     float shutter_s;
     int raw;
+    int rem;
     if (fps <= 0)
         return 0;
 
     shutter_s = movie_shutter_angles_tenths[index] / (3600.0f * (fps / 1000.0f));
     raw = shutterf_to_raw(shutter_s);
+
+    /* Canon movie property accepts only raw shutter codes modulo 8: 0, 3, 4, 5. */
+    rem = raw & 7;
+    if (rem == 1 || rem == 2)
+        raw += 3 - rem;
+    else if (rem == 6)
+        raw -= 1;
+    else if (rem == 7)
+        raw += 1;
+
     return lens_set_rawshutter(raw);
 }
 

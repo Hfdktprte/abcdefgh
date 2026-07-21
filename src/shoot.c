@@ -1768,23 +1768,64 @@ iso_toggle( void * priv, int sign )
 
 #ifdef FEATURE_EXPO_SHUTTER
 
+/* Movie shutter-angle choices stay fixed; FPS only changes resulting shutter. */
+static const int movie_shutter_angles_tenths[] = {
+    1125, 2250, 4500, 9000, 14400, 17280, 18000, 21600, 27000, 36000
+};
+static const char *movie_shutter_angle_labels[] = {
+    "11.25", "22.5", "45", "90", "144", "172.8", "180", "216", "270", "360"
+};
+
+static int movie_shutter_angle_index(int angle_tenths)
+{
+    int best = 0;
+    int best_delta = ABS(angle_tenths - movie_shutter_angles_tenths[0]);
+    int i;
+    for (i = 1; i < COUNT(movie_shutter_angles_tenths); i++)
+    {
+        int delta = ABS(angle_tenths - movie_shutter_angles_tenths[i]);
+        if (delta < best_delta)
+        {
+            best = i;
+            best_delta = delta;
+        }
+    }
+    return best;
+}
+
+static int movie_shutter_angle_current_index(void)
+{
+    int s = get_current_shutter_reciprocal_x1000();
+    int fps = fps_get_current_x1000();
+    if (s <= 0 || fps <= 0)
+        return 6; /* 180 degrees */
+    return movie_shutter_angle_index((3600 * fps + s / 2) / s);
+}
+
+static int movie_shutter_angle_set(int index)
+{
+    int fps = fps_get_current_x1000();
+    float shutter_s;
+    int raw;
+    if (fps <= 0)
+        return 0;
+
+    shutter_s = movie_shutter_angles_tenths[index] / (3600.0f * (fps / 1000.0f));
+    raw = shutterf_to_raw(shutter_s);
+    return lens_set_rawshutter(raw);
+}
+
 static MENU_UPDATE_FUNC(shutter_display)
 {
     if (is_movie_mode())
     {
-        int s = get_current_shutter_reciprocal_x1000();
-        int deg = 3600 * fps_get_current_x1000() / s;
-        deg = (deg + 5) / 10;
+        int angle_index = movie_shutter_angle_current_index();
 #ifdef CONFIG_SLIM_MENUS
-        /* ◄ shutter ► on value; angle digits in rinfo (° drawn as Canon-sized ring). */
-        MENU_SET_VALUE("%s", lens_format_shutter_reciprocal(s, 5));
-        MENU_SET_RINFO("%d", deg);
+        MENU_SET_VALUE("%s" SYM_DEGREE, movie_shutter_angle_labels[angle_index]);
+        MENU_SET_RINFO("");
         MENU_SET_ENABLED(1);
 #else
-        MENU_SET_VALUE(
-            "%s, %d"SYM_DEGREE,
-            lens_format_shutter_reciprocal(s, 5),
-            deg);
+        MENU_SET_VALUE("%s" SYM_DEGREE, movie_shutter_angle_labels[angle_index]);
 #endif
     }
     else
@@ -1832,6 +1873,15 @@ static MENU_UPDATE_FUNC(shutter_display)
 void
 shutter_toggle(void* priv, int sign)
 {
+    if (is_movie_mode())
+    {
+        int index = MOD(movie_shutter_angle_current_index() + sign,
+                        COUNT(movie_shutter_angles_tenths));
+        (void)priv;
+        movie_shutter_angle_set(index);
+        return;
+    }
+
     if (!lens_info.raw_shutter) return;
     int i = raw2index_shutter(lens_info.raw_shutter);
     int k;
@@ -4531,7 +4581,7 @@ static struct menu_entry expo_menus[] = {
         .update     = shutter_display,
         .select     = shutter_toggle,
         .icon_type  = IT_PERCENT,
-        .help = "Fine-tune shutter value. Displays APEX Tv or degrees equiv.",
+        .help = "Select fixed shutter angle; speed follows current FPS.",
 #ifdef CONFIG_SLIM_MENUS
         .edit_mode = EM_INLINE_ADJUST,
 #else

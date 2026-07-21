@@ -1659,14 +1659,6 @@ static int adjust_shutter_blanking(int old)
             (orig_shutter - 250e-6) * default_fps_adj / current_fps;
         });
 
-    /* Movie Exposure -> Shutter now selects angle. Keep sensor blanking tied
-     * to requested angle, independent of Original/Full Range mapping. */
-    {
-        int angle_tenths = movie_shutter_angle_get_tenths();
-        if (angle_tenths > 0)
-            new_shutter = angle_tenths / (3600.0f * (current_fps / 1000.0f));
-    }
-
     /* what value is actually used for timer B? (possibly after our overrides) */
     int fps_timer_b = (shamem_read(0xC0F06014) & 0xFFFF) + 1;
 
@@ -5605,17 +5597,6 @@ static MENU_UPDATE_FUNC(slim_info_button_update)
 /* Settings → INFO / Up-Down / Shutter zoom (EOS M slim). */
 static struct menu_entry slim_info_button_menu[] = {
     {
-        .name      = "SET Button",
-        .priv      = &SET_button,
-        .min       = 1,
-        .max       = 2,
-        .choices   = CHOICES("x10 zoom", "Last settings"),
-        .edit_mode = EM_INLINE_ADJUST,
-        .icon_type = IT_DICE,
-        .help      = "Choose what SET does on the movie LiveView screen.",
-        .help2     = "Last settings opens the last changed ML setting, like a LiveView screen tap.",
-    },
-    {
         .name      = "INFO Button",
         .priv      = &INFO_button,
         .max       = 6,
@@ -5625,6 +5606,17 @@ static struct menu_entry slim_info_button_menu[] = {
         .icon_type = IT_DICE,
         .help      = "INFO toggles: Dual ISO, Histogram, Waveform, Zebras, False Color, or framing.",
         .help2     = "OFF uses Canon INFO. Idle LV: long-press INFO (or double-press) opens last setting; tap screen does too.",
+    },
+    {
+        .name      = "SET Button",
+        .priv      = &SET_button,
+        .min       = 1,
+        .max       = 2,
+        .choices   = CHOICES("x10 zoom", "Last settings"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .icon_type = IT_DICE,
+        .help      = "Choose what SET does on the movie LiveView screen.",
+        .help2     = "Last settings opens the last changed ML setting, like a LiveView screen tap.",
     },
     {
         .name      = "Up/Down Button",

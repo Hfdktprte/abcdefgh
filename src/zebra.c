@@ -709,14 +709,15 @@ static void zebra_slim_palette_entry(int color, int base_color,
 
 static void zebra_init_slim_palette(void)
 {
-    /* Higher opacity + chroma so zebras read clearly over LiveView. */
-    zebra_slim_palette_entry(ZEBRA_PAL_CLIP_RGB, COLOR_BLACK,  120, 256, 248);
-    zebra_slim_palette_entry(ZEBRA_PAL_GREEN,    COLOR_GREEN2, 320, 480, 228);
-    zebra_slim_palette_entry(ZEBRA_PAL_CYAN,     COLOR_CYAN,   320, 480, 228);
-    zebra_slim_palette_entry(ZEBRA_PAL_YELLOW,   COLOR_YELLOW, 320, 400, 220);
-    zebra_slim_palette_entry(ZEBRA_PAL_MAGENTA,  COLOR_MAGENTA,320, 400, 220);
-    zebra_slim_palette_entry(ZEBRA_PAL_RED,      COLOR_RED,    340, 420, 220);
-    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_BLUE,   320, 420, 220);
+    /* Performance keeps its existing scan rate, but all RGB clip states use
+     * Precision's darker red palette so zebras have one consistent color. */
+    zebra_slim_palette_entry(ZEBRA_PAL_CLIP_RGB, COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_GREEN,    COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_CYAN,     COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_YELLOW,   COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_MAGENTA,  COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_RED,      COLOR_RED, 210, 300, 120);
+    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_RED, 210, 300, 120);
 }
 
 static void zebra_init_slim_palette_precision(void)

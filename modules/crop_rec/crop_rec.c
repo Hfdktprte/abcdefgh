@@ -337,10 +337,6 @@ static void set_lv_af_mode(int lv_af_mode)
     prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
 }
 
-#ifdef CONFIG_EOSM
-static void crop_rec_recover_preview(int force_zoom_toggle);
-#endif
-
 //Photo mode
 static int reciso = 0; /* coming from crop_rec.c */
 extern int WEAK_FUNC(reciso) isoless_recovery_iso;
@@ -375,6 +371,7 @@ static void slim_zoom_to_x10(void)
     if (lv_disp_mode != 0) return;
 
     set_zoom(10);
+    /* Danne EOS M path: Canon owns x10 UI; restore its front buffer. */
     kill_canon_gui_mode = 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
@@ -398,9 +395,6 @@ static void slim_zoom_from_x10(void)
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
     wait_lv_frames(1);
-#ifdef CONFIG_EOSM
-    crop_rec_recover_preview(0);
-#endif
     redraw();
 }
 
@@ -656,9 +650,6 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 {
                         canon_gui_enable_front_buffer(0);
                 }
-#ifdef CONFIG_EOSM
-                crop_rec_recover_preview(1);
-#endif
                 return 0;
             }
         }
@@ -4358,7 +4349,7 @@ void CheckPreviewRegsValuesAndForce()
 #ifdef CONFIG_EOSM
     /* EOS M: engio hooks already patch preview; forcing registers here fights Canon
      * and stalls the whole UI (laggy audio meters, menu won't open). Recovery uses
-     * crop_rec_recover_preview() instead. */
+     * normal x5 zoom path instead. */
     return;
 #endif
 
@@ -5027,40 +5018,16 @@ static void update_patch()
     }
 }
 
-#ifdef CONFIG_EOSM
-static void crop_rec_recover_preview(int force_zoom_toggle);
-int crop_rec_request_preview_recovery();
-#endif
-
 /* enable patch when switching LiveView (not in the middle of LiveView) */
 /* otherwise you will end up with a halfway configured video mode that looks weird */
 PROP_HANDLER(PROP_LV_ACTION)
 {
     update_patch();
-#ifdef CONFIG_EOSM
-    if (!buf[0]) /* LV start / resume (e.g. powersave wake) */
-        crop_rec_request_preview_recovery();
-#endif
 }
 
 /* also try when switching zoom modes */
-#ifdef CONFIG_EOSM
-static int crop_rec_prev_dispsize = 1;
-#endif
 PROP_HANDLER(PROP_LV_DISPSIZE)
 {
-#ifdef CONFIG_EOSM
-    int new_zoom = buf[0];
-    if (new_zoom != 0x81 && new_zoom == 10)
-    {
-        crop_rec_recover_force_zoom = 1;
-        crop_rec_request_preview_recovery();
-    }
-    else if (new_zoom != 0x81 && crop_rec_prev_dispsize == 10 && new_zoom != 10)
-        crop_rec_request_preview_recovery();
-    if (new_zoom != 0x81)
-        crop_rec_prev_dispsize = new_zoom;
-#endif
     update_patch();
 }
 
@@ -6983,68 +6950,7 @@ int check_if_settings_changed()
 }
 
 #ifdef CONFIG_EOSM
-/* LiveView preview can desync from ML overlays after boot, x10 exit, or powersave. */
 static int crop_rec_lv_dirty = 1;
-static int crop_rec_recover_force_zoom = 0;
-
-static void crop_rec_recover_preview(int force_zoom_toggle)
-{
-    extern int kill_canon_gui_mode;
-
-    if (!lv || !CROP_PRESET_MENU || !patch_active) return;
-    if (!is_movie_mode() || RECORDING) return;
-
-    /* x10 uses Canon's native preview — keep front buffer on and refresh via zoom toggle */
-    if (lv_dispsize == 10 || PathDriveMode->zoom == 10)
-    {
-        kill_canon_gui_mode = 0;
-        if (canon_gui_front_buffer_disabled())
-            canon_gui_enable_front_buffer(0);
-        wait_lv_frames(2);
-        if (force_zoom_toggle)
-        {
-            gui_uilock(UILOCK_EVERYTHING);
-            set_zoom(1);
-            msleep(50);
-            set_zoom(10);
-            kill_canon_gui_mode = 0;
-            if (canon_gui_front_buffer_disabled())
-                canon_gui_enable_front_buffer(0);
-            gui_uilock(UILOCK_NONE);
-            wait_lv_frames(2);
-        }
-        redraw();
-        return;
-    }
-
-    if (canon_gui_front_buffer_disabled())
-        canon_gui_enable_front_buffer(0);
-
-    wait_lv_frames(1);
-
-    if (lv_dispsize == 5 && PathDriveMode->zoom == 5)
-        CheckPreviewRegsValuesAndForce();
-
-    if (force_zoom_toggle && lv_dispsize == 5)
-    {
-        gui_uilock(UILOCK_EVERYTHING);
-        set_zoom(1);
-        msleep(50);
-        set_zoom(5);
-        kill_canon_gui_mode = 1;
-        gui_uilock(UILOCK_NONE);
-        wait_lv_frames(1);
-        CheckPreviewRegsValuesAndForce();
-    }
-
-    redraw();
-}
-
-int crop_rec_request_preview_recovery()
-{
-    crop_rec_lv_dirty = 1;
-    return 0;
-}
 #endif
 
 /* when closing ML menu, check whether we need to refresh the LiveView */
@@ -7071,16 +6977,9 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 #endif
 
 #ifdef CONFIG_EOSM
-    static int was_mlv_busy = 0;
-    static int eosm_post_rec_until = 0;
     int mlv_busy = mlv_raw_rec_busy();
-    if (was_mlv_busy && !mlv_busy)
-        eosm_post_rec_until = get_ms_clock() + 800;
-    was_mlv_busy = mlv_busy;
-    int eosm_post_rec = get_ms_clock() < eosm_post_rec_until;
 #else
     int mlv_busy = 0;
-    int eosm_post_rec = 0;
 #endif
 
     int menu_shown = gui_menu_shown();
@@ -7153,14 +7052,6 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 #endif
             }
 #ifdef CONFIG_EOSM
-            if ((needs_refresh || settings_changed || crop_rec_recover_force_zoom)
-                && CROP_PRESET_MENU && patch_active && is_movie_mode())
-            {
-                crop_rec_recover_preview(crop_rec_recover_force_zoom);
-                crop_rec_recover_force_zoom = 0;
-            }
-#endif
-#ifdef CONFIG_EOSM
         crop_rec_lv_dirty = 0;
 #else
         lv_dirty = 0;
@@ -7211,8 +7102,6 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             {
                 static int eosm_af_multi_set = 0;
                 static int eosm_af_single_set = 0;
-                static int eosm_x5_zoom_last = 0;
-
                 if (CROP_PRESET_MENU != CROP_PRESET_3X3)
                 {
                     eosm_af_multi_set = 0;
@@ -7233,13 +7122,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 }
                 else
                 {
-#ifdef CONFIG_EOSM
-                    if (!eosm_post_rec && lv_dispsize == 1
-                        && should_run_polling_action(2000, &eosm_x5_zoom_last))
-                        set_zoom(5);
-#else
                     if (lv_dispsize == 1) set_zoom(5);
-#endif
                 }
             }
 
@@ -7260,13 +7143,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
             if (!is_manual_focus() && lv_af_mode == 1)
             {
-#ifdef CONFIG_EOSM
-                if (!eosm_post_rec && lv_dispsize == 1
-                    && should_run_polling_action(2000, &eosm_x5_zoom_last))
-                    set_zoom(5);
-#else
                 if (lv_dispsize == 1) set_zoom(5);
-#endif
             }
             }
         }
@@ -7319,15 +7196,6 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                     redraw();
                 }
             }
-#ifdef CONFIG_EOSM
-            static int crop_rec_x10_recover_last = 0;
-            if (lv_dispsize == 10 && PathDriveMode->zoom == 10
-                && canon_gui_front_buffer_disabled()
-                && should_run_polling_action(500, &crop_rec_x10_recover_last))
-            {
-                crop_rec_recover_preview(0);
-            }
-#endif
         }
 
         /* on entry-level models, setting picture quality to RAW from Canon menu gains extra SRM chunk 
@@ -7503,10 +7371,6 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     {
                             canon_gui_enable_front_buffer(0);
                     }
-#ifdef CONFIG_EOSM
-                    crop_rec_recover_preview(1);
-#endif
-
                     return 0;
                 }
             }
@@ -7526,9 +7390,6 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 
                     /* Disable Canon overlays in x5 mode */
                     kill_canon_gui_mode = 1;
-#ifdef CONFIG_EOSM
-                    crop_rec_recover_preview(1);
-#endif
                     return 0;
                 }
             }

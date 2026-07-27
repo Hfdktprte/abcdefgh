@@ -4570,8 +4570,10 @@ void menus_display(
         /* Return-to-grid control in every launched category header. */
         slim_draw_arrow_left(690, y + header_h / 2,
             MAX((int)fontspec_font(FONT_CANON)->height - 4, 18), COLOR_WHITE);
-        slim_touch_grid_back_x1 = 650;
-        slim_touch_grid_back_x2 = 712;
+        /* EOS M touch X coordinates top out near 616; keep the visual arrow
+         * at the right while making its touch box reachable and generous. */
+        slim_touch_grid_back_x1 = 500;
+        slim_touch_grid_back_x2 = 718;
         slim_touch_grid_back_y1 = y;
         slim_touch_grid_back_y2 = y + header_h;
 

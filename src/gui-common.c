@@ -116,6 +116,7 @@ static int handle_slim_rec_touch_block(struct event * event)
         break;
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
+        slim_touch_scroll_cancel();
 #ifdef BGMT_TOUCH_MOVE
     /* handled above so the diagnostic overlay can sample movement */
 #endif

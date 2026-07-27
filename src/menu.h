@@ -382,6 +382,9 @@ extern MENU_UPDATE_FUNC(menu_advanced_update);
 
 /* post a redraw event to menu task */
 void menu_redraw();
+#ifdef CONFIG_SLIM_MENUS
+void slim_touch_scroll_cancel(void);
+#endif
 
 /* should be obsolete, need to double-check */
 void menu_set_dirty();

@@ -156,17 +156,11 @@ static int slim_touch_scroll_down_y1, slim_touch_scroll_down_y2;
 static int slim_touch_scroll_pressed;
 static int slim_touch_scroll_direction;
 static int slim_touch_scroll_repeat_ms;
-static int slim_touch_back_x1, slim_touch_back_y1, slim_touch_back_x2, slim_touch_back_y2;
-static int slim_touch_swipe_active, slim_touch_swipe_last_y;
-static int slim_touch_feedback_direction;
 
 static void slim_touch_scroll_repeat(int timer, void *opaque);
 static int slim_touch_handle_scroll(int x, int y, int pressed);
-static void slim_touch_scroll_move(int direction);
-static int slim_touch_handle_back(int x, int y);
 static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color);
 static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color);
-static void slim_touch_feedback_clear(int timer, void *opaque);
 
 static void slim_touch_arrow_reset(void)
 {
@@ -174,9 +168,6 @@ static void slim_touch_arrow_reset(void)
     slim_touch_scroll_x1 = slim_touch_scroll_x2 = 0;
     slim_touch_scroll_up_y1 = slim_touch_scroll_up_y2 = 0;
     slim_touch_scroll_down_y1 = slim_touch_scroll_down_y2 = 0;
-    slim_touch_back_x1 = slim_touch_back_y1 = 0;
-    slim_touch_back_x2 = slim_touch_back_y2 = 0;
-    slim_touch_swipe_active = 0;
 }
 
 static void slim_touch_arrow_add(struct menu_entry *entry, int x1, int y1,
@@ -4433,11 +4424,10 @@ show_vscroll(struct menu * parent){
         /* Minimal scrollbar: orange thumb and white Canon-style arrows only. */
         bmp_fill(COLOR_ORANGE, x + 9, y, 6, size);
         int arrow_size = MAX((int)fontspec_font(FONT_CANON)->height - 4, 18);
-        int arrow_color = slim_touch_feedback_direction ? COLOR_ORANGE : COLOR_WHITE;
         slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + arrow_size / 2 + 2,
-            arrow_size, slim_touch_feedback_direction < 0 ? arrow_color : COLOR_WHITE);
+            arrow_size, COLOR_WHITE);
         slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - arrow_size / 2 - 2,
-            arrow_size, slim_touch_feedback_direction > 0 ? arrow_color : COLOR_WHITE);
+            arrow_size, COLOR_WHITE);
         slim_touch_scroll_x1 = x;
         slim_touch_scroll_x2 = x + bar_w;
         slim_touch_scroll_up_y1 = y_lo;
@@ -4753,15 +4743,6 @@ submenu_display(struct menu * submenu)
 */            
 
         submenu_key_hint(720-bx-45, by+5, COLOR_WHITE, MENU_BG_COLOR_HEADER_FOOTER, ICON_ML_Q_BACK);
-#ifdef CONFIG_SLIM_MENUS
-        /* Large, touch-visible back arrow in the submenu header. */
-        int back_tip_x = bx + w - 34;
-        slim_draw_arrow_left(back_tip_x, by + 20, 22, COLOR_WHITE);
-        slim_touch_back_x1 = MAX(bx + w - 76, bx + 8);
-        slim_touch_back_x2 = bx + w - 6;
-        slim_touch_back_y1 = by;
-        slim_touch_back_y2 = by + 40;
-#endif
 
     }
                                                    /* titlebar + padding difference for large submenus */
@@ -5748,12 +5729,7 @@ int handle_ml_menu_touch(struct event * event)
                 if (eosm_touch_get_xy(event, &x, &y) == 1)
                 {
                     if (slim_touch_handle_scroll(x, y, 1))
-                    {
-                        if (slim_touch_handle_back(x, y))
-                            slim_touch_handle_menu_arrow(x, y);
-                        slim_touch_swipe_active = x < 680;
-                        slim_touch_swipe_last_y = y;
-                    }
+                        slim_touch_handle_menu_arrow(x, y);
                 }
             }
 #endif
@@ -5762,29 +5738,6 @@ int handle_ml_menu_touch(struct event * event)
 #else
             fake_simple_button(BGMT_Q);
             return 0;
-#endif
-#ifdef BGMT_TOUCH_MOVE
-        case BGMT_TOUCH_MOVE:
-#ifdef CONFIG_SLIM_MENUS
-            {
-                int x, y;
-                if (slim_touch_swipe_active && eosm_touch_get_xy(event, &x, &y) == 1)
-                {
-                    int delta = y - slim_touch_swipe_last_y;
-                    if (ABS(delta) >= 18)
-                    {
-                        int direction = delta < 0 ? 1 : -1;
-                        slim_touch_scroll_move(direction);
-                        slim_touch_feedback_direction = direction;
-                        delayed_call(120, slim_touch_feedback_clear, 0);
-                        slim_touch_swipe_last_y = y;
-                    }
-                }
-            }
-            return 0;
-#else
-            return 1;
-#endif
 #endif
         case BGMT_TOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
@@ -5798,7 +5751,6 @@ int handle_ml_menu_touch(struct event * event)
         case BGMT_UNTOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
             slim_touch_handle_scroll(0, 0, 0);
-            slim_touch_swipe_active = 0;
 #endif
             return 0;
         default:
@@ -5814,14 +5766,6 @@ static void slim_touch_scroll_move(int direction)
     /* Wheel events are one-shot; PRESS_UP/DOWN would arm ML key-repeat
      * because touch has no matching physical unpress event. */
     fake_simple_button(direction < 0 ? BGMT_WHEEL_UP : BGMT_WHEEL_DOWN);
-}
-
-static void slim_touch_feedback_clear(int timer, void *opaque)
-{
-    (void)timer;
-    (void)opaque;
-    slim_touch_feedback_direction = 0;
-    menu_redraw();
 }
 
 static void slim_touch_scroll_repeat(int timer, void *opaque)
@@ -5856,20 +5800,8 @@ static int slim_touch_handle_scroll(int x, int y, int pressed)
 
     slim_touch_scroll_pressed = 1;
     slim_touch_scroll_repeat_ms = 220;
-    slim_touch_feedback_direction = slim_touch_scroll_direction;
     slim_touch_scroll_move(slim_touch_scroll_direction);
-    delayed_call(120, slim_touch_feedback_clear, 0);
     delayed_call(slim_touch_scroll_repeat_ms, slim_touch_scroll_repeat, 0);
-    return 0;
-}
-
-static int slim_touch_handle_back(int x, int y)
-{
-    if (!slim_touch_back_x2 || x < slim_touch_back_x1 || x >= slim_touch_back_x2 ||
-        y < slim_touch_back_y1 || y >= slim_touch_back_y2)
-        return 1;
-    menu_toggle_submenu();
-    menu_redraw();
     return 0;
 }
 
@@ -6187,9 +6119,6 @@ handle_ml_menu_keys(struct event * event)
 #ifdef CONFIG_TOUCHSCREEN
     case BGMT_TOUCH_1_FINGER:
     case BGMT_TOUCH_2_FINGER:
-#ifdef BGMT_TOUCH_MOVE
-    case BGMT_TOUCH_MOVE:
-#endif
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
         return handle_ml_menu_touch(event);

@@ -150,10 +150,24 @@ struct slim_touch_arrow_target
 
 static struct slim_touch_arrow_target slim_touch_arrow_targets[32];
 static int slim_touch_arrow_target_count;
+static int slim_touch_scroll_x1, slim_touch_scroll_x2;
+static int slim_touch_scroll_up_y1, slim_touch_scroll_up_y2;
+static int slim_touch_scroll_down_y1, slim_touch_scroll_down_y2;
+static int slim_touch_scroll_pressed;
+static int slim_touch_scroll_direction;
+static int slim_touch_scroll_repeat_ms;
+
+static void slim_touch_scroll_repeat(int timer, void *opaque);
+static int slim_touch_handle_scroll(int x, int y, int pressed);
+static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color);
+static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color);
 
 static void slim_touch_arrow_reset(void)
 {
     slim_touch_arrow_target_count = 0;
+    slim_touch_scroll_x1 = slim_touch_scroll_x2 = 0;
+    slim_touch_scroll_up_y1 = slim_touch_scroll_up_y2 = 0;
+    slim_touch_scroll_down_y1 = slim_touch_scroll_down_y2 = 0;
 }
 
 static void slim_touch_arrow_add(struct menu_entry *entry, int x1, int y1,
@@ -4387,28 +4401,31 @@ show_vscroll(struct menu * parent){
 #ifdef CONFIG_SLIM_MENUS
         /* Match slim title bar (Canon height + pad) + gap below blue line. */
         int slim_header_h = (int)fontspec_font(FONT_CANON)->height + 20;
-        int far_right = menu_grid_is_launched() && !submenu_level;
+        int far_right = 1;
         int y_lo = far_right
             ? slim_header_h + 12 : 44;
         int h_bot = submenu_level ? 422 : (far_right ? 472 : 429);
-        int track_h = h_bot - y_lo;
+        int arrow_h = 28;
+        int track_y = y_lo + arrow_h;
+        int track_bottom = h_bot - arrow_h;
+        int track_h = MAX(1, track_bottom - track_y);
         int size = MAX(8, track_h * menu_len / max);
-        int y = y_lo + ((track_h - size) * (pos-1) / MAX(max-1, 1));
-        int x = far_right ? 716 : MIN(360 + g_submenu_width/2, 720-3);
-        int bar_w = far_right ? 2 : 3;
-        if (submenu_level) x -= 6;
+        int y = track_y + ((track_h - size) * (pos-1) / MAX(max-1, 1));
+        int x = 696;
+        int bar_w = 24;
 
-        /* Subtle track + thumb on the far right for grid Movie/etc. */
-        if (far_right)
-        {
-            bmp_fill(COLOR_GRAY(20), x, y_lo, bar_w, track_h);
-            bmp_fill(COLOR_GRAY(50), x, y, bar_w, size);
-        }
-        else
-        {
-            bmp_fill(COLOR_BLACK, x-2, y_lo, 6, track_h);
-            bmp_fill(MENU_BAR_COLOR, x, y, bar_w, size);
-        }
+        /* Touch-friendly scrollbar: grey track, thumb, and large arrow zones. */
+        bmp_fill(COLOR_GRAY(20), x, y_lo, bar_w, h_bot - y_lo);
+        bmp_fill(COLOR_GRAY(50), x + 3, track_y, bar_w - 6, track_h);
+        bmp_fill(COLOR_GRAY(105), x + 3, y, bar_w - 6, size);
+        slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + 13, 7, COLOR_GRAY(120));
+        slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - 13, 7, COLOR_GRAY(120));
+        slim_touch_scroll_x1 = x;
+        slim_touch_scroll_x2 = x + bar_w;
+        slim_touch_scroll_up_y1 = y_lo;
+        slim_touch_scroll_up_y2 = track_y;
+        slim_touch_scroll_down_y1 = track_bottom;
+        slim_touch_scroll_down_y2 = h_bot;
 #else
         int y_lo = 44;
         int h = submenu_level ? 378 : 385;
@@ -5657,6 +5674,18 @@ static int slim_touch_handle_menu_arrow(int x, int y)
     }
     return 1;
 }
+
+static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color)
+{
+    for (int i = 0; i <= size; i++)
+        draw_line(cx - i, cy + i, cx + i, cy + i, color);
+}
+
+static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color)
+{
+    for (int i = 0; i <= size; i++)
+        draw_line(cx - i, cy - i, cx + i, cy - i, color);
+}
 #endif
 
 #ifdef CONFIG_TOUCHSCREEN
@@ -5680,7 +5709,10 @@ int handle_ml_menu_touch(struct event * event)
             {
                 int x, y;
                 if (eosm_touch_get_xy(event, &x, &y) == 1)
-                    slim_touch_handle_menu_arrow(x, y);
+                {
+                    if (slim_touch_handle_scroll(x, y, 1))
+                        slim_touch_handle_menu_arrow(x, y);
+                }
             }
 #endif
             /* Touch arrows use the same menu selection path as physical keys. */
@@ -5698,11 +5730,60 @@ int handle_ml_menu_touch(struct event * event)
 #endif
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+            slim_touch_handle_scroll(0, 0, 0);
+#endif
             return 0;
         default:
             return 1;
     }
     return 1;
+}
+
+static void slim_touch_scroll_move(int direction)
+{
+    struct menu *menu = get_current_menu_or_submenu();
+    if (!menu || edit_mode || menu_help_active)
+        return;
+    menu_entry_move(menu, direction);
+    menu_redraw();
+}
+
+static void slim_touch_scroll_repeat(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (!slim_touch_scroll_pressed || !menu_shown)
+        return;
+    slim_touch_scroll_move(slim_touch_scroll_direction);
+    if (slim_touch_scroll_repeat_ms > 35)
+        slim_touch_scroll_repeat_ms -= 15;
+    delayed_call(slim_touch_scroll_repeat_ms, slim_touch_scroll_repeat, 0);
+}
+
+static int slim_touch_handle_scroll(int x, int y, int pressed)
+{
+    if (!pressed)
+    {
+        slim_touch_scroll_pressed = 0;
+        return 0;
+    }
+
+    if (!slim_touch_scroll_x2 || x < slim_touch_scroll_x1 || x >= slim_touch_scroll_x2)
+        return 1;
+
+    if (y >= slim_touch_scroll_up_y1 && y < slim_touch_scroll_up_y2)
+        slim_touch_scroll_direction = -1;
+    else if (y >= slim_touch_scroll_down_y1 && y < slim_touch_scroll_down_y2)
+        slim_touch_scroll_direction = 1;
+    else
+        return 1;
+
+    slim_touch_scroll_pressed = 1;
+    slim_touch_scroll_repeat_ms = 220;
+    slim_touch_scroll_move(slim_touch_scroll_direction);
+    delayed_call(slim_touch_scroll_repeat_ms, slim_touch_scroll_repeat, 0);
+    return 0;
 }
 #endif
 

@@ -136,8 +136,8 @@ int menu_grid_handle_touch(int x, int y)
         if (x >= tx && x < tx + tw && y >= ty && y < ty + th)
         {
             grid_sel = i;
-            /* Paint the orange selection once, then launch directly. */
-            menu_grid_draw();
+            /* Launch directly; avoid a full-screen grid redraw here, which
+             * produces a visible black flash immediately before the menu. */
             menu_grid_launch(i);
             menu_redraw();
             return 0;

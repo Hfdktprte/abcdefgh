@@ -13,5 +13,7 @@ void menu_grid_enter_launched(void);
 void menu_grid_draw(void);
 /** Returns 0 if handled, 1 if caller should continue normal menu key handling. */
 int menu_grid_handle_key(int button_code, int *needs_full_redraw);
+/** Returns 0 if a touch inside a tile was launched, 1 otherwise. */
+int menu_grid_handle_touch(int x, int y);
 
 #endif

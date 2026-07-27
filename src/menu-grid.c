@@ -123,6 +123,25 @@ static void menu_grid_launch(int idx)
     grid_sel = idx;
 }
 
+int menu_grid_handle_touch(int x, int y)
+{
+    if (!grid_active)
+        return 1;
+
+    for (int i = 0; i < GRID_COUNT; i++)
+    {
+        int tx, ty, tw, th;
+        grid_cell_rect(i, &tx, &ty, &tw, &th);
+        if (x >= tx && x < tx + tw && y >= ty && y < ty + th)
+        {
+            menu_grid_launch(i);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 void menu_grid_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
@@ -229,5 +248,6 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw)
     (void) needs_full_redraw;
     return 1;
 }
+int menu_grid_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
 
 #endif

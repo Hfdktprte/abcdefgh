@@ -40,6 +40,7 @@
 #include "debug.h"
 #include "lvinfo.h"
 #include "powersave.h"
+#include "gui-common.h"
 
 #define CONFIG_MENU_ICONS
 //~ #define CONFIG_MENU_DIM_HACKS
@@ -5598,7 +5599,16 @@ int handle_ml_menu_touch(struct event * event)
     switch (button_code) {
         case BGMT_TOUCH_1_FINGER:
 #ifdef CONFIG_SLIM_MENUS
-            /* Slim: no touch interaction on any menu item. */
+            if (menu_grid_is_active())
+            {
+                int x, y;
+                if (eosm_touch_get_xy(event, &x, &y) == 1 &&
+                    menu_grid_handle_touch(x, y) == 0)
+                {
+                    menu_redraw();
+                }
+            }
+            /* Keep diagnostic touch handling isolated to the launcher. */
             return 0;
 #else
             fake_simple_button(BGMT_Q);

@@ -3239,7 +3239,13 @@ skip_name:
     /* Any touch on a rendered row selects it; arrow targets were registered
      * earlier and therefore take precedence when the touch hits an arrow. */
     if (slim_style && !customize_mode && !junkie_mode)
-        slim_touch_arrow_add(entry, 0, y, 720, y + h, -1);
+    {
+        int label_x = x + x_font_offset;
+        int label_w = bmp_string_width(fnt, info->name);
+        int label_x2 = MIN(label_x + label_w + 8, 690);
+        if (label_x2 > label_x)
+            slim_touch_arrow_add(entry, label_x, y, label_x2, y + h, -1);
+    }
 #endif
 
     // display help
@@ -4414,12 +4420,10 @@ show_vscroll(struct menu * parent){
         int x = 696;
         int bar_w = 24;
 
-        /* Touch-friendly scrollbar: grey track, thumb, and large arrow zones. */
-        bmp_fill(COLOR_GRAY(20), x, y_lo, bar_w, h_bot - y_lo);
-        bmp_fill(COLOR_GRAY(50), x + 3, track_y, bar_w - 6, track_h);
-        bmp_fill(COLOR_GRAY(105), x + 3, y, bar_w - 6, size);
-        slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + 13, 7, COLOR_GRAY(120));
-        slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - 13, 7, COLOR_GRAY(120));
+        /* Minimal scrollbar: orange thumb and white Canon-style arrows only. */
+        bmp_fill(COLOR_ORANGE, x + 9, y, 6, size);
+        slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + 13, 7, COLOR_WHITE);
+        slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - 13, 7, COLOR_WHITE);
         slim_touch_scroll_x1 = x;
         slim_touch_scroll_x2 = x + bar_w;
         slim_touch_scroll_up_y1 = y_lo;
@@ -5723,6 +5727,7 @@ int handle_ml_menu_touch(struct event * event)
 #endif
         case BGMT_TOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
+            slim_touch_scroll_cancel();
             return 0;
 #else
             fake_simple_button(BGMT_TRASH);
@@ -5782,6 +5787,11 @@ static int slim_touch_handle_scroll(int x, int y, int pressed)
     slim_touch_scroll_move(slim_touch_scroll_direction);
     delayed_call(slim_touch_scroll_repeat_ms, slim_touch_scroll_repeat, 0);
     return 0;
+}
+
+void slim_touch_scroll_cancel(void)
+{
+    slim_touch_scroll_pressed = 0;
 }
 #endif
 

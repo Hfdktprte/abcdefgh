@@ -91,8 +91,9 @@ int get_last_time_active() { return last_time_active; }
 
 #ifdef CONFIG_SLIM_MENUS
 /* While recording: ignore all touch.
- * Idle movie LV with ML overlays: 1-finger tap opens last changed setting.
- * Canon INFO screens (lv_disp_mode != 0): touch passes through to Canon. */
+ * During touchscreen diagnostics, idle movie LV touch is swallowed after the
+ * payload is drawn so legacy tap assignments cannot trigger actions.  Canon
+ * INFO screens (lv_disp_mode != 0) still receive touch events. */
 static int handle_slim_rec_touch_block(struct event * event)
 {
     switch (event->param)
@@ -105,10 +106,7 @@ static int handle_slim_rec_touch_block(struct event * event)
         if (RECORDING)
             return 0;
         if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
-        {
-            gui_open_last_menu_selection();
             return 0;
-        }
         break;
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
@@ -116,6 +114,8 @@ static int handle_slim_rec_touch_block(struct event * event)
         slim_touch_dbg_draw(event);
 #endif
         if (RECORDING)
+            return 0;
+        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
             return 0;
         break;
 #endif
@@ -132,6 +132,8 @@ static int handle_slim_rec_touch_block(struct event * event)
     case BGMT_TOUCH_PINCH_STOP:
 #endif
         if (RECORDING)
+            return 0;
+        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
             return 0;
         break;
     }

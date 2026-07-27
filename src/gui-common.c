@@ -36,6 +36,7 @@ static uint32_t slim_touch_dbg_obj;
 static uint32_t slim_touch_dbg_w0;
 static uint32_t slim_touch_dbg_w1;
 static uint32_t slim_touch_dbg_w2;
+static uint32_t slim_touch_dbg_nested[4];
 static int slim_touch_dbg_down;
 
 static uint32_t slim_touch_dbg_word(void *obj, int index)
@@ -46,6 +47,15 @@ static uint32_t slim_touch_dbg_word(void *obj, int index)
     if (!p || (p & 0xF0000000))
         return index == 0 ? p : 0;
 
+    return ((volatile uint32_t *)p)[index];
+}
+
+static uint32_t slim_touch_dbg_nested_word(uint32_t p, int index)
+{
+    /* W1 observed on EOS M is a low-RAM pointer.  Probe only aligned, valid
+     * looking RAM addresses; never dereference Canon's high/invalid values. */
+    if (p < 0x00900000 || p >= 0x00A00000 || (p & 3))
+        return 0;
     return ((volatile uint32_t *)p)[index];
 }
 
@@ -68,6 +78,8 @@ static void slim_touch_dbg_draw(struct event *event)
     slim_touch_dbg_w0 = slim_touch_dbg_word(event->obj, 0);
     slim_touch_dbg_w1 = slim_touch_dbg_word(event->obj, 1);
     slim_touch_dbg_w2 = slim_touch_dbg_word(event->obj, 2);
+    for (int i = 0; i < 4; i++)
+        slim_touch_dbg_nested[i] = slim_touch_dbg_nested_word(slim_touch_dbg_w1, i);
 
     slim_touch_dbg_decode(slim_touch_dbg_w0, &x0, &y0, &v0);
     slim_touch_dbg_decode(slim_touch_dbg_w1, &x1, &y1, &v1);
@@ -83,6 +95,14 @@ static void slim_touch_dbg_draw(struct event *event)
         "W1:%08x %s(%d,%d)", slim_touch_dbg_w1, v1 ? "XY" : "  ", x1, y1);
     bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 62,
         "W2:%08x %s(%d,%d)", slim_touch_dbg_w2, v2 ? "XY" : "  ", x2, y2);
+    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 80,
+        "W1[0]:%08x", slim_touch_dbg_nested[0]);
+    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 98,
+        "W1[1]:%08x", slim_touch_dbg_nested[1]);
+    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 116,
+        "W1[2]:%08x", slim_touch_dbg_nested[2]);
+    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 134,
+        "W1[3]:%08x", slim_touch_dbg_nested[3]);
 }
 #endif
 

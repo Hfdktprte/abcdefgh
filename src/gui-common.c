@@ -25,21 +25,7 @@ static int bottom_bar_dirty = 0;
 static int last_time_active = 0;
 
 #ifdef CONFIG_SLIM_MENUS
-/*
- * EOS M touchscreen diagnostics.  Canon's touch event only exposes the
- * event type to ML; the object carried with the event may contain the raw
- * coordinate word.  Show the event payload first so the camera-specific
- * coordinate source can be identified safely before adding touch actions.
- * This is intentionally diagnostic-only: it never injects key events.
- */
-static uint32_t slim_touch_dbg_obj;
-static uint32_t slim_touch_dbg_w0;
-static uint32_t slim_touch_dbg_w1;
-static uint32_t slim_touch_dbg_w2;
-static uint32_t slim_touch_dbg_nested[4];
-static int slim_touch_dbg_down;
-
-static uint32_t slim_touch_dbg_word(void *obj, int index)
+static uint32_t slim_touch_word(void *obj, int index)
 {
     uint32_t p = (uint32_t)obj;
 
@@ -50,7 +36,7 @@ static uint32_t slim_touch_dbg_word(void *obj, int index)
     return ((volatile uint32_t *)p)[index];
 }
 
-static uint32_t slim_touch_dbg_nested_word(uint32_t p, int index)
+static uint32_t slim_touch_nested_word(uint32_t p, int index)
 {
     /* W1 observed on EOS M is a low-RAM pointer.  Probe only aligned, valid
      * looking RAM addresses; never dereference Canon's high/invalid values. */
@@ -61,59 +47,14 @@ static uint32_t slim_touch_dbg_nested_word(uint32_t p, int index)
 
 int eosm_touch_get_xy(struct event *event, int *x, int *y)
 {
-    uint32_t w1 = slim_touch_dbg_word(event->obj, 1);
-    uint32_t packed = slim_touch_dbg_nested_word(w1, 1);
+    uint32_t w1 = slim_touch_word(event->obj, 1);
+    uint32_t packed = slim_touch_nested_word(w1, 1);
 
     *x = packed & 0xFFFF;
     *y = (packed >> 16) & 0xFFFF;
     return *x < 720 && *y < 480;
 }
 
-static void slim_touch_dbg_decode(uint32_t raw, int *x, int *y, int *valid)
-{
-    *x = raw & 0x3FF;
-    *y = (raw >> 16) & 0x3FF;
-    *valid = (*x < 720 && *y < 480);
-}
-
-static void slim_touch_dbg_draw(struct event *event)
-{
-    int x0, y0, x1, y1, x2, y2;
-    int v0, v1, v2;
-
-    if (!lv || gui_menu_shown() || RECORDING)
-        return;
-
-    slim_touch_dbg_obj = (uint32_t)event->obj;
-    slim_touch_dbg_w0 = slim_touch_dbg_word(event->obj, 0);
-    slim_touch_dbg_w1 = slim_touch_dbg_word(event->obj, 1);
-    slim_touch_dbg_w2 = slim_touch_dbg_word(event->obj, 2);
-    for (int i = 0; i < 4; i++)
-        slim_touch_dbg_nested[i] = slim_touch_dbg_nested_word(slim_touch_dbg_w1, i);
-
-    slim_touch_dbg_decode(slim_touch_dbg_w0, &x0, &y0, &v0);
-    slim_touch_dbg_decode(slim_touch_dbg_w1, &x1, &y1, &v1);
-    slim_touch_dbg_decode(slim_touch_dbg_w2, &x2, &y2, &v2);
-
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 8,
-        "TOUCH %s p:%02x t:%x a:%x obj:%08x",
-        slim_touch_dbg_down ? "DOWN" : "UP", event->param, event->type,
-        event->arg, slim_touch_dbg_obj);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 26,
-        "W0:%08x %s(%d,%d)", slim_touch_dbg_w0, v0 ? "XY" : "  ", x0, y0);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 44,
-        "W1:%08x %s(%d,%d)", slim_touch_dbg_w1, v1 ? "XY" : "  ", x1, y1);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 62,
-        "W2:%08x %s(%d,%d)", slim_touch_dbg_w2, v2 ? "XY" : "  ", x2, y2);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 80,
-        "W1[0]:%08x", slim_touch_dbg_nested[0]);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 98,
-        "W1[1]:%08x", slim_touch_dbg_nested[1]);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 116,
-        "W1[2]:%08x", slim_touch_dbg_nested[2]);
-    bmp_printf(FONT(FONT_SMALL, COLOR_WHITE, COLOR_BLACK), 8, 134,
-        "W1[3]:%08x", slim_touch_dbg_nested[3]);
-}
 #endif
 
 int is_canon_bottom_bar_dirty() { return bottom_bar_dirty; }
@@ -141,10 +82,6 @@ static int handle_slim_rec_touch_block(struct event * event)
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
-#ifdef CONFIG_SLIM_MENUS
-        slim_touch_dbg_down = 1;
-        slim_touch_dbg_draw(event);
-#endif
         if (RECORDING)
             return 0;
         if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
@@ -161,9 +98,6 @@ static int handle_slim_rec_touch_block(struct event * event)
         break;
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
-#ifdef CONFIG_SLIM_MENUS
-        slim_touch_dbg_draw(event);
-#endif
         if (RECORDING)
             return 0;
         if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
@@ -171,10 +105,6 @@ static int handle_slim_rec_touch_block(struct event * event)
         break;
 #endif
     case BGMT_TOUCH_2_FINGER:
-#ifdef CONFIG_SLIM_MENUS
-        slim_touch_dbg_down = 1;
-        slim_touch_dbg_draw(event);
-#endif
         slim_touch_single_pending = 0;
         if (RECORDING)
             return 0;
@@ -201,13 +131,8 @@ static int handle_slim_rec_touch_block(struct event * event)
             return 0;
         break;
     }
-#ifdef CONFIG_SLIM_MENUS
     if (event->param == BGMT_UNTOUCH_1_FINGER)
-    {
-        slim_touch_dbg_down = 0;
-        slim_touch_dbg_draw(event);
-    }
-#endif
+        slim_touch_single_pending = 0;
     return 1;
 }
 

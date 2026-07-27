@@ -156,9 +156,12 @@ static int slim_touch_scroll_down_y1, slim_touch_scroll_down_y2;
 static int slim_touch_scroll_pressed;
 static int slim_touch_scroll_direction;
 static int slim_touch_scroll_repeat_ms;
+static int slim_touch_grid_back_x1, slim_touch_grid_back_y1;
+static int slim_touch_grid_back_x2, slim_touch_grid_back_y2;
 
 static void slim_touch_scroll_repeat(int timer, void *opaque);
 static int slim_touch_handle_scroll(int x, int y, int pressed);
+static int slim_touch_handle_grid_back(int x, int y);
 static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color);
 static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color);
 
@@ -168,6 +171,8 @@ static void slim_touch_arrow_reset(void)
     slim_touch_scroll_x1 = slim_touch_scroll_x2 = 0;
     slim_touch_scroll_up_y1 = slim_touch_scroll_up_y2 = 0;
     slim_touch_scroll_down_y1 = slim_touch_scroll_down_y2 = 0;
+    slim_touch_grid_back_x1 = slim_touch_grid_back_y1 = 0;
+    slim_touch_grid_back_x2 = slim_touch_grid_back_y2 = 0;
 }
 
 static void slim_touch_arrow_add(struct menu_entry *entry, int x1, int y1,
@@ -4562,6 +4567,13 @@ void menus_display(
         /* Blue accent along the bottom edge of the grey bar */
         bmp_fill(MENU_BAR_COLOR, orig_x, y + header_h - 2, 720, 2);
 
+        /* Return-to-grid control in every launched category header. */
+        slim_draw_arrow_left(690, y + header_h / 2, 22, COLOR_WHITE);
+        slim_touch_grid_back_x1 = 650;
+        slim_touch_grid_back_x2 = 712;
+        slim_touch_grid_back_y1 = y;
+        slim_touch_grid_back_y2 = y + header_h;
+
         content_y = header_h + 12;
     }
     else
@@ -5738,7 +5750,11 @@ int handle_ml_menu_touch(struct event * event)
                 int x, y;
                 if (eosm_touch_get_xy(event, &x, &y) == 1)
                 {
-                    if (slim_touch_handle_scroll(x, y, 1))
+                    if (!slim_touch_handle_grid_back(x, y))
+                    {
+                        /* Header arrow returned to the launcher. */
+                    }
+                    else if (slim_touch_handle_scroll(x, y, 1))
                         slim_touch_handle_menu_arrow(x, y);
                 }
             }
@@ -5812,6 +5828,17 @@ static int slim_touch_handle_scroll(int x, int y, int pressed)
     slim_touch_scroll_repeat_ms = 220;
     slim_touch_scroll_move(slim_touch_scroll_direction);
     delayed_call(slim_touch_scroll_repeat_ms, slim_touch_scroll_repeat, 0);
+    return 0;
+}
+
+static int slim_touch_handle_grid_back(int x, int y)
+{
+    if (!slim_touch_grid_back_x2 || x < slim_touch_grid_back_x1 ||
+        x >= slim_touch_grid_back_x2 || y < slim_touch_grid_back_y1 ||
+        y >= slim_touch_grid_back_y2)
+        return 1;
+    menu_grid_return();
+    menu_redraw();
     return 0;
 }
 

@@ -3091,12 +3091,14 @@ skip_name:
 #ifdef CONFIG_SLIM_MENUS
     /* Optical center of FONT_CANON glyphs */
     int value_cy = y + y_font_offset + (fonth * 9) / 20;
+    int left_touch_target = -1;
     if (draw_left_arrow)
     {
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
+        left_touch_target = slim_touch_arrow_target_count;
         slim_touch_arrow_add(entry,
-            xval - arrow_w - arrow_pad - 12, y + 2,
-            xval + 12, y + h - 2, 1);
+            xval - arrow_w - arrow_pad - 16, y + 2,
+            xval + 16, y + h - 2, 1);
         x_value = xval + arrow_w + arrow_pad;
     }
     else if (value_left_pad)
@@ -3118,9 +3120,15 @@ skip_name:
     {
         int x_after_value = x_value + val_width + arrow_pad + arrow_w;
         slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
+        int right_touch_x1 = x_after_value - 16;
         slim_touch_arrow_add(entry,
-            x_after_value - 12, y + 2,
-            x_after_value + arrow_w + arrow_pad + 12, y + h - 2, 0);
+            right_touch_x1, y + 2,
+            x_after_value + arrow_w + arrow_pad + 16, y + h - 2, 0);
+        /* Keep the two enlarged hitboxes disjoint around narrow values. */
+        if (left_touch_target >= 0 && left_touch_target < slim_touch_arrow_target_count)
+            slim_touch_arrow_targets[left_touch_target].x2 = MIN(
+                slim_touch_arrow_targets[left_touch_target].x2,
+                MAX(slim_touch_arrow_targets[left_touch_target].x1, right_touch_x1));
         /* Secondary text after ► (shutter angle ° ring, or Dual ISO primary/second combo). */
         if (info->rinfo[0])
         {
@@ -4411,7 +4419,9 @@ show_vscroll(struct menu * parent){
         int y_lo = far_right
             ? slim_header_h + 12 : 44;
         int h_bot = submenu_level ? 422 : (far_right ? 472 : 429);
-        int arrow_h = 28;
+        /* Larger touch boxes than the visible arrows; top and bottom remain
+         * separated by the scrollbar track. */
+        int arrow_h = 34;
         int track_y = y_lo + arrow_h;
         int track_bottom = h_bot - arrow_h;
         int track_h = MAX(1, track_bottom - track_y);

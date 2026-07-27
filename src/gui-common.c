@@ -120,10 +120,22 @@ int is_canon_bottom_bar_dirty() { return bottom_bar_dirty; }
 int get_last_time_active() { return last_time_active; }
 
 #ifdef CONFIG_SLIM_MENUS
-/* While recording: ignore all touch.
- * During touchscreen diagnostics, idle movie LV touch is swallowed after the
- * payload is drawn so legacy tap assignments cannot trigger actions.  Canon
- * INFO screens (lv_disp_mode != 0) still receive touch events. */
+/* While recording: ignore all touch. In idle movie Live View, a single-finger
+ * tap opens the main grid, while the camera's simultaneous two-finger event
+ * opens Last Settings. Canon INFO screens (lv_disp_mode != 0) pass through. */
+static int slim_touch_single_pending;
+
+static void slim_touch_single_tap(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (!slim_touch_single_pending)
+        return;
+    slim_touch_single_pending = 0;
+    if (lv && is_movie_mode() && !RECORDING && !gui_menu_shown() && lv_disp_mode == 0)
+        gui_open_menu();
+}
+
 static int handle_slim_rec_touch_block(struct event * event)
 {
     switch (event->param)
@@ -136,7 +148,16 @@ static int handle_slim_rec_touch_block(struct event * event)
         if (RECORDING)
             return 0;
         if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        {
+            /* Wait briefly so a simultaneous second finger can be reported as
+             * BGMT_TOUCH_2_FINGER before committing to the single-finger action. */
+            if (!slim_touch_single_pending)
+            {
+                slim_touch_single_pending = 1;
+                delayed_call(180, slim_touch_single_tap, 0);
+            }
             return 0;
+        }
         break;
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
@@ -150,6 +171,19 @@ static int handle_slim_rec_touch_block(struct event * event)
         break;
 #endif
     case BGMT_TOUCH_2_FINGER:
+#ifdef CONFIG_SLIM_MENUS
+        slim_touch_dbg_down = 1;
+        slim_touch_dbg_draw(event);
+#endif
+        slim_touch_single_pending = 0;
+        if (RECORDING)
+            return 0;
+        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        {
+            gui_open_last_menu_selection();
+            return 0;
+        }
+        break;
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
 #ifdef BGMT_TOUCH_MOVE

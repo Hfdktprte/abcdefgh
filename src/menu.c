@@ -139,6 +139,33 @@ static int caret_position = 0;
 static struct menu_entry * entry_being_updated = 0;
 static int entry_removed_itself = 0;
 
+#ifdef CONFIG_SLIM_MENUS
+/* Touch hitboxes are populated from the same geometry used to draw arrows. */
+struct slim_touch_arrow_target
+{
+    int x1, y1, x2, y2;
+    struct menu_entry *entry;
+    int mode; /* menu_entry_select: 1 = left/decrement, 0 = right/increment */
+};
+
+static struct slim_touch_arrow_target slim_touch_arrow_targets[32];
+static int slim_touch_arrow_target_count;
+
+static void slim_touch_arrow_reset(void)
+{
+    slim_touch_arrow_target_count = 0;
+}
+
+static void slim_touch_arrow_add(struct menu_entry *entry, int x1, int y1,
+    int x2, int y2, int mode)
+{
+    if (slim_touch_arrow_target_count >= COUNT(slim_touch_arrow_targets))
+        return;
+    slim_touch_arrow_targets[slim_touch_arrow_target_count++] =
+        (struct slim_touch_arrow_target){ x1, y1, x2, y2, entry, mode };
+}
+#endif
+
 #ifdef FEATURE_JUNKIE_MENU
 static CONFIG_INT("menu.junkie", junkie_mode, 0);
 #else
@@ -3053,6 +3080,9 @@ skip_name:
     if (draw_left_arrow)
     {
         slim_draw_arrow_left(xval, value_cy, tri_h, arrow_color);
+        slim_touch_arrow_add(entry,
+            xval - arrow_w - arrow_pad - 12, y + 2,
+            xval + 12, y + h - 2, 1);
         x_value = xval + arrow_w + arrow_pad;
     }
     else if (value_left_pad)
@@ -3074,6 +3104,9 @@ skip_name:
     {
         int x_after_value = x_value + val_width + arrow_pad + arrow_w;
         slim_draw_arrow_right(x_after_value, value_cy, tri_h, arrow_color);
+        slim_touch_arrow_add(entry,
+            x_after_value - 12, y + 2,
+            x_after_value + arrow_w + arrow_pad + 12, y + h - 2, 0);
         /* Secondary text after ► (shutter angle ° ring, or Dual ISO primary/second combo). */
         if (info->rinfo[0])
         {
@@ -3702,6 +3735,9 @@ menu_display(
     int only_selected
 )
 {
+#ifdef CONFIG_SLIM_MENUS
+    slim_touch_arrow_reset();
+#endif
     struct menu_entry * entry = menu->children;
     
     //hide upper menu for vscroll
@@ -5592,6 +5628,29 @@ void keyrepeat_ack(int button_code) // also for arrow shortcuts
     keyrep_ack = (button_code == keyrepeat);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static int slim_touch_handle_menu_arrow(int x, int y)
+{
+    for (int i = 0; i < slim_touch_arrow_target_count; i++)
+    {
+        struct slim_touch_arrow_target *target = &slim_touch_arrow_targets[i];
+        if (x < target->x1 || x >= target->x2 ||
+            y < target->y1 || y >= target->y2)
+            continue;
+
+        if (target->entry && target->entry->parent_menu)
+        {
+            select_menu_by_name(target->entry->parent_menu->name,
+                target->entry->name);
+            menu_entry_select(get_current_menu_or_submenu(), target->mode);
+            menu_redraw();
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif
+
 #ifdef CONFIG_TOUCHSCREEN
 int handle_ml_menu_touch(struct event * event)
 {
@@ -5608,7 +5667,15 @@ int handle_ml_menu_touch(struct event * event)
                     menu_redraw();
                 }
             }
-            /* Keep diagnostic touch handling isolated to the launcher. */
+#ifdef CONFIG_SLIM_MENUS
+            else
+            {
+                int x, y;
+                if (eosm_touch_get_xy(event, &x, &y) == 1)
+                    slim_touch_handle_menu_arrow(x, y);
+            }
+#endif
+            /* Touch arrows use the same menu selection path as physical keys. */
             return 0;
 #else
             fake_simple_button(BGMT_Q);

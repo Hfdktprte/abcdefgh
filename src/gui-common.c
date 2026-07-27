@@ -59,6 +59,16 @@ static uint32_t slim_touch_dbg_nested_word(uint32_t p, int index)
     return ((volatile uint32_t *)p)[index];
 }
 
+int eosm_touch_get_xy(struct event *event, int *x, int *y)
+{
+    uint32_t w1 = slim_touch_dbg_word(event->obj, 1);
+    uint32_t packed = slim_touch_dbg_nested_word(w1, 1);
+
+    *x = packed & 0xFFFF;
+    *y = (packed >> 16) & 0xFFFF;
+    return *x < 720 && *y < 480;
+}
+
 static void slim_touch_dbg_decode(uint32_t raw, int *x, int *y, int *valid)
 {
     *x = raw & 0x3FF;

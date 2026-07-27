@@ -258,6 +258,10 @@ int handle_upside_down(struct event * event);
 int handle_swap_menu_erase(struct event * event);
 int handle_swap_info_play(struct event * event);
 int handle_ml_menu_keys(struct event * event);
+#ifdef CONFIG_SLIM_MENUS
+/* Decode the EOS M touch event's W1[1] packed coordinate word. */
+int eosm_touch_get_xy(struct event *event, int *x, int *y);
+#endif
 int handle_digic_poke(struct event * event);
 int handle_mlu_handheld(struct event * event);
 int handle_buttons_being_held(struct event * event);

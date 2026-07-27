@@ -171,8 +171,6 @@ static void slim_touch_arrow_reset(void)
     slim_touch_scroll_x1 = slim_touch_scroll_x2 = 0;
     slim_touch_scroll_up_y1 = slim_touch_scroll_up_y2 = 0;
     slim_touch_scroll_down_y1 = slim_touch_scroll_down_y2 = 0;
-    slim_touch_grid_back_x1 = slim_touch_grid_back_y1 = 0;
-    slim_touch_grid_back_x2 = slim_touch_grid_back_y2 = 0;
 }
 
 static void slim_touch_arrow_add(struct menu_entry *entry, int x1, int y1,

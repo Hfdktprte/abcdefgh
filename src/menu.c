@@ -4568,7 +4568,8 @@ void menus_display(
         bmp_fill(MENU_BAR_COLOR, orig_x, y + header_h - 2, 720, 2);
 
         /* Return-to-grid control in every launched category header. */
-        slim_draw_arrow_left(690, y + header_h / 2, 22, COLOR_WHITE);
+        slim_draw_arrow_left(690, y + header_h / 2,
+            MAX((int)fontspec_font(FONT_CANON)->height - 4, 18), COLOR_WHITE);
         slim_touch_grid_back_x1 = 650;
         slim_touch_grid_back_x2 = 712;
         slim_touch_grid_back_y1 = y;

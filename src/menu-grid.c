@@ -134,8 +134,9 @@ static void menu_grid_touch_launch(int timer, void *opaque)
     int idx = grid_touch_pending;
     grid_touch_pending = -1;
     grid_sel = idx;
-    /* Let the normal grid key path perform the launch in the menu task. */
-    fake_simple_button(BGMT_PRESS_SET);
+    /* Complete the launch after the selection redraw has been queued. */
+    menu_grid_launch(idx);
+    menu_redraw();
 }
 
 int menu_grid_handle_touch(int x, int y)

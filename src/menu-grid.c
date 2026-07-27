@@ -22,7 +22,6 @@ static int grid_active = 0;
 static int grid_launched = 0;
 /* Session-only: top-left on boot; remembered while camera stays on. */
 static int grid_sel = 0;
-static int grid_touch_pending = -1;
 
 typedef struct
 {
@@ -125,20 +124,6 @@ static void menu_grid_launch(int idx)
     grid_sel = idx;
 }
 
-static void menu_grid_touch_launch(int timer, void *opaque)
-{
-    (void)timer;
-    (void)opaque;
-    if (grid_touch_pending < 0 || !grid_active)
-        return;
-    int idx = grid_touch_pending;
-    grid_touch_pending = -1;
-    grid_sel = idx;
-    /* Complete the launch after the selection redraw has been queued. */
-    menu_grid_launch(idx);
-    menu_redraw();
-}
-
 int menu_grid_handle_touch(int x, int y)
 {
     if (!grid_active)
@@ -151,9 +136,10 @@ int menu_grid_handle_touch(int x, int y)
         if (x >= tx && x < tx + tw && y >= ty && y < ty + th)
         {
             grid_sel = i;
-            grid_touch_pending = i;
+            /* Paint the orange selection once, then launch directly. */
+            menu_grid_draw();
+            menu_grid_launch(i);
             menu_redraw();
-            delayed_call(140, menu_grid_touch_launch, 0);
             return 0;
         }
     }
@@ -200,8 +186,6 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw)
 {
     if (!grid_active)
         return 1;
-
-    grid_touch_pending = -1;
 
     int col = grid_sel % GRID_COLS;
     int row = grid_sel / GRID_COLS;

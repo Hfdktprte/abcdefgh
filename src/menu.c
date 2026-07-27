@@ -4422,8 +4422,11 @@ show_vscroll(struct menu * parent){
 
         /* Minimal scrollbar: orange thumb and white Canon-style arrows only. */
         bmp_fill(COLOR_ORANGE, x + 9, y, 6, size);
-        slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + 13, 7, COLOR_WHITE);
-        slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - 13, 7, COLOR_WHITE);
+        int arrow_size = MAX((int)fontspec_font(FONT_CANON)->height - 4, 18);
+        slim_draw_scroll_arrow_up(x + bar_w / 2, y_lo + arrow_size / 2 + 2,
+            arrow_size, COLOR_WHITE);
+        slim_draw_scroll_arrow_down(x + bar_w / 2, h_bot - arrow_size / 2 - 2,
+            arrow_size, COLOR_WHITE);
         slim_touch_scroll_x1 = x;
         slim_touch_scroll_x2 = x + bar_w;
         slim_touch_scroll_up_y1 = y_lo;
@@ -5681,14 +5684,24 @@ static int slim_touch_handle_menu_arrow(int x, int y)
 
 static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color)
 {
-    for (int i = 0; i <= size; i++)
-        draw_line(cx - i, cy + i, cx + i, cy + i, color);
+    int half = MAX(size / 2, 1);
+    int depth = MAX((size * 6) / 10, 2);
+    for (int i = 0; i <= half; i++)
+    {
+        int width = depth * i / half;
+        draw_line(cx - width, cy - half + i, cx + width, cy - half + i, color);
+    }
 }
 
 static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color)
 {
-    for (int i = 0; i <= size; i++)
-        draw_line(cx - i, cy - i, cx + i, cy - i, color);
+    int half = MAX(size / 2, 1);
+    int depth = MAX((size * 6) / 10, 2);
+    for (int i = 0; i <= half; i++)
+    {
+        int width = depth * i / half;
+        draw_line(cx - width, cy + half - i, cx + width, cy + half - i, color);
+    }
 }
 #endif
 
@@ -5749,7 +5762,9 @@ static void slim_touch_scroll_move(int direction)
 {
     /* Re-inject the normal menu button event. Directly moving the menu from
      * the touch/timer callback can race the menu task and trigger Canon Err 70. */
-    fake_simple_button(direction < 0 ? BGMT_PRESS_UP : BGMT_PRESS_DOWN);
+    /* Wheel events are one-shot; PRESS_UP/DOWN would arm ML key-repeat
+     * because touch has no matching physical unpress event. */
+    fake_simple_button(direction < 0 ? BGMT_WHEEL_UP : BGMT_WHEEL_DOWN);
 }
 
 static void slim_touch_scroll_repeat(int timer, void *opaque)

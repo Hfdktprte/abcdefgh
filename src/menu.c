@@ -4417,7 +4417,8 @@ show_vscroll(struct menu * parent){
         int track_h = MAX(1, track_bottom - track_y);
         int size = MAX(8, track_h * menu_len / max);
         int y = track_y + ((track_h - size) * (pos-1) / MAX(max-1, 1));
-        int x = 696;
+        /* Keep the complete arrow inside the 720px bitmap edge. */
+        int x = 688;
         int bar_w = 24;
 
         /* Minimal scrollbar: orange thumb and white Canon-style arrows only. */

@@ -5742,11 +5742,9 @@ int handle_ml_menu_touch(struct event * event)
 
 static void slim_touch_scroll_move(int direction)
 {
-    struct menu *menu = get_current_menu_or_submenu();
-    if (!menu || edit_mode || menu_help_active)
-        return;
-    menu_entry_move(menu, direction);
-    menu_redraw();
+    /* Re-inject the normal menu button event. Directly moving the menu from
+     * the touch/timer callback can race the menu task and trigger Canon Err 70. */
+    fake_simple_button(direction < 0 ? BGMT_PRESS_UP : BGMT_PRESS_DOWN);
 }
 
 static void slim_touch_scroll_repeat(int timer, void *opaque)

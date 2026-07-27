@@ -3221,6 +3221,13 @@ skip_name:
         }
     }
 
+#ifdef CONFIG_SLIM_MENUS
+    /* Any touch on a rendered row selects it; arrow targets were registered
+     * earlier and therefore take precedence when the touch hits an arrow. */
+    if (slim_style && !customize_mode && !junkie_mode)
+        slim_touch_arrow_add(entry, 0, y, 720, y + h, -1);
+#endif
+
     // display help
 #ifdef CONFIG_SLIM_MENUS
     /* Slim Expo UI: no bottom help/description text for any menu item. */
@@ -5642,7 +5649,8 @@ static int slim_touch_handle_menu_arrow(int x, int y)
         {
             select_menu_by_name(target->entry->parent_menu->name,
                 target->entry->name);
-            menu_entry_select(get_current_menu_or_submenu(), target->mode);
+            if (target->mode >= 0)
+                menu_entry_select(get_current_menu_or_submenu(), target->mode);
             menu_redraw();
             return 0;
         }

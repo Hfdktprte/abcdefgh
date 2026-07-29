@@ -54,6 +54,14 @@ static void quick_screen_feedback_clear(int timer, void *opaque)
         menu_redraw();
 }
 
+static void quick_screen_refresh(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (quick_screen_active)
+        menu_redraw();
+}
+
 typedef struct
 {
     const char *label;
@@ -252,39 +260,42 @@ void menu_quick_screen_draw(void)
 int menu_quick_screen_handle_touch(int x, int y)
 {
     int index;
+    int row;
+    int col;
+    int local_y;
+    int delta;
+    const quick_screen_item_t *item;
     if (!quick_screen_active)
         return 1;
-    for (index = 0; index < 6; index++)
+
+    /* Each arrow owns the full width of its 240px column and the empty band
+     * around the visible triangle. The value band remains inert. */
+    col = COERCE(x / 240, 0, 2);
+    row = y >= 240 ? 1 : 0;
+    local_y = y - row * 240;
+    index = row * 3 + col;
+    item = &quick_screen_items[index];
+
+    if (local_y <= 54)
     {
-        int cx, value_y, up_tip_y, down_tip_y;
-        int delta;
-        const quick_screen_item_t *item = &quick_screen_items[index];
-        quick_screen_geometry(
-            index, &cx, &value_y, &up_tip_y, &down_tip_y);
-
-        if (x >= cx - 58 && x <= cx + 58 &&
-            y >= up_tip_y - 8 && y <= up_tip_y + 34)
-        {
-            quick_screen_feedback = index * 2;
-            delta = 1;
-        }
-        else if (x >= cx - 58 && x <= cx + 58 &&
-                 y >= down_tip_y - 34 && y <= down_tip_y + 8)
-        {
-            quick_screen_feedback = index * 2 + 1;
-            delta = -1;
-        }
-        else
-        {
-            continue;
-        }
-
-        menu_adjust_value_by_name(
-            item->adjust_menu, item->adjust_entry, delta);
-        delayed_call(120, quick_screen_feedback_clear, 0);
-        menu_redraw();
+        quick_screen_feedback = index * 2;
+        delta = 1;
+    }
+    else if (local_y >= 104 && local_y <= 184)
+    {
+        quick_screen_feedback = index * 2 + 1;
+        delta = -1;
+    }
+    else
+    {
         return 0;
     }
+
+    menu_adjust_value_by_name(
+        item->adjust_menu, item->adjust_entry, delta);
+    menu_redraw();
+    delayed_call(220, quick_screen_feedback_clear, 0);
+    delayed_call(500, quick_screen_refresh, 0);
     return 0;
 }
 

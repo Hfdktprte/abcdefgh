@@ -344,8 +344,8 @@ void menu_quick_screen_draw(void)
 
         if (index == quick_screen_sel)
         {
-            /* Same 60px width as the visible arrows. */
-            bmp_fill(COLOR_YELLOW, cx - 30, up_tip_y - 17, 60, 4);
+            /* Slightly narrower than the 60px arrow for a lighter highlight. */
+            bmp_fill(COLOR_YELLOW, cx - 24, up_tip_y - 17, 48, 4);
         }
     }
 }

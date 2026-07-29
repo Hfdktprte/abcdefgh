@@ -6075,6 +6075,63 @@ static MENU_UPDATE_FUNC(slim_crop_res_update)
     MENU_SET_ENABLED(0);
 }
 
+/* Quick Screen resolution is a single flat list of every Aspect Ratio and
+ * resolution tier available in the current Mode. Apply only the final
+ * combination, so touch input cannot expose intermediate invalid states. */
+static MENU_SELECT_FUNC(slim_crop_quick_res_select)
+{
+    int choices;
+    int ar_delta = delta > 0 ? 1 : -1;
+
+    slim_crop_sync_from_backend();
+    if (slim_mode_ui == 3)
+        return; /* Full-Res LV has one fixed resolution. */
+
+    choices = slim_preset_choice_count();
+    slim_unified_preset = COERCE(slim_unified_preset, 0, choices - 1);
+
+    if (delta > 0 && slim_unified_preset > 0)
+    {
+        /* Up: move toward a higher resolution in the same Aspect Ratio. */
+        slim_unified_preset--;
+    }
+    else if (delta < 0 && slim_unified_preset < choices - 1)
+    {
+        /* Down: move toward a lower resolution in the same Aspect Ratio. */
+        slim_unified_preset++;
+    }
+    else
+    {
+        /* End of this Aspect Ratio: wrap to the adjacent Aspect Ratio. */
+        if (slim_mode_ui == 0)
+            slim_1x1_ar = MOD(slim_1x1_ar + ar_delta, 5);
+        else
+            crop_preset_ar_menu = MOD(crop_preset_ar_menu + ar_delta, 5);
+
+        choices = slim_preset_choice_count();
+        /* Up enters the next Aspect Ratio at its lowest tier; down enters the
+         * previous one at Highest. This makes both directions exact inverses. */
+        slim_unified_preset = delta > 0 ? choices - 1 : 0;
+    }
+
+    if (slim_mode_ui == 0)
+        slim_crop_apply_mode();
+    else if (slim_mode_ui == 1)
+        slim_crop_apply_unified_preset();
+    else
+        slim_crop_apply_3x3_from_ar();
+    slim_crop_clamp_fps();
+}
+
+static MENU_UPDATE_FUNC(slim_crop_quick_res_update)
+{
+    int w, h;
+    slim_crop_sync_from_backend();
+    slim_crop_expected_res(&w, &h);
+    MENU_SET_VALUE("%dx%d", w, h);
+    MENU_SET_ENABLED(slim_mode_ui != 3);
+}
+
 static MENU_SELECT_FUNC(slim_crop_fps_select)
 {
     if (slim_mode_ui == 3)
@@ -6219,6 +6276,14 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .update     = slim_crop_res_update,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "RAW resolution from Mode, Aspect Ratio and Preset (read-only).",
+    },
+    {
+        .name       = "Quick Resolution",
+        .select     = slim_crop_quick_res_select,
+        .update     = slim_crop_quick_res_update,
+        .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
+        .shidden    = 1,
+        .help       = "Quick Screen selector for every Aspect Ratio and resolution.",
     },
     {
         .name       = "Frame Rate",

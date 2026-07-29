@@ -5347,7 +5347,9 @@ menu_redraw_do()
             //~ prev_z = z;
             
 #ifdef CONFIG_SLIM_MENUS
-            if (menu_grid_is_active())
+            if (menu_quick_screen_is_active())
+                menu_quick_screen_draw();
+            else if (menu_grid_is_active())
                 menu_grid_draw();
             else
 #endif
@@ -5356,7 +5358,7 @@ menu_redraw_do()
             if (!menu_lv_transparent_mode && !SUBMENU_OR_EDIT && !junkie_mode)
             {
 #ifdef CONFIG_SLIM_MENUS
-                if (!menu_grid_is_active())
+                if (!menu_grid_is_active() && !menu_quick_screen_is_active())
 #endif
                 if (is_menu_active("Help")) menu_show_version();
             }
@@ -5736,7 +5738,13 @@ int handle_ml_menu_touch(struct event * event)
     switch (button_code) {
         case BGMT_TOUCH_1_FINGER:
 #ifdef CONFIG_SLIM_MENUS
-            if (menu_grid_is_active())
+            if (menu_quick_screen_is_active())
+            {
+                int x, y;
+                if (eosm_touch_get_xy(event, &x, &y) == 1)
+                    menu_quick_screen_handle_touch(x, y);
+            }
+            else if (menu_grid_is_active())
             {
                 int x, y;
                 if (eosm_touch_get_xy(event, &x, &y) == 1 &&
@@ -5768,6 +5776,8 @@ int handle_ml_menu_touch(struct event * event)
 #endif
         case BGMT_TOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
+            if (menu_quick_screen_is_active())
+                return 0;
             slim_touch_scroll_cancel();
             return 0;
 #else
@@ -5777,6 +5787,8 @@ int handle_ml_menu_touch(struct event * event)
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
+            if (menu_quick_screen_is_active())
+                return 0;
             slim_touch_handle_scroll(0, 0, 0);
 #endif
             return 0;
@@ -5902,6 +5914,14 @@ handle_ml_menu_keys(struct event * event)
     int menu_needs_full_redraw = 0; // if true, do not allow quick redraws
 
 #ifdef CONFIG_SLIM_MENUS
+    if (menu_quick_screen_is_active())
+    {
+        if (!menu_quick_screen_handle_key(button_code))
+        {
+            keyrepeat_ack(button_code);
+            return 0;
+        }
+    }
     if (menu_grid_is_active())
     {
         int grid_handled = menu_grid_handle_key(button_code, &menu_needs_full_redraw);

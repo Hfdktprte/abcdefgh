@@ -16,4 +16,12 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw);
 /** Returns 0 if a touch inside a tile was launched, 1 otherwise. */
 int menu_grid_handle_touch(int x, int y);
 
+/* Lightweight Live View Quick Screen overlay. */
+int menu_quick_screen_is_active(void);
+void menu_quick_screen_open(void);
+void menu_quick_screen_close(void);
+void menu_quick_screen_draw(void);
+int menu_quick_screen_handle_touch(int x, int y);
+int menu_quick_screen_handle_key(int button_code);
+
 #endif

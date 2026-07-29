@@ -12,6 +12,7 @@
 #include <config.h>
 #include <lvinfo.h>
 #include <menu.h>
+#include <menu-grid.h>
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -62,7 +63,7 @@ int get_last_time_active() { return last_time_active; }
 
 #ifdef CONFIG_SLIM_MENUS
 /* While recording: ignore all touch. In idle movie Live View, a single-finger
- * tap opens the main grid, while the camera's simultaneous two-finger event
+ * tap opens the Quick Screen, while the camera's simultaneous two-finger event
  * opens Last Settings. Canon INFO screens (lv_disp_mode != 0) pass through. */
 static int slim_touch_single_pending;
 
@@ -74,7 +75,10 @@ static void slim_touch_single_tap(int timer, void *opaque)
         return;
     slim_touch_single_pending = 0;
     if (lv && is_movie_mode() && !RECORDING && !gui_menu_shown() && lv_disp_mode == 0)
+    {
+        menu_quick_screen_open();
         gui_open_menu();
+    }
 }
 
 static int handle_slim_rec_touch_block(struct event * event)

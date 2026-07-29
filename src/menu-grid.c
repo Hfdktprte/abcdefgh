@@ -5,6 +5,9 @@
 #include "menu.h"
 #include "menu-grid.h"
 #include "gui-common.h"
+#include "propvalues.h"
+#include "fps.h"
+#include "lens.h"
 
 #ifdef CONFIG_SLIM_MENUS
 
@@ -22,6 +25,17 @@ static int grid_active = 0;
 static int grid_launched = 0;
 /* Session-only: top-left on boot; remembered while camera stays on. */
 static int grid_sel = 0;
+static int quick_screen_active = 0;
+static int quick_screen_feedback = -1;
+
+static void quick_screen_feedback_clear(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    quick_screen_feedback = -1;
+    if (quick_screen_active)
+        menu_redraw();
+}
 
 typedef struct
 {
@@ -147,6 +161,111 @@ int menu_grid_handle_touch(int x, int y)
     return 1;
 }
 
+int menu_quick_screen_is_active(void) { return quick_screen_active; }
+
+void menu_quick_screen_open(void)
+{
+    quick_screen_active = 1;
+    quick_screen_feedback = -1;
+}
+
+void menu_quick_screen_close(void)
+{
+    quick_screen_active = 0;
+    quick_screen_feedback = -1;
+}
+
+static void quick_screen_arrow(int cx, int cy, int up, int color)
+{
+    int i;
+    for (i = 0; i <= 18; i++)
+    {
+        int w = (18 * i) / 18;
+        int yy = up ? cy + i : cy - i;
+        draw_line(cx - w, yy, cx + w, yy, color);
+    }
+}
+
+static void quick_screen_value(int index, char *buf, int size)
+{
+    int fps = fps_get_current_x1000();
+    int shutter = lens_info.raw_shutter ? raw2shutter_ms(lens_info.raw_shutter) : 0;
+    int recip = shutter > 0 ? (1000000 + shutter / 2) / shutter : 0;
+
+    switch (index)
+    {
+    case 0: snprintf(buf, size, "%s", video_mode_crop ? "1x3" : "16:9"); break;
+    case 1: snprintf(buf, size, "%s", video_mode_crop ? "1736x2214" : "1920x1080"); break;
+    case 2: snprintf(buf, size, "%d.%03d", fps / 1000, fps % 1000); break;
+    case 3: snprintf(buf, size, recip ? "1/%d" : "--", recip); break;
+    case 4: snprintf(buf, size, "F%d.%d", lens_info.aperture / 10, lens_info.aperture % 10); break;
+    default: snprintf(buf, size, "ISO%d", lens_info.iso ? lens_info.iso : lens_info.iso_auto); break;
+    }
+}
+
+void menu_quick_screen_draw(void)
+{
+    int fnt = FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE);
+    int col, row;
+    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
+
+    for (row = 0; row < 2; row++)
+        for (col = 0; col < 3; col++)
+        {
+            int index = row * 3 + col;
+            int cx = 120 + col * 240;
+            int value_y = row ? 305 : 125;
+            int up_y = value_y - 48;
+            int down_y = value_y + 42;
+            char value[32];
+            int width;
+            quick_screen_value(index, value, sizeof(value));
+            width = bmp_string_width(FONT_CANON, value);
+            bmp_printf(fnt, cx - width / 2, value_y, "%s", value);
+            quick_screen_arrow(cx, up_y, 1,
+                quick_screen_feedback == index * 2 ? COLOR_WHITE : COLOR_ORANGE);
+            quick_screen_arrow(cx, down_y, 0,
+                quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
+        }
+}
+
+int menu_quick_screen_handle_touch(int x, int y)
+{
+    int col, row;
+    if (!quick_screen_active)
+        return 1;
+    for (row = 0; row < 2; row++)
+        for (col = 0; col < 3; col++)
+        {
+            int index = row * 3 + col;
+            int cx = 120 + col * 240;
+            int value_y = row ? 305 : 125;
+            if (x >= cx - 55 && x <= cx + 55 && y >= value_y - 72 && y <= value_y - 28)
+                quick_screen_feedback = index * 2;
+            else if (x >= cx - 55 && x <= cx + 55 && y >= value_y + 20 && y <= value_y + 66)
+                quick_screen_feedback = index * 2 + 1;
+            else
+                continue;
+            delayed_call(120, quick_screen_feedback_clear, 0);
+            menu_redraw();
+            return 0;
+        }
+    return 0;
+}
+
+int menu_quick_screen_handle_key(int button_code)
+{
+    if (!quick_screen_active)
+        return 1;
+    if (button_code == BGMT_MENU || button_code == BGMT_Q)
+    {
+        menu_quick_screen_close();
+        give_semaphore(gui_sem);
+        return 0;
+    }
+    return 0;
+}
+
 void menu_grid_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
@@ -254,5 +373,11 @@ int menu_grid_handle_key(int button_code, int *needs_full_redraw)
     return 1;
 }
 int menu_grid_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
+int menu_quick_screen_is_active(void) { return 0; }
+void menu_quick_screen_open(void) { }
+void menu_quick_screen_close(void) { }
+void menu_quick_screen_draw(void) { }
+int menu_quick_screen_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
+int menu_quick_screen_handle_key(int button_code) { (void)button_code; return 1; }
 
 #endif

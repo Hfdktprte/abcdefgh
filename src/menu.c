@@ -5784,11 +5784,27 @@ int handle_ml_menu_touch(struct event * event)
             fake_simple_button(BGMT_TRASH);
             return 0;
 #endif
+#ifdef BGMT_TOUCH_MOVE
+        case BGMT_TOUCH_MOVE:
+#ifdef CONFIG_SLIM_MENUS
+            if (menu_quick_screen_is_active())
+            {
+                int x, y;
+                if (eosm_touch_get_xy(event, &x, &y) == 1)
+                    menu_quick_screen_handle_touch(x, y);
+                return 0;
+            }
+#endif
+            return 1;
+#endif
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
 #ifdef CONFIG_SLIM_MENUS
             if (menu_quick_screen_is_active())
+            {
+                menu_quick_screen_touch_release();
                 return 0;
+            }
             slim_touch_handle_scroll(0, 0, 0);
 #endif
             return 0;

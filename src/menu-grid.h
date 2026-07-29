@@ -22,6 +22,7 @@ void menu_quick_screen_open(void);
 void menu_quick_screen_close(void);
 void menu_quick_screen_draw(void);
 int menu_quick_screen_handle_touch(int x, int y);
+void menu_quick_screen_touch_release(void);
 int menu_quick_screen_handle_key(int button_code);
 
 #endif

@@ -221,9 +221,9 @@ static void quick_screen_geometry(
     int col = index % 3;
     int row_top = row ? 240 : 0;
     *cx = 120 + col * 240;
-    *up_tip_y = row_top + 18;
-    *value_y = row_top + 76;
-    *down_tip_y = row_top + 184;
+    *up_tip_y = row_top + 16;
+    *value_y = row_top + 58;
+    *down_tip_y = row_top + 140;
 }
 
 void menu_quick_screen_draw(void)

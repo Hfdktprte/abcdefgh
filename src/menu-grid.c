@@ -25,6 +25,8 @@ static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
+/* Session-only: starts at Mode after boot and is remembered between openings. */
+static int quick_screen_sel = 0;
 
 typedef struct
 {
@@ -194,6 +196,7 @@ void menu_quick_screen_open(void)
     quick_screen_active = 1;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
+    quick_screen_sel = COERCE(quick_screen_sel, 0, 5);
 }
 
 void menu_quick_screen_close(void)
@@ -278,6 +281,29 @@ static void quick_screen_geometry(
     *down_tip_y = *value_y + 82;
 }
 
+static int quick_screen_adjust(int index, int delta)
+{
+    int enabled;
+    int draw_degree;
+    char value[MENU_MAX_VALUE_LEN];
+    const quick_screen_item_t *item;
+
+    index = COERCE(index, 0, 5);
+    item = &quick_screen_items[index];
+    enabled = quick_screen_value(
+        index, value, sizeof(value), &draw_degree);
+    if (!enabled)
+        return 0;
+
+    quick_screen_feedback = index * 2 + (delta < 0);
+    menu_adjust_value_by_name(
+        item->adjust_menu, item->adjust_entry, delta);
+    menu_redraw();
+    delayed_call(220, quick_screen_feedback_clear, 0);
+    delayed_call(500, quick_screen_refresh, 0);
+    return 1;
+}
+
 void menu_quick_screen_draw(void)
 {
     int index;
@@ -315,6 +341,12 @@ void menu_quick_screen_draw(void)
         quick_screen_arrow(cx, down_tip_y, 0,
             !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
+
+        if (index == quick_screen_sel)
+        {
+            /* Same 60px width as the visible arrows. */
+            bmp_fill(COLOR_YELLOW, cx - 30, up_tip_y - 17, 60, 4);
+        }
     }
 }
 
@@ -324,31 +356,31 @@ int menu_quick_screen_handle_touch(int x, int y)
     int row;
     int col;
     int delta;
-    int enabled;
     int draw_degree;
     int cx, value_y, up_tip_y, down_tip_y;
     char value[MENU_MAX_VALUE_LEN];
-    const quick_screen_item_t *item;
     if (!quick_screen_active)
         return 1;
     if (quick_screen_touch_latched)
         return 0;
 
-    /* Each arrow owns the full width of its 240px column and the empty band
-     * around the visible triangle. The value band remains inert. */
+    /* Give each visible arrow a forgiving 110px-wide hitbox. The boxes stay
+     * separate from text and from neighboring options. */
     col = COERCE(x / 240, 0, 2);
     for (row = 0; row < 2; row++)
     {
         int candidate = row * 3 + col;
         quick_screen_geometry(
             candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
-        if (y >= up_tip_y - 12 && y <= up_tip_y + 38)
+        if (x >= cx - 55 && x <= cx + 55 &&
+            y >= up_tip_y - 12 && y <= up_tip_y + 38)
         {
             index = candidate;
             delta = 1;
             break;
         }
-        if (y >= down_tip_y - 38 && y <= down_tip_y + 12)
+        if (x >= cx - 55 && x <= cx + 55 &&
+            y >= down_tip_y - 38 && y <= down_tip_y + 12)
         {
             index = candidate;
             delta = -1;
@@ -356,22 +388,40 @@ int menu_quick_screen_handle_touch(int x, int y)
         }
     }
 
-    if (index < 0)
-        return 1;
-
-    item = &quick_screen_items[index];
-    enabled = quick_screen_value(
-        index, value, sizeof(value), &draw_degree);
-    quick_screen_touch_latched = 1;
-    if (!enabled)
+    if (index >= 0)
+    {
+        quick_screen_touch_latched = 1;
+        quick_screen_sel = index;
+        if (!quick_screen_adjust(index, delta))
+            menu_redraw(); /* Move the yellow selection even when read-only. */
         return 0;
+    }
 
-    quick_screen_feedback = index * 2 + (delta < 0);
-    menu_adjust_value_by_name(
-        item->adjust_menu, item->adjust_entry, delta);
-    menu_redraw();
-    delayed_call(220, quick_screen_feedback_clear, 0);
-    delayed_call(500, quick_screen_refresh, 0);
+    /* Text is not empty space: leave the page open without changing anything. */
+    for (index = 0; index < 6; index++)
+    {
+        int width;
+        int text_x;
+        int text_h = fontspec_font(FONT_CANON)->height;
+        quick_screen_geometry(
+            index, &cx, &value_y, &up_tip_y, &down_tip_y);
+        quick_screen_value(
+            index, value, sizeof(value), &draw_degree);
+        width = bmp_string_width(FONT_CANON, value) +
+                (draw_degree ? 12 : 0);
+        text_x = cx - width / 2;
+        if (x >= text_x - 8 && x <= text_x + width + 8 &&
+            y >= value_y - 6 && y <= value_y + text_h + 6)
+        {
+            quick_screen_touch_latched = 1;
+            return 0;
+        }
+    }
+
+    /* Any truly empty area is a one-tap Back action to Live View. */
+    quick_screen_touch_latched = 1;
+    menu_quick_screen_close();
+    gui_stop_menu();
     return 0;
 }
 
@@ -384,13 +434,40 @@ int menu_quick_screen_handle_key(int button_code)
 {
     if (!quick_screen_active)
         return 1;
-    if (button_code == BGMT_MENU || button_code == BGMT_Q)
+
+    switch (button_code)
     {
+    case BGMT_MENU:
+    case BGMT_Q:
         menu_quick_screen_close();
         gui_stop_menu();
         return 0;
+
+    case BGMT_PRESS_LEFT:
+    case BGMT_WHEEL_LEFT:
+        quick_screen_sel = MOD(quick_screen_sel - 1, 6);
+        menu_redraw();
+        return 0;
+
+    case BGMT_PRESS_RIGHT:
+    case BGMT_WHEEL_RIGHT:
+        quick_screen_sel = MOD(quick_screen_sel + 1, 6);
+        menu_redraw();
+        return 0;
+
+    case BGMT_PRESS_UP:
+    case BGMT_WHEEL_UP:
+        quick_screen_adjust(quick_screen_sel, 1);
+        return 0;
+
+    case BGMT_PRESS_DOWN:
+    case BGMT_WHEEL_DOWN:
+        quick_screen_adjust(quick_screen_sel, -1);
+        return 0;
+
+    default:
+        return 0;
     }
-    return 0;
 }
 
 void menu_grid_draw(void)

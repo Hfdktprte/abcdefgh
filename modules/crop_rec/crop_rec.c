@@ -2,6 +2,7 @@
 #include <module.h>
 #include <config.h>
 #include <menu.h>
+#include <menu-grid.h>
 #include <beep.h>
 #include <property.h>
 #include <patch.h>
@@ -116,7 +117,8 @@ static int crop_preset_fps = 0;
  * EOS M slim defaults:
  *   SET = Zoom x10; U/D = ISO; L/R = Aperture; INFO off.
  * Arrow modes: 0=OFF, 1=Shutter, 2=Aperture, 3=ISO
- * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color, 6=framing
+ * INFO modes:  0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras,
+ *              5=False Color, 6=framing, 7=Quick Panel
  */
 CONFIG_INT("crop.button_SET",       SET_button, 1);
 static CONFIG_INT("crop.button_H-Shutter", Half_Shutter, 2);
@@ -494,7 +496,8 @@ static void crop_rec_adjust_iso(int sign)
 }
 
 /* EOS M Settings → INFO Button:
- * 0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color, 6=framing.
+ * 0=OFF, 1=Dual ISO, 2=Histogram, 3=Waveform, 4=Zebras, 5=False Color,
+ * 6=framing, 7=Quick Panel.
  * Returns: 1 = handled (block Canon), -1 = pass to Canon, 0 = not our INFO mapping. */
 static int slim_handle_info_button(unsigned int key)
 {
@@ -552,6 +555,15 @@ static int slim_handle_info_button(unsigned int key)
 
         case 6: /* framing ↔ real-time (MLV Lite Preview → Framing) */
             mlv_lite_info_framing_toggle();
+            return 1;
+
+        case 7: /* Quick Panel */
+            if (!RECORDING && lv && is_movie_mode() &&
+                !gui_menu_shown() && lv_disp_mode == 0)
+            {
+                menu_quick_screen_open();
+                gui_open_menu();
+            }
             return 1;
 
         default:
@@ -5566,13 +5578,13 @@ static struct menu_entry slim_info_button_menu[] = {
     {
         .name      = "INFO Button",
         .priv      = &INFO_button,
-        .max       = 6,
-        .choices   = CHOICES("OFF", "Dual ISO", "Histogram", "Waveform", "Zebras", "False Color", "framing"),
+        .max       = 7,
+        .choices   = CHOICES("OFF", "Dual ISO", "Histogram", "Waveform", "Zebras", "False Color", "framing", "Quick Panel"),
         .edit_mode = EM_INLINE_ADJUST,
         .update    = slim_info_button_update,
         .icon_type = IT_DICE,
-        .help      = "INFO toggles: Dual ISO, Histogram, Waveform, Zebras, False Color, or framing.",
-        .help2     = "OFF uses Canon INFO. Idle LV: long-press INFO (or double-press) opens last setting; tap screen does too.",
+        .help      = "Assign INFO to an overlay, framing, or the Quick Panel.",
+        .help2     = "OFF uses Canon INFO. Idle LV: long-press INFO (or double-press) opens last setting.",
     },
     {
         .name      = "SET Button",
@@ -8286,7 +8298,7 @@ static unsigned int crop_rec_init()
         if (Arrows_U_D < 0 || Arrows_U_D > 3) Arrows_U_D = 3;
         /* Slim: no Left/Right Button remap — leave L/R to Canon. */
         Arrows_L_R = 0;
-        if (INFO_button < 0 || INFO_button > 6) INFO_button = 0;
+        if (INFO_button < 0 || INFO_button > 7) INFO_button = 0;
 
         /* Flat Movie-page crop settings (no Crop Mode submenu / Customize Buttons). */
         menu_add("Movie", crop_rec_menu_eosm, COUNT(crop_rec_menu_eosm));

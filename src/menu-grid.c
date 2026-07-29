@@ -24,6 +24,7 @@ static int grid_launched = 0;
 static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
+static int quick_screen_touch_latched = 0;
 
 typedef struct
 {
@@ -192,12 +193,14 @@ void menu_quick_screen_open(void)
 {
     quick_screen_active = 1;
     quick_screen_feedback = -1;
+    quick_screen_touch_latched = 0;
 }
 
 void menu_quick_screen_close(void)
 {
     quick_screen_active = 0;
     quick_screen_feedback = -1;
+    quick_screen_touch_latched = 0;
 }
 
 static void quick_screen_arrow(int cx, int tip_y, int up, int color)
@@ -267,6 +270,8 @@ int menu_quick_screen_handle_touch(int x, int y)
     const quick_screen_item_t *item;
     if (!quick_screen_active)
         return 1;
+    if (quick_screen_touch_latched)
+        return 0;
 
     /* Each arrow owns the full width of its 240px column and the empty band
      * around the visible triangle. The value band remains inert. */
@@ -288,15 +293,21 @@ int menu_quick_screen_handle_touch(int x, int y)
     }
     else
     {
-        return 0;
+        return 1;
     }
 
+    quick_screen_touch_latched = 1;
     menu_adjust_value_by_name(
         item->adjust_menu, item->adjust_entry, delta);
     menu_redraw();
     delayed_call(220, quick_screen_feedback_clear, 0);
     delayed_call(500, quick_screen_refresh, 0);
     return 0;
+}
+
+void menu_quick_screen_touch_release(void)
+{
+    quick_screen_touch_latched = 0;
 }
 
 int menu_quick_screen_handle_key(int button_code)
@@ -424,6 +435,7 @@ void menu_quick_screen_open(void) { }
 void menu_quick_screen_close(void) { }
 void menu_quick_screen_draw(void) { }
 int menu_quick_screen_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
+void menu_quick_screen_touch_release(void) { }
 int menu_quick_screen_handle_key(int button_code) { (void)button_code; return 1; }
 
 #endif

@@ -5,9 +5,6 @@
 #include "menu.h"
 #include "menu-grid.h"
 #include "gui-common.h"
-#include "propvalues.h"
-#include "fps.h"
-#include "lens.h"
 
 #ifdef CONFIG_SLIM_MENUS
 
@@ -27,6 +24,26 @@ static int grid_launched = 0;
 static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
+
+typedef struct
+{
+    const char *value_menu;
+    const char *value_entry;
+    const char *adjust_menu;
+    const char *adjust_entry;
+} quick_screen_item_t;
+
+/* Resolution displays the computed read-only value, but its arrows drive the
+ * Movie Preset selector (Highest / Higher / Medium) for the active Mode. */
+static const quick_screen_item_t quick_screen_items[6] =
+{
+    { "Movie", "Mode",       "Movie", "Mode"       },
+    { "Movie", "Resolution", "Movie", "Preset"     },
+    { "Movie", "Frame Rate", "Movie", "Frame Rate" },
+    { "Expo",  "Shutter",    "Expo",  "Shutter"    },
+    { "Expo",  "Aperture",   "Expo",  "Aperture"   },
+    { "Expo",  "ISO",        "Expo",  "ISO"        },
+};
 
 static void quick_screen_feedback_clear(int timer, void *opaque)
 {
@@ -175,81 +192,99 @@ void menu_quick_screen_close(void)
     quick_screen_feedback = -1;
 }
 
-static void quick_screen_arrow(int cx, int cy, int up, int color)
+static void quick_screen_arrow(int cx, int tip_y, int up, int color)
 {
+    const int height = 26;
+    const int half_width = 30;
     int i;
-    for (i = 0; i <= 18; i++)
+    for (i = 0; i <= height; i++)
     {
-        int w = (18 * i) / 18;
-        int yy = up ? cy + i : cy - i;
+        int w = (half_width * i) / height;
+        int yy = up ? tip_y + i : tip_y - i;
         draw_line(cx - w, yy, cx + w, yy, color);
     }
 }
 
 static void quick_screen_value(int index, char *buf, int size)
 {
-    int fps = fps_get_current_x1000();
-    int shutter = lens_info.raw_shutter ? raw2shutter_ms(lens_info.raw_shutter) : 0;
-    int recip = shutter > 0 ? (1000000 + shutter / 2) / shutter : 0;
+    struct menu_display_info info;
+    const quick_screen_item_t *item = &quick_screen_items[index];
+    char *value = menu_get_str_value_from_script(
+        item->value_menu, item->value_entry, &info);
+    snprintf(buf, size, "%s", value && value[0] ? value : "--");
+}
 
-    switch (index)
-    {
-    case 0: snprintf(buf, size, "%s", video_mode_crop ? "1x3" : "16:9"); break;
-    case 1: snprintf(buf, size, "%s", video_mode_crop ? "1736x2214" : "1920x1080"); break;
-    case 2: snprintf(buf, size, "%d.%03d", fps / 1000, fps % 1000); break;
-    case 3: snprintf(buf, size, recip ? "1/%d" : "--", recip); break;
-    case 4: snprintf(buf, size, "F%d.%d", lens_info.aperture / 10, lens_info.aperture % 10); break;
-    default: snprintf(buf, size, "ISO%d", lens_info.iso ? lens_info.iso : lens_info.iso_auto); break;
-    }
+static void quick_screen_geometry(
+    int index, int *cx, int *value_y, int *up_tip_y, int *down_tip_y)
+{
+    int row = index / 3;
+    int col = index % 3;
+    int row_top = row ? 240 : 0;
+    *cx = 120 + col * 240;
+    *up_tip_y = row_top + 18;
+    *value_y = row_top + 76;
+    *down_tip_y = row_top + 184;
 }
 
 void menu_quick_screen_draw(void)
 {
     int fnt = FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE);
-    int col, row;
+    int index;
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
-    for (row = 0; row < 2; row++)
-        for (col = 0; col < 3; col++)
-        {
-            int index = row * 3 + col;
-            int cx = 120 + col * 240;
-            int value_y = row ? 305 : 125;
-            int up_y = value_y - 48;
-            int down_y = value_y + 42;
-            char value[32];
-            int width;
-            quick_screen_value(index, value, sizeof(value));
-            width = bmp_string_width(FONT_CANON, value);
-            bmp_printf(fnt, cx - width / 2, value_y, "%s", value);
-            quick_screen_arrow(cx, up_y, 1,
-                quick_screen_feedback == index * 2 ? COLOR_WHITE : COLOR_ORANGE);
-            quick_screen_arrow(cx, down_y, 0,
-                quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
-        }
+    for (index = 0; index < 6; index++)
+    {
+        int cx, value_y, up_tip_y, down_tip_y;
+        char value[MENU_MAX_VALUE_LEN];
+        int width;
+        quick_screen_geometry(
+            index, &cx, &value_y, &up_tip_y, &down_tip_y);
+        quick_screen_value(index, value, sizeof(value));
+        width = bmp_string_width(FONT_CANON, value);
+        bmp_printf(fnt, cx - width / 2, value_y, "%s", value);
+        quick_screen_arrow(cx, up_tip_y, 1,
+            quick_screen_feedback == index * 2 ? COLOR_WHITE : COLOR_ORANGE);
+        quick_screen_arrow(cx, down_tip_y, 0,
+            quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
+    }
 }
 
 int menu_quick_screen_handle_touch(int x, int y)
 {
-    int col, row;
+    int index;
     if (!quick_screen_active)
         return 1;
-    for (row = 0; row < 2; row++)
-        for (col = 0; col < 3; col++)
+    for (index = 0; index < 6; index++)
+    {
+        int cx, value_y, up_tip_y, down_tip_y;
+        int delta;
+        const quick_screen_item_t *item = &quick_screen_items[index];
+        quick_screen_geometry(
+            index, &cx, &value_y, &up_tip_y, &down_tip_y);
+
+        if (x >= cx - 58 && x <= cx + 58 &&
+            y >= up_tip_y - 8 && y <= up_tip_y + 34)
         {
-            int index = row * 3 + col;
-            int cx = 120 + col * 240;
-            int value_y = row ? 305 : 125;
-            if (x >= cx - 55 && x <= cx + 55 && y >= value_y - 72 && y <= value_y - 28)
-                quick_screen_feedback = index * 2;
-            else if (x >= cx - 55 && x <= cx + 55 && y >= value_y + 20 && y <= value_y + 66)
-                quick_screen_feedback = index * 2 + 1;
-            else
-                continue;
-            delayed_call(120, quick_screen_feedback_clear, 0);
-            menu_redraw();
-            return 0;
+            quick_screen_feedback = index * 2;
+            delta = 1;
         }
+        else if (x >= cx - 58 && x <= cx + 58 &&
+                 y >= down_tip_y - 34 && y <= down_tip_y + 8)
+        {
+            quick_screen_feedback = index * 2 + 1;
+            delta = -1;
+        }
+        else
+        {
+            continue;
+        }
+
+        menu_adjust_value_by_name(
+            item->adjust_menu, item->adjust_entry, delta);
+        delayed_call(120, quick_screen_feedback_clear, 0);
+        menu_redraw();
+        return 0;
+    }
     return 0;
 }
 

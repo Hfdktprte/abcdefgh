@@ -7641,6 +7641,22 @@ char* menu_get_str_value_from_script(const char* name, const char* entry_name, s
     return ans;
 }
 
+/* Adjust a normal menu entry through its existing selector while a custom
+ * screen is visible. This keeps one source of truth for allowed values,
+ * clamping and hardware updates. */
+int menu_adjust_value_by_name(const char* name, const char* entry_name, int delta)
+{
+    select_menu_by_name((char *)name, entry_name);
+
+    struct menu * menu = get_current_menu_or_submenu();
+    struct menu_entry * entry = get_selected_menu_entry(menu);
+    if (!entry || !entry->name || !streq(entry->name, entry_name))
+        return 0;
+
+    menu_entry_select(menu, delta < 0 ? 1 : 0);
+    return 1;
+}
+
 EXCLUDES(menu_sem)
 int menu_set_str_value_from_script(const char* name, const char* entry_name, char* value, int value_int)
 {

@@ -62,23 +62,80 @@ int is_canon_bottom_bar_dirty() { return bottom_bar_dirty; }
 int get_last_time_active() { return last_time_active; }
 
 #ifdef CONFIG_SLIM_MENUS
-/* While recording: ignore all touch. In idle movie Live View, a single-finger
- * tap opens the Quick Screen, while the camera's simultaneous two-finger event
- * opens Last Settings. Canon INFO screens (lv_disp_mode != 0) pass through. */
-static int slim_touch_single_pending;
+/* While recording: ignore all touch. In idle movie Live View:
+ * one tap = Quick Screen, two taps = grid launcher, three taps = Last Settings.
+ * Canon INFO screens (lv_disp_mode != 0) pass through. */
+#define SLIM_TOUCH_TAP_WINDOW_MS 330
+static int slim_touch_tap_count;
+static int slim_touch_tap_deadline;
+static int slim_touch_lv_pressed;
 
-static void slim_touch_single_tap(int timer, void *opaque)
+static int slim_touch_lv_context_ok(void)
 {
-    (void)timer;
-    (void)opaque;
-    if (!slim_touch_single_pending)
+    return lv && is_movie_mode() && !RECORDING &&
+           !gui_menu_shown() && lv_disp_mode == 0;
+}
+
+static void slim_touch_open_for_taps(int taps)
+{
+    if (!slim_touch_lv_context_ok())
         return;
-    slim_touch_single_pending = 0;
-    if (lv && is_movie_mode() && !RECORDING && !gui_menu_shown() && lv_disp_mode == 0)
+
+    if (taps == 1)
     {
         menu_quick_screen_open();
         gui_open_menu();
     }
+    else if (taps == 2)
+    {
+        menu_grid_open();
+        gui_open_menu();
+    }
+    else if (taps >= 3)
+    {
+        gui_open_last_menu_selection();
+    }
+}
+
+static void slim_touch_resolve_taps(int timer, void *opaque)
+{
+    int remaining;
+    int taps;
+    (void)timer;
+    (void)opaque;
+
+    if (!slim_touch_tap_count)
+        return;
+
+    remaining = slim_touch_tap_deadline - get_ms_clock();
+    if (remaining > 0)
+    {
+        delayed_call(remaining + 1, slim_touch_resolve_taps, 0);
+        return;
+    }
+
+    taps = slim_touch_tap_count;
+    slim_touch_tap_count = 0;
+    slim_touch_tap_deadline = 0;
+    slim_touch_open_for_taps(taps);
+}
+
+static void slim_touch_register_tap(void)
+{
+    slim_touch_tap_count++;
+    if (slim_touch_tap_count >= 3)
+    {
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        slim_touch_open_for_taps(3);
+        return;
+    }
+
+    slim_touch_tap_deadline =
+        get_ms_clock() + SLIM_TOUCH_TAP_WINDOW_MS;
+    delayed_call(
+        SLIM_TOUCH_TAP_WINDOW_MS + 1,
+        slim_touch_resolve_taps, 0);
 }
 
 static int handle_slim_rec_touch_block(struct event * event)
@@ -88,15 +145,13 @@ static int handle_slim_rec_touch_block(struct event * event)
     case BGMT_TOUCH_1_FINGER:
         if (RECORDING)
             return 0;
-        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        if (slim_touch_lv_context_ok())
         {
-            /* Wait briefly so a simultaneous second finger can be reported as
-             * BGMT_TOUCH_2_FINGER before committing to the single-finger action. */
-            if (!slim_touch_single_pending)
-            {
-                slim_touch_single_pending = 1;
-                delayed_call(180, slim_touch_single_tap, 0);
-            }
+            slim_touch_lv_pressed = 1;
+            /* Keep a previous tap pending while the next finger press is held. */
+            if (slim_touch_tap_count)
+                slim_touch_tap_deadline =
+                    get_ms_clock() + SLIM_TOUCH_TAP_WINDOW_MS;
             return 0;
         }
         break;
@@ -104,21 +159,40 @@ static int handle_slim_rec_touch_block(struct event * event)
     case BGMT_TOUCH_MOVE:
         if (RECORDING)
             return 0;
-        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        if (slim_touch_lv_context_ok())
             return 0;
         break;
 #endif
     case BGMT_TOUCH_2_FINGER:
-        slim_touch_single_pending = 0;
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        slim_touch_lv_pressed = 0;
         if (RECORDING)
             return 0;
-        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        if (slim_touch_lv_context_ok())
         {
+            /* Keep the existing simultaneous two-finger Last Settings shortcut. */
             gui_open_last_menu_selection();
             return 0;
         }
         break;
     case BGMT_UNTOUCH_1_FINGER:
+        slim_touch_scroll_cancel();
+        if (RECORDING)
+        {
+            slim_touch_lv_pressed = 0;
+            return 0;
+        }
+        if (slim_touch_lv_context_ok())
+        {
+            if (slim_touch_lv_pressed)
+                slim_touch_register_tap();
+            slim_touch_lv_pressed = 0;
+            return 0;
+        }
+        slim_touch_lv_pressed = 0;
+        break;
+
     case BGMT_UNTOUCH_2_FINGER:
         slim_touch_scroll_cancel();
 #ifdef BGMT_TOUCH_MOVE
@@ -132,12 +206,10 @@ static int handle_slim_rec_touch_block(struct event * event)
 #endif
         if (RECORDING)
             return 0;
-        if (lv && is_movie_mode() && !gui_menu_shown() && lv_disp_mode == 0)
+        if (slim_touch_lv_context_ok())
             return 0;
         break;
     }
-    if (event->param == BGMT_UNTOUCH_1_FINGER)
-        slim_touch_single_pending = 0;
     return 1;
 }
 

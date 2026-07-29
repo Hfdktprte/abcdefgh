@@ -39,7 +39,7 @@ typedef struct
 static const quick_screen_item_t quick_screen_items[6] =
 {
     { "Movie", "Mode",       "Movie", "Mode"       },
-    { "Movie", "Resolution", "Movie", "Preset"     },
+    { "Movie", "Resolution", "Movie", "Quick Resolution" },
     { "Movie", "Frame Rate", "Movie", "Frame Rate" },
     { "Expo",  "Shutter",    "Expo",  "Shutter"    },
     { "Expo",  "Aperture",   "Expo",  "Aperture"   },
@@ -216,13 +216,54 @@ static void quick_screen_arrow(int cx, int tip_y, int up, int color)
     }
 }
 
-static void quick_screen_value(int index, char *buf, int size)
+static int quick_screen_value(
+    int index, char *buf, int size, int *draw_degree)
 {
     struct menu_display_info info;
+    struct menu_display_info adjust_info;
     const quick_screen_item_t *item = &quick_screen_items[index];
     char *value = menu_get_str_value_from_script(
         item->value_menu, item->value_entry, &info);
-    snprintf(buf, size, "%s", value && value[0] ? value : "--");
+    char raw_value[MENU_MAX_VALUE_LEN];
+    int enabled;
+
+    snprintf(raw_value, sizeof(raw_value),
+        "%s", value && value[0] ? value : "--");
+    enabled = info.enabled;
+    *draw_degree = 0;
+
+    /* Resolution is displayed by a read-only row, but adjusted by the hidden
+     * composite selector that spans every Aspect Ratio and preset. */
+    if (index == 1)
+    {
+        menu_get_str_value_from_script(
+            item->adjust_menu, item->adjust_entry, &adjust_info);
+        enabled = adjust_info.enabled;
+    }
+
+    if (index == 3)
+    {
+        /* The normal Exposure row already calculates the angle from current
+         * FPS. Reuse those digits and draw a Canon-sized degree ring. */
+        snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
+        *draw_degree = info.rinfo[0] != '\0';
+    }
+    else if (index == 4)
+    {
+        snprintf(buf, size, "F%s", raw_value);
+        if (streq(raw_value, "0.0"))
+            enabled = 0;
+    }
+    else if (index == 5)
+    {
+        snprintf(buf, size, "ISO%s", raw_value);
+    }
+    else
+    {
+        snprintf(buf, size, "%s", raw_value);
+    }
+
+    return enabled;
 }
 
 static void quick_screen_geometry(
@@ -230,16 +271,15 @@ static void quick_screen_geometry(
 {
     int row = index / 3;
     int col = index % 3;
-    int row_top = row ? 240 : 0;
+    static const int row_up_tip_y[2] = { 77, 278 };
     *cx = 120 + col * 240;
-    *up_tip_y = row_top + 16;
-    *value_y = row_top + 58;
-    *down_tip_y = row_top + 140;
+    *up_tip_y = row_up_tip_y[row];
+    *value_y = *up_tip_y + 42;
+    *down_tip_y = *value_y + 82;
 }
 
 void menu_quick_screen_draw(void)
 {
-    int fnt = FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE);
     int index;
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
@@ -248,25 +288,46 @@ void menu_quick_screen_draw(void)
         int cx, value_y, up_tip_y, down_tip_y;
         char value[MENU_MAX_VALUE_LEN];
         int width;
+        int enabled;
+        int draw_degree;
+        int color;
+        int value_x;
         quick_screen_geometry(
             index, &cx, &value_y, &up_tip_y, &down_tip_y);
-        quick_screen_value(index, value, sizeof(value));
+        enabled = quick_screen_value(
+            index, value, sizeof(value), &draw_degree);
+        color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
         width = bmp_string_width(FONT_CANON, value);
-        bmp_printf(fnt, cx - width / 2, value_y, "%s", value);
+        value_x = cx - (width + (draw_degree ? 12 : 0)) / 2;
+        bmp_printf(
+            FONT(FONT_CANON, color, NO_BG_ERASE),
+            value_x, value_y, "%s", value);
+        if (draw_degree)
+        {
+            int degree_x = value_x + width + 6;
+            int degree_y = value_y + 7;
+            draw_circle(degree_x, degree_y, 4, color);
+            draw_circle(degree_x, degree_y, 3, color);
+        }
         quick_screen_arrow(cx, up_tip_y, 1,
+            !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 ? COLOR_WHITE : COLOR_ORANGE);
         quick_screen_arrow(cx, down_tip_y, 0,
+            !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
     }
 }
 
 int menu_quick_screen_handle_touch(int x, int y)
 {
-    int index;
+    int index = -1;
     int row;
     int col;
-    int local_y;
     int delta;
+    int enabled;
+    int draw_degree;
+    int cx, value_y, up_tip_y, down_tip_y;
+    char value[MENU_MAX_VALUE_LEN];
     const quick_screen_item_t *item;
     if (!quick_screen_active)
         return 1;
@@ -276,27 +337,36 @@ int menu_quick_screen_handle_touch(int x, int y)
     /* Each arrow owns the full width of its 240px column and the empty band
      * around the visible triangle. The value band remains inert. */
     col = COERCE(x / 240, 0, 2);
-    row = y >= 240 ? 1 : 0;
-    local_y = y - row * 240;
-    index = row * 3 + col;
-    item = &quick_screen_items[index];
+    for (row = 0; row < 2; row++)
+    {
+        int candidate = row * 3 + col;
+        quick_screen_geometry(
+            candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
+        if (y >= up_tip_y - 12 && y <= up_tip_y + 38)
+        {
+            index = candidate;
+            delta = 1;
+            break;
+        }
+        if (y >= down_tip_y - 38 && y <= down_tip_y + 12)
+        {
+            index = candidate;
+            delta = -1;
+            break;
+        }
+    }
 
-    if (local_y <= 54)
-    {
-        quick_screen_feedback = index * 2;
-        delta = 1;
-    }
-    else if (local_y >= 104 && local_y <= 184)
-    {
-        quick_screen_feedback = index * 2 + 1;
-        delta = -1;
-    }
-    else
-    {
+    if (index < 0)
         return 1;
-    }
 
+    item = &quick_screen_items[index];
+    enabled = quick_screen_value(
+        index, value, sizeof(value), &draw_degree);
     quick_screen_touch_latched = 1;
+    if (!enabled)
+        return 0;
+
+    quick_screen_feedback = index * 2 + (delta < 0);
     menu_adjust_value_by_name(
         item->adjust_menu, item->adjust_entry, delta);
     menu_redraw();

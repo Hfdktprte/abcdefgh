@@ -7646,14 +7646,43 @@ char* menu_get_str_value_from_script(const char* name, const char* entry_name, s
  * clamping and hardware updates. */
 int menu_adjust_value_by_name(const char* name, const char* entry_name, int delta)
 {
-    select_menu_by_name((char *)name, entry_name);
-
-    struct menu * menu = get_current_menu_or_submenu();
-    struct menu_entry * entry = get_selected_menu_entry(menu);
-    if (!entry || !entry->name || !streq(entry->name, entry_name))
+    struct menu_entry * entry = entry_find_by_name(name, entry_name);
+    if (!entry)
         return 0;
 
-    menu_entry_select(menu, delta < 0 ? 1 : 0);
+    /* Do not select the hidden backing menu: on placeholder-driven menus that
+     * can select the placeholder row rather than the module's real entry.
+     * Invoke the resolved entry's normal selector directly instead. */
+    ASSERT(entry_being_updated == 0);
+    entry_being_updated = entry;
+    entry_removed_itself = 0;
+
+    if (entry->select)
+    {
+        entry->select(entry->priv, delta);
+    }
+    else if (IS_ML_PTR(entry->priv))
+    {
+        menu_numeric_toggle_fast(
+            entry->priv, delta, entry->min, entry->max,
+            entry->unit, entry->edit_mode, 0);
+    }
+    else
+    {
+        entry_being_updated = 0;
+        return 0;
+    }
+
+    entry_being_updated = 0;
+    if (!entry_removed_itself)
+    {
+        menu_update_usage_counters(entry);
+#ifdef CONFIG_SLIM_MENUS
+        menu_remember_selection(entry);
+#endif
+    }
+    config_dirty = 1;
+    mod_menu_dirty = 1;
     return 1;
 }
 

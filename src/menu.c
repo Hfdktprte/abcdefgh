@@ -5887,6 +5887,26 @@ handle_ml_menu_keys(struct event * event)
     if (!DISPLAY_IS_ON)
         if (event->param != BGMT_PRESS_HALFSHUTTER) return 1;
 
+#if defined(CONFIG_SLIM_MENUS) && defined(CONFIG_TOUCHSCREEN)
+    /* Quick Screen is a first-class menu screen. Route its touch lifecycle
+     * before the generic key guard, which intentionally swallows unrelated
+     * menu keys and would otherwise consume touch events too. */
+    if (menu_quick_screen_is_active())
+    {
+        switch (event->param)
+        {
+        case BGMT_TOUCH_1_FINGER:
+        case BGMT_TOUCH_2_FINGER:
+        case BGMT_UNTOUCH_1_FINGER:
+        case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+        case BGMT_TOUCH_MOVE:
+#endif
+            return handle_ml_menu_touch(event);
+        }
+    }
+#endif
+
     // on some cameras, scroll events may arrive grouped; we can't handle it, so split into individual events
     if (handle_scrollwheel_fast_clicks(event)==0) return 0;
 
@@ -6195,6 +6215,9 @@ handle_ml_menu_keys(struct event * event)
     case BGMT_TOUCH_2_FINGER:
     case BGMT_UNTOUCH_1_FINGER:
     case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+    case BGMT_TOUCH_MOVE:
+#endif
         return handle_ml_menu_touch(event);
 #endif
 

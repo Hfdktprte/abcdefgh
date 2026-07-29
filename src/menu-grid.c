@@ -260,7 +260,7 @@ int menu_quick_screen_handle_key(int button_code)
     if (button_code == BGMT_MENU || button_code == BGMT_Q)
     {
         menu_quick_screen_close();
-        give_semaphore(gui_sem);
+        gui_stop_menu();
         return 0;
     }
     return 0;

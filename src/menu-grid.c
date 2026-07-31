@@ -364,7 +364,7 @@ int menu_quick_screen_handle_touch(int x, int y)
     if (quick_screen_touch_latched)
         return 0;
 
-    /* Give each visible arrow a forgiving 110px-wide hitbox. The boxes stay
+    /* Give each visible arrow a forgiving 180px-wide hitbox. The boxes stay
      * separate from text and from neighboring options. */
     col = COERCE(x / 240, 0, 2);
     for (row = 0; row < 2; row++)
@@ -372,15 +372,15 @@ int menu_quick_screen_handle_touch(int x, int y)
         int candidate = row * 3 + col;
         quick_screen_geometry(
             candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
-        if (x >= cx - 55 && x <= cx + 55 &&
-            y >= up_tip_y - 12 && y <= up_tip_y + 38)
+        if (x >= cx - 90 && x <= cx + 90 &&
+            y >= up_tip_y - 20 && y <= up_tip_y + 38)
         {
             index = candidate;
             delta = 1;
             break;
         }
-        if (x >= cx - 55 && x <= cx + 55 &&
-            y >= down_tip_y - 38 && y <= down_tip_y + 12)
+        if (x >= cx - 90 && x <= cx + 90 &&
+            y >= down_tip_y - 38 && y <= down_tip_y + 20)
         {
             index = candidate;
             delta = -1;

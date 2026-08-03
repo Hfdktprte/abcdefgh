@@ -6467,15 +6467,18 @@ void menu_redraw_flood()
 {
     if (!lv) msleep(100);
     else if (EXT_MONITOR_CONNECTED) msleep(300);
-    for (int i = 0; i < 5; i++)
+    /* The Canon front buffer is masked before the mode switch, so three
+     * short redraws are enough to present the ML screen without the old
+     * 150 ms transition stall. */
+    for (int i = 0; i < 3; i++)
     {
         if (redraw_flood_stop) break;
         if (!menu_shown) break;
         canon_gui_enable_front_buffer(0);
         menu_redraw_full();
-        msleep(20);
+        msleep(10);
     }
-    msleep(50);
+    msleep(20);
     redraw_flood_stop = 1;
 }
 
@@ -6499,9 +6502,14 @@ static void piggyback_canon_menu()
     NotifyBoxHide();
     if (new_gui_mode != (int)CURRENT_GUI_MODE) 
     { 
+        /* Hide Canon's front buffer before changing GUI mode.  Previously the
+         * mask was applied after a 200 ms wait, allowing one Canon frame to
+         * flash through when Quick Panel/grid opened from Live View. */
+        if (lv)
+            canon_gui_disable_front_buffer(0);
         start_redraw_flood();
         if (lv) bmp_off(); // mask out the underlying Canon menu :)
-        SetGUIRequestMode(new_gui_mode); msleep(200); 
+        SetGUIRequestMode(new_gui_mode);
         // bmp will be enabled after first redraw
     }
 #endif
@@ -6620,7 +6628,9 @@ static void
 menu_task( void* unused )
 {
     extern int ml_started;
-    while (!ml_started) msleep(100);
+    /* Poll startup readiness frequently so the first user touch/dial event
+     * does not wait an extra 100 ms for the menu task to wake. */
+    while (!ml_started) msleep(10);
     
 #ifdef CONFIG_SLIM_MENUS
     menu_last_sel_load();

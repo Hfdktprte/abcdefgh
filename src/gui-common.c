@@ -74,7 +74,7 @@ static int slim_touch_lv_pressed;
 static int slim_touch_lv_context_ok(void)
 {
     return lv && is_movie_mode() && !RECORDING &&
-           !gui_menu_shown();
+           !gui_menu_shown() && lv_dispsize != 10;
 }
 
 static void slim_touch_open_for_taps(int taps)

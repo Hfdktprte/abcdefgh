@@ -1554,15 +1554,20 @@ static MENU_UPDATE_FUNC(iso_icon_update)
 static MENU_UPDATE_FUNC(iso_display)
 {
 #ifdef CONFIG_SLIM_MENUS
+    int dual_iso = dual_iso_is_enabled_fn && dual_iso_is_enabled_fn();
     if (!lens_info.iso)
     {
         MENU_SET_VALUE("100");
-        MENU_SET_ENABLED(1);
+        MENU_SET_ENABLED(!dual_iso);
+        if (dual_iso)
+            MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Disable Dual ISO to adjust ISO.");
         MENU_SET_SHORT_NAME(" ");
         return;
     }
     MENU_SET_VALUE("%d", raw2iso(lens_info.iso_equiv_raw));
-    MENU_SET_ENABLED(1);
+    MENU_SET_ENABLED(!dual_iso);
+    if (dual_iso)
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Disable Dual ISO to adjust ISO.");
     MENU_SET_SHORT_NAME(" ");
 #else
     MENU_SET_VALUE(
@@ -1874,8 +1879,8 @@ static MENU_UPDATE_FUNC(aperture_display)
 #ifdef CONFIG_SLIM_MENUS
     /* Slim Exposure: bare number (e.g. 3.5), no f/ prefix. */
     MENU_SET_VALUE("%d.%d", a / 10, a % 10);
-    /* Never grey Aperture on slim Exposure. */
-    MENU_SET_ENABLED(1);
+    /* A zero aperture means the lens is automatic or unavailable. */
+    MENU_SET_ENABLED(a != 0);
 #else
     MENU_SET_VALUE(
         SYM_F_SLASH"%d.%d",

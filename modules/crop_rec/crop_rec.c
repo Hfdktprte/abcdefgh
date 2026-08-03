@@ -7320,7 +7320,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
      * and Last Settings). Do not let the legacy crop.tapdisp shortcuts race
      * that router during boot or Canon INFO transitions. */
     if (is_EOSM && key == MODULE_KEY_TOUCH_1_FINGER)
-        return CBR_RET_CONTINUE;
+        return 1;
 
     /* Recording: touch is blocked in gui-common (idle LV touch is allowed). */
 

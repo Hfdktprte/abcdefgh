@@ -6465,14 +6465,13 @@ void menu_redraw_flood()
 {
     if (!lv) msleep(100);
     else if (EXT_MONITOR_CONNECTED) msleep(300);
-    /* The Canon front buffer is masked before the mode switch, so three
-     * short redraws are enough to present the ML screen without the old
-     * 150 ms transition stall. */
+    /* Keep Canon's front buffer masked for the complete transition.  Enabling
+     * it here exposed one Canon exposure-compensation frame immediately
+     * before Quick Panel/grid became visible. */
     for (int i = 0; i < 3; i++)
     {
         if (redraw_flood_stop) break;
         if (!menu_shown) break;
-        canon_gui_enable_front_buffer(0);
         menu_redraw_full();
         msleep(10);
     }

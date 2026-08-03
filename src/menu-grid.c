@@ -28,6 +28,9 @@ static int quick_screen_touch_latched = 0;
 /* Session-only: starts at Mode after boot and is remembered between openings. */
 static int quick_screen_sel = 0;
 
+static int quick_screen_option_enabled(int index);
+static int quick_screen_next_enabled(int start, int direction);
+
 typedef struct
 {
     const char *value_menu;
@@ -196,7 +199,8 @@ void menu_quick_screen_open(void)
     quick_screen_active = 1;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
-    quick_screen_sel = COERCE(quick_screen_sel, 0, 5);
+    quick_screen_sel = quick_screen_next_enabled(
+        COERCE(quick_screen_sel, 0, 5), 1);
 }
 
 void menu_quick_screen_close(void)
@@ -267,6 +271,28 @@ static int quick_screen_value(
     }
 
     return enabled;
+}
+
+static int quick_screen_option_enabled(int index)
+{
+    char value[MENU_MAX_VALUE_LEN];
+    int draw_degree;
+    index = COERCE(index, 0, 5);
+    return quick_screen_value(index, value, sizeof(value), &draw_degree);
+}
+
+static int quick_screen_next_enabled(int start, int direction)
+{
+    int i;
+    direction = direction < 0 ? -1 : 1;
+    start = MOD(start, 6);
+    for (i = 0; i < 6; i++)
+    {
+        int candidate = MOD(start + i * direction, 6);
+        if (quick_screen_option_enabled(candidate))
+            return candidate;
+    }
+    return start;
 }
 
 static void quick_screen_geometry(
@@ -391,9 +417,19 @@ int menu_quick_screen_handle_touch(int x, int y)
     if (index >= 0)
     {
         quick_screen_touch_latched = 1;
-        quick_screen_sel = index;
-        if (!quick_screen_adjust(index, delta))
-            menu_redraw(); /* Move the yellow selection even when read-only. */
+        if (!quick_screen_option_enabled(index))
+        {
+            /* A disabled tile cannot be selected. Skip to the next usable
+             * tile in the direction of the touched arrow. */
+            quick_screen_sel = quick_screen_next_enabled(index, delta);
+            menu_redraw();
+        }
+        else
+        {
+            quick_screen_sel = index;
+            if (!quick_screen_adjust(index, delta))
+                menu_redraw(); /* Move the yellow selection when read-only. */
+        }
         return 0;
     }
 
@@ -445,13 +481,13 @@ int menu_quick_screen_handle_key(int button_code)
 
     case BGMT_PRESS_LEFT:
     case BGMT_WHEEL_LEFT:
-        quick_screen_sel = MOD(quick_screen_sel - 1, 6);
+        quick_screen_sel = quick_screen_next_enabled(quick_screen_sel - 1, -1);
         menu_redraw();
         return 0;
 
     case BGMT_PRESS_RIGHT:
     case BGMT_WHEEL_RIGHT:
-        quick_screen_sel = MOD(quick_screen_sel + 1, 6);
+        quick_screen_sel = quick_screen_next_enabled(quick_screen_sel + 1, 1);
         menu_redraw();
         return 0;
 

@@ -1554,7 +1554,9 @@ static MENU_UPDATE_FUNC(iso_icon_update)
 static MENU_UPDATE_FUNC(iso_display)
 {
 #ifdef CONFIG_SLIM_MENUS
-    int dual_iso = dual_iso_is_enabled_fn && dual_iso_is_enabled_fn();
+    /* The INFO shortcut changes this config directly; read the same source
+     * so menu and Quick Panel update immediately after either path. */
+    int dual_iso = get_config_var("isoless.hdr") > 0;
     if (!lens_info.iso)
     {
         MENU_SET_VALUE("100");

@@ -199,8 +199,9 @@ void menu_quick_screen_open(void)
     quick_screen_active = 1;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
-    quick_screen_sel = quick_screen_next_enabled(
-        COERCE(quick_screen_sel, 0, 5), 1);
+    /* Do not query menu entries here: this runs before menu_open owns the
+     * screen and doing so can race Canon's GUI task (Err70). */
+    quick_screen_sel = COERCE(quick_screen_sel, 0, 5);
 }
 
 void menu_quick_screen_close(void)
@@ -334,6 +335,12 @@ void menu_quick_screen_draw(void)
 {
     int index;
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
+
+    /* Menu task owns the screen here, so dynamic availability is safe to
+     * evaluate. Never leave the yellow selector on a disabled control. */
+    if (!quick_screen_option_enabled(quick_screen_sel))
+        quick_screen_sel = quick_screen_next_enabled(
+            quick_screen_sel + 1, 1);
 
     for (index = 0; index < 6; index++)
     {

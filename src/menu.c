@@ -292,10 +292,6 @@ static int can_be_turned_off(struct menu_entry * entry)
 
 static void entry_default_display_info(struct menu_entry * entry, struct menu_display_info * info);
 
-#ifdef CONFIG_SLIM_MENUS
-static int entry_is_slim_locked_grey(struct menu_entry * entry);
-#endif
-
 static int is_visible(struct menu_entry * entry)
 {
     return 
@@ -311,9 +307,6 @@ static int is_visible(struct menu_entry * entry)
        &&
        (
             advanced_mode || !entry->advanced || entry->selected || config_var_was_changed(entry->priv)
-#ifdef CONFIG_SLIM_MENUS
-            || entry_is_slim_locked_grey(entry)
-#endif
        )
        ;
 }
@@ -2999,24 +2992,25 @@ skip_name:
         fnt = FONT(FONT_CANON, fg, COLOR_BLACK);
     }
 
-    /* Dial arrows around the adjustable value — keep for bool OFF; hide when
-     * the row is locked/greyed (enabled==0 non-bool, or WARN_NOT_WORKING). */
+    /* Keep dial arrows visible on locked rows, but draw the entire control
+     * grey and block adjustment in the input handlers. */
+    int slim_locked =
+        info->warning_level == MENU_WARN_NOT_WORKING ||
+        (info->enabled == 0 && !IS_BOOL(entry));
     int draw_tri_arrows =
         slim_style &&
         entry_is_inline_adjustable(entry) &&
         info->value[0] &&
-        info->warning_level != MENU_WARN_NOT_WORKING &&
-        (info->enabled != 0 || IS_BOOL(entry)) &&
         !menu_lv_transparent_mode &&
         !customize_mode &&
         !junkie_mode;
     int draw_left_arrow = draw_tri_arrows;
     int draw_right_arrow = draw_tri_arrows;
     int arrow_color = COLOR_WHITE;
-    if (draw_tri_arrows && entry->selected)
-        arrow_color = COLOR_ORANGE;
-    if (draw_tri_arrows && info->warning_level == MENU_WARN_NOT_WORKING && !entry->selected)
+    if (draw_tri_arrows && slim_locked)
         arrow_color = COLOR_GRAY(50);
+    else if (draw_tri_arrows && entry->selected)
+        arrow_color = COLOR_ORANGE;
     int fonth = fontspec_font(fnt)->height;
     int tri_h = MAX(fonth - 4, 18); /* match value glyph height */
     int arrow_slot_w = (tri_h * 6) / 10 + 1;
@@ -4907,6 +4901,12 @@ void menu_entry_select(
         return;
     }
 
+#ifdef CONFIG_SLIM_MENUS
+    /* Locked rows remain visible (with grey arrows) but cannot be adjusted. */
+    if (entry_is_slim_locked_grey(entry))
+        return;
+#endif
+
     /* note: entry->select() can delete itself (see e.g. file_man) */
     /* we must be careful to prevent using entry if this happened */
     /* fixme: better solution? */
@@ -5266,16 +5266,6 @@ static void menu_make_sure_selection_is_valid()
         menu_entry_move(menu, -1);
         menu_entry_move(menu, 1);
     }
-#ifdef CONFIG_SLIM_MENUS
-    else if (entry->selected && entry_is_slim_locked_grey(entry))
-    {
-        /* Mode change may have locked the current row — step to next adjustable. */
-        menu_entry_move(menu, 1);
-        entry = get_selected_menu_entry(menu);
-        if (entry && entry_is_slim_locked_grey(entry))
-            menu_entry_move(menu, -1);
-    }
-#endif
 }
 
 /*static void menu_select_current(int reverse)
@@ -5706,7 +5696,8 @@ static int slim_touch_handle_menu_arrow(int x, int y)
         {
             select_menu_by_name(target->entry->parent_menu->name,
                 target->entry->name);
-            if (target->mode >= 0)
+            if (target->mode >= 0 &&
+                !entry_is_slim_locked_grey(target->entry))
                 menu_entry_select(get_current_menu_or_submenu(), target->mode);
             menu_redraw();
             return 0;

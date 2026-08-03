@@ -292,6 +292,10 @@ static int can_be_turned_off(struct menu_entry * entry)
 
 static void entry_default_display_info(struct menu_entry * entry, struct menu_display_info * info);
 
+#ifdef CONFIG_SLIM_MENUS
+static int entry_is_slim_locked_grey(struct menu_entry * entry);
+#endif
+
 static int is_visible(struct menu_entry * entry)
 {
     return 
@@ -307,6 +311,9 @@ static int is_visible(struct menu_entry * entry)
        &&
        (
             advanced_mode || !entry->advanced || entry->selected || config_var_was_changed(entry->priv)
+#ifdef CONFIG_SLIM_MENUS
+            || entry_is_slim_locked_grey(entry)
+#endif
        )
        ;
 }

@@ -64,7 +64,8 @@ int get_last_time_active() { return last_time_active; }
 #ifdef CONFIG_SLIM_MENUS
 /* While recording: ignore all touch. In idle movie Live View:
  * one tap = Quick Screen, two taps = grid launcher, three taps = Last Settings.
- * Canon INFO screens (lv_disp_mode != 0) pass through. */
+ * The tap router owns EOS M Live View touches, including the short boot-time
+ * interval while Canon is still reporting an INFO display state. */
 #define SLIM_TOUCH_TAP_WINDOW_MS 330
 static int slim_touch_tap_count;
 static int slim_touch_tap_deadline;
@@ -73,7 +74,7 @@ static int slim_touch_lv_pressed;
 static int slim_touch_lv_context_ok(void)
 {
     return lv && is_movie_mode() && !RECORDING &&
-           !gui_menu_shown() && lv_disp_mode == 0;
+           !gui_menu_shown();
 }
 
 static void slim_touch_open_for_taps(int taps)

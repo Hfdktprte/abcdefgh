@@ -2246,10 +2246,7 @@ clrscr_mirror( void )
 #ifdef CONFIG_SLIM_MENUS
 static MENU_UPDATE_FUNC(monitoring_mode_display)
 {
-    static const char * const labels[] = {"OFF", "Performance", "Precision"};
-    int v = CURRENT_VALUE;
-    if (v >= MONITOR_OFF && v <= MONITOR_PRECISION)
-        MENU_SET_VALUE("%s", labels[v]);
+    MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
 }
 #endif
 #ifdef FEATURE_ZEBRA
@@ -3038,13 +3035,13 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Zebras",
         .priv       = &zebra_draw,
-        .max = MONITOR_PRECISION,
+        .max = MONITOR_PERFORMANCE,
         .icon_type = IT_DICE,
-        .choices = CHOICES("OFF", "Performance", "Precision"),
+        .choices = CHOICES("OFF", "ON"),
         .update     = monitoring_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW RGB zebras: per-channel clip colors from sensor data.",
-        .help2 = "Off: disabled. Performance: fast blocky overlay. Precision: smoother, darker zebras.",
+        .help2 = "Off: disabled. On: performance overlay.",
     },
 #else
     {
@@ -3416,13 +3413,13 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Histogram",
         .priv       = &hist_draw,
-        .max = MONITOR_PRECISION,
+        .max = MONITOR_PERFORMANCE,
         .icon_type = IT_DICE,
-        .choices = CHOICES("OFF", "Performance", "Precision"),
+        .choices = CHOICES("OFF", "ON"),
         .update     = monitoring_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW luma histogram on a linear scale.",
-        .help2 = "Off: disabled. Performance: current refresh. Precision: smoother curve and refresh.",
+        .help2 = "Off: disabled. On: performance refresh.",
     },
 #else
     {
@@ -3491,13 +3488,13 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Waveform",
         .priv       = &waveform_draw,
-        .max = MONITOR_PRECISION,
+        .max = MONITOR_PERFORMANCE,
         .icon_type = IT_DICE,
-        .choices = CHOICES("OFF", "Performance", "Precision"),
+        .choices = CHOICES("OFF", "ON"),
         .update     = monitoring_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW luma waveform (same scale as histogram).",
-        .help2 = "Off: disabled. Performance: current refresh. Precision: faster, smoother waveform.",
+        .help2 = "Off: disabled. On: performance refresh.",
     },
 #else
     {
@@ -4945,9 +4942,9 @@ static void zebra_init()
     hist_log = 0;
     hist_meter = 0;
     hist_warn = 1; /* slim has no Clip warning menu; dots always follow histogram */
-    if (zebra_draw > MONITOR_PRECISION) zebra_draw = MONITOR_PERFORMANCE;
-    if (hist_draw > MONITOR_PRECISION) hist_draw = MONITOR_PERFORMANCE;
-    if (waveform_draw > MONITOR_PRECISION) waveform_draw = MONITOR_PERFORMANCE;
+    if (zebra_draw > MONITOR_PERFORMANCE) zebra_draw = MONITOR_PERFORMANCE;
+    if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
+    if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
     zebra_init_slim_palette_for_mode();
 #endif
     precompute_yuv2rgb();

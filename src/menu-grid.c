@@ -397,8 +397,9 @@ int menu_quick_screen_handle_touch(int x, int y)
     if (quick_screen_touch_latched)
         return 0;
 
-    /* Give each visible arrow a forgiving 180px-wide hitbox. The boxes stay
-     * separate from text and from neighboring options. */
+    /* Give each visible arrow a forgiving 180px-wide hitbox. Extend the
+     * vertical reach as well, while leaving a small gap around values and
+     * between the two rows so an empty-space tap still exits the panel. */
     col = COERCE(x / 240, 0, 2);
     for (row = 0; row < 2; row++)
     {
@@ -406,14 +407,14 @@ int menu_quick_screen_handle_touch(int x, int y)
         quick_screen_geometry(
             candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
         if (x >= cx - 90 && x <= cx + 90 &&
-            y >= up_tip_y - 20 && y <= up_tip_y + 38)
+            y >= up_tip_y - 35 && y <= up_tip_y + 40)
         {
             index = candidate;
             delta = 1;
             break;
         }
         if (x >= cx - 90 && x <= cx + 90 &&
-            y >= down_tip_y - 38 && y <= down_tip_y + 20)
+            y >= down_tip_y - 40 && y <= down_tip_y + 35)
         {
             index = candidate;
             delta = -1;

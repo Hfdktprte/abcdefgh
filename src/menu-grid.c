@@ -224,17 +224,6 @@ static void quick_screen_arrow(int cx, int tip_y, int up, int color)
     }
 }
 
-/* Low-contrast guides for the forgiving arrow hitboxes.  They are deliberately
- * darker than the values so the panel remains minimal at a glance. */
-static void quick_screen_touch_zone(int cx, int y, int enabled, int feedback)
-{
-    int outer = feedback ? COLOR_GRAY(38) :
-        (enabled ? COLOR_GRAY(20) : COLOR_GRAY(10));
-    int inner = enabled ? COLOR_GRAY(8) : COLOR_GRAY(3);
-    grid_fill_round_rect(cx - 90, y, 180, 58, 12, outer);
-    grid_fill_round_rect(cx - 89, y + 1, 178, 56, 11, inner);
-}
-
 static int quick_screen_value(
     int index, char *buf, int size, int *draw_degree)
 {
@@ -366,10 +355,6 @@ void menu_quick_screen_draw(void)
             index, &cx, &value_y, &up_tip_y, &down_tip_y);
         enabled = quick_screen_value(
             index, value, sizeof(value), &draw_degree);
-        quick_screen_touch_zone(
-            cx, up_tip_y - 20, enabled, quick_screen_feedback == index * 2);
-        quick_screen_touch_zone(
-            cx, down_tip_y - 38, enabled, quick_screen_feedback == index * 2 + 1);
         color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
         width = bmp_string_width(FONT_CANON, value);
         value_x = cx - (width + (draw_degree ? 12 : 0)) / 2;
@@ -412,8 +397,9 @@ int menu_quick_screen_handle_touch(int x, int y)
     if (quick_screen_touch_latched)
         return 0;
 
-    /* Give each visible arrow a forgiving 180px-wide hitbox. The boxes stay
-     * separate from text and from neighboring options. */
+    /* Give each visible arrow a forgiving 180px-wide hitbox. Extend the
+     * vertical reach as well, while leaving a small gap around values and
+     * between the two rows so an empty-space tap still exits the panel. */
     col = COERCE(x / 240, 0, 2);
     for (row = 0; row < 2; row++)
     {
@@ -421,14 +407,14 @@ int menu_quick_screen_handle_touch(int x, int y)
         quick_screen_geometry(
             candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
         if (x >= cx - 90 && x <= cx + 90 &&
-            y >= up_tip_y - 20 && y <= up_tip_y + 38)
+            y >= up_tip_y - 35 && y <= up_tip_y + 40)
         {
             index = candidate;
             delta = 1;
             break;
         }
         if (x >= cx - 90 && x <= cx + 90 &&
-            y >= down_tip_y - 38 && y <= down_tip_y + 20)
+            y >= down_tip_y - 40 && y <= down_tip_y + 35)
         {
             index = candidate;
             delta = -1;

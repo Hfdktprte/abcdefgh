@@ -10,6 +10,7 @@ int get_current_shutter_reciprocal_x1000();
 
 /* compute shutter speed from timer value (FRAME_SHUTTER_TIMER) */
 int get_shutter_speed_us_from_timer(int timer);
+int shutter_finetune_get_value(void);
 
 /* how would current FPS settings change some shutter speed? (in 1/8 EV increments) */
 int fps_get_shutter_speed_shift(int raw_shutter);

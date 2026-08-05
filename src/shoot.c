@@ -1775,10 +1775,6 @@ iso_toggle( void * priv, int sign )
 
 #ifdef FEATURE_EXPO_SHUTTER
 
-#ifdef CONFIG_EOSM
-extern void shutter_lock_accept(int shutter);
-#endif
-
 static MENU_UPDATE_FUNC(shutter_display)
 {
     if (is_movie_mode())
@@ -1844,8 +1840,12 @@ void
 shutter_toggle(void* priv, int sign)
 {
     if (!lens_info.raw_shutter) return;
+#ifdef CONFIG_EOSM
+    shutter_lock_prepare_change();
+#endif
     int i = raw2index_shutter(lens_info.raw_shutter);
     int k;
+    int accepted = 0;
     for (k = 0; k < 15; k++)
     {
         int new_i = i;
@@ -1863,9 +1863,14 @@ shutter_toggle(void* priv, int sign)
 #ifdef CONFIG_EOSM
             shutter_lock_accept(codes_shutter[i]);
 #endif
+            accepted = 1;
             break;
         }
     }
+#ifdef CONFIG_EOSM
+    if (!accepted)
+        shutter_lock_cancel_change();
+#endif
 }
 
 #endif // FEATURE_EXPO_SHUTTER

@@ -463,6 +463,11 @@ void fps_override_shutter_blanking()
 
 int get_current_shutter_reciprocal_x1000()
 {
+#ifdef CONFIG_EOSM
+    int locked_shutter = shutter_lock_get_reciprocal_x1000();
+    if (locked_shutter > 0)
+        return MAX(locked_shutter, fps_get_current_x1000());
+#endif
 #ifdef FRAME_SHUTTER_BLANKING_READ
     #ifdef FRAME_SHUTTER_BLANKING_WRITE
     int blanking = nrzi_decode(*FRAME_SHUTTER_BLANKING_WRITE);   /* prefer to use the overriden value */

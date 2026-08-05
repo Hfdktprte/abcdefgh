@@ -1662,6 +1662,19 @@ static int adjust_shutter_blanking(int old)
             (orig_shutter - 250e-6) * default_fps_adj / current_fps;
         });
 
+#ifdef CONFIG_EOSM
+    /* Canon's raw shutter code stays constant across crop presets, but its
+     * effective exposure changes with their timer geometry. Recalculate the
+     * blanking from the held reciprocal value so the selected shutter does
+     * not drift when Mode, Resolution or FPS changes. */
+    int locked_shutter = shutter_lock_get_reciprocal_x1000();
+    if (locked_shutter > 0)
+    {
+        locked_shutter = MAX(locked_shutter, current_fps);
+        new_shutter = 1000.0f / locked_shutter;
+    }
+#endif
+
     /* what value is actually used for timer B? (possibly after our overrides) */
     int fps_timer_b = (shamem_read(0xC0F06014) & 0xFFFF) + 1;
 
@@ -7055,6 +7068,16 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
 #ifdef CONFIG_EOSM
     int mlv_busy = mlv_raw_rec_busy();
+    static int shutter_range_for_lock = -1;
+    if (shutter_range_for_lock < 0)
+        shutter_range_for_lock = shutter_range;
+    else if (shutter_range_for_lock != shutter_range)
+    {
+        shutter_range_for_lock = shutter_range;
+        /* Shutter Range is an intentional exposure change. Let Canon apply
+         * it once, then capture that result as the new invariant target. */
+        shutter_lock_rebase();
+    }
 #else
     int mlv_busy = 0;
 #endif

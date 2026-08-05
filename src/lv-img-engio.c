@@ -709,6 +709,11 @@ static MENU_UPDATE_FUNC(vignetting_graphs_update)
 
 static CONFIG_INT("shutter.finetune", shutter_finetune, 0);
 
+int shutter_finetune_get_value(void)
+{
+    return shutter_finetune;
+}
+
 static volatile int orig_shutter_timer = 0;
 static volatile int adjusted_shutter_timer = 0;
 

@@ -278,13 +278,85 @@ void close_liveview()
 
 static CONFIG_INT("shutter.lock", shutter_lock, 0);
 static CONFIG_INT("shutter.lock.value", shutter_lock_value, 0);
+#ifdef CONFIG_EOSM
+static CONFIG_INT("shutter.lock.recip", shutter_lock_reciprocal_x1000, 0);
+static int shutter_lock_change_pending = 0;
+static int shutter_lock_capture_after = 0;
+#endif
 
 #ifdef FEATURE_SHUTTER_LOCK
+#ifdef CONFIG_EOSM
+static int shutter_lock_finetune_us(void)
+{
+    int finetune = shutter_finetune_get_value();
+    if (!finetune || !lv)
+        return 0;
+    return get_shutter_speed_us_from_timer(finetune);
+}
+
+static void shutter_lock_capture_current(void)
+{
+    int current = get_current_shutter_reciprocal_x1000();
+    if (current <= 0)
+        return;
+
+    /* Store the untuned exposure time. Shutter tuning is applied dynamically,
+     * so changing it remains intentional without allowing preset timing drift. */
+    int current_us = 1000000000 / current;
+    int base_us = current_us - shutter_lock_finetune_us();
+    if (base_us > 0)
+        shutter_lock_reciprocal_x1000 = 1000000000 / base_us;
+}
+
+void shutter_lock_prepare_change(void)
+{
+    shutter_lock_change_pending = 1;
+    shutter_lock_capture_after = 0;
+}
+
+void shutter_lock_accept(int shutter)
+{
+    if (shutter > 0)
+    {
+        shutter_lock_value = shutter;
+        /* Canon updates ADTG blanking shortly after accepting PROP_SHUTTER.
+         * Leave the effective lock released until that value has settled. */
+        shutter_lock_reciprocal_x1000 = 0;
+        shutter_lock_capture_after = get_ms_clock() + 120;
+    }
+    shutter_lock_change_pending = 0;
+}
+
+void shutter_lock_cancel_change(void)
+{
+    shutter_lock_change_pending = 0;
+}
+
+void shutter_lock_rebase(void)
+{
+    shutter_lock_reciprocal_x1000 = 0;
+    shutter_lock_capture_after = get_ms_clock() + 300;
+}
+
+int shutter_lock_get_reciprocal_x1000(void)
+{
+    if (!lv || !is_movie_mode() || CONTROL_BV ||
+        shutter_lock_change_pending || shutter_lock_reciprocal_x1000 <= 0)
+        return 0;
+
+    int base_us = 1000000000 / shutter_lock_reciprocal_x1000;
+    int adjusted_us = base_us + shutter_lock_finetune_us();
+    if (adjusted_us <= 0)
+        return 0;
+    return 1000000000 / adjusted_us;
+}
+#else
 void shutter_lock_accept(int shutter)
 {
     if (shutter > 0)
         shutter_lock_value = shutter;
 }
+#endif
 
 static void
 shutter_lock_print(
@@ -308,22 +380,9 @@ static void shutter_lock_step()
     {
         int shutter = lens_info.raw_shutter;
         if (shutter_lock_value == 0) shutter_lock_value = shutter; // make sure it's some valid value
-        /* EOS M slim keeps selected shutter speed across crop presets, video
-         * modes and FPS changes. Only exposure controls may intentionally
-         * replace the held value. */
-        int exposure_menu =
-            is_menu_entry_selected("Expo", "Shutter") ||
-            is_menu_entry_selected("Movie", "Shutter range") ||
-            is_menu_entry_selected("Expo", "Shutter range") ||
-            is_menu_entry_selected("Movie", "Shutter tuning") ||
-            is_menu_entry_selected("Expo", "Shutter tuning") ||
-            is_menu_entry_selected("Movie", "Shutter fine-tuning") ||
-            is_menu_entry_selected("Expo", "Shutter fine-tuning") ||
-            is_menu_entry_selected("Expo", "Expo override");
 #ifdef CONFIG_EOSM
-        if (exposure_menu)
-            shutter_lock_value = shutter;
-        else
+        if (shutter_lock_change_pending || CONTROL_BV)
+            return;
 #else
         if (!gui_menu_shown()) // lock shutter
 #endif
@@ -336,6 +395,11 @@ static void shutter_lock_step()
                 msleep(100);
             }
         }
+#ifdef CONFIG_EOSM
+        if (!shutter_lock_reciprocal_x1000 &&
+            get_ms_clock() >= shutter_lock_capture_after)
+            shutter_lock_capture_current();
+#endif
 #ifndef CONFIG_EOSM
         else
             shutter_lock_value = shutter; // accept change from ML menu

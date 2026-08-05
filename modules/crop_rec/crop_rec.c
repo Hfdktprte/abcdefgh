@@ -605,6 +605,10 @@ static int slim_handle_arrow_adjust(int mode, int dir)
     }
     if (mode == 3) /* ISO */
     {
+        /* Dual ISO owns the ISO pair while active. Consume the shortcut so
+         * an Up/Down ISO assignment cannot alter either ISO value. */
+        if (dual_iso_is_enabled())
+            return 1;
         if (lens_info.raw_iso == 0x0)
             return 1;
         if (dir > 0)

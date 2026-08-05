@@ -725,8 +725,12 @@ void shutter_finetune_step()
 
 int shutter_finetune_get_adjusted_timer()
 {
-    if (shutter_finetune) return adjusted_shutter_timer;
-    else return FRAME_SHUTTER_TIMER;
+    if (!shutter_finetune)
+        return FRAME_SHUTTER_TIMER;
+
+    /* Live preview while dialling: use last Canon base (orig), else current FRAME. */
+    int base = orig_shutter_timer ? orig_shutter_timer : FRAME_SHUTTER_TIMER;
+    return COERCE(base + shutter_finetune, MIN_SHUTTER_TIMER, 65535);
 }
 
 static MENU_UPDATE_FUNC(shutter_finetune_display)

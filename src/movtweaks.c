@@ -279,9 +279,8 @@ void close_liveview()
 static CONFIG_INT("shutter.lock", shutter_lock, 0);
 static CONFIG_INT("shutter.lock.value", shutter_lock_value, 0);
 #ifdef CONFIG_EOSM
-static CONFIG_INT("shutter.lock.recip", shutter_lock_reciprocal_x1000, 0);
-static int shutter_lock_change_pending = 0;
-static int shutter_lock_capture_after = 0;
+static int shutter_lock_full_range = 0;
+static volatile int shutter_lock_change_pending = 0;
 #endif
 
 #ifdef FEATURE_SHUTTER_LOCK
@@ -294,36 +293,55 @@ static int shutter_lock_finetune_us(void)
     return get_shutter_speed_us_from_timer(finetune);
 }
 
-static void shutter_lock_capture_current(void)
+static int shutter_lock_table_reciprocal_x1000(void)
 {
-    int current = get_current_shutter_reciprocal_x1000();
-    if (current <= 0)
-        return;
+    int raw = shutter_lock_value ? shutter_lock_value : lens_info.raw_shutter;
+    int reciprocal_x1000;
 
-    /* Store the untuned exposure time. Shutter tuning is applied dynamically,
-     * so changing it remains intentional without allowing preset timing drift. */
-    int current_us = 1000000000 / current;
-    int base_us = current_us - shutter_lock_finetune_us();
-    if (base_us > 0)
-        shutter_lock_reciprocal_x1000 = 1000000000 / base_us;
+    /* Movie shutter codes use the fixed Canon display table. This makes each
+     * dial position deterministic instead of measuring preset-specific ADTG
+     * timing, so stepping away and back always returns to the same value. */
+    if (raw >= 70 && raw - 15 < COUNT(values_shutter))
+        reciprocal_x1000 = values_shutter[raw - 15] * 1000;
+    else if (raw > 0)
+        reciprocal_x1000 = (int)roundf(1000.0f / raw2shutterf(raw));
+    else
+        return 0;
+
+    if (shutter_lock_full_range)
+    {
+        /* Fixed 23.976p reference mapping for Full Range. Presets and FPS do
+         * not redefine the list; impossible slow values are clamped later to
+         * the active frame interval. */
+        const int reference_fps_x1000 = 24000 * 1000 / 1001;
+        const int fastest_us = 1000000 / 15000;
+        const int range_scale = 1000000000 / (1000000000 / 33333 - 250);
+        int original_us = 1000000000 / reciprocal_x1000;
+        int mapped_us = fastest_us;
+        if (original_us > 250)
+            mapped_us = MAX(fastest_us,
+                (int)(((int64_t)(original_us - 250) * range_scale) /
+                      reference_fps_x1000));
+        reciprocal_x1000 = 1000000000 / mapped_us;
+    }
+
+    return reciprocal_x1000;
+}
+
+void shutter_lock_set_range(int full_range)
+{
+    shutter_lock_full_range = !!full_range;
 }
 
 void shutter_lock_prepare_change(void)
 {
     shutter_lock_change_pending = 1;
-    shutter_lock_capture_after = 0;
 }
 
 void shutter_lock_accept(int shutter)
 {
     if (shutter > 0)
-    {
         shutter_lock_value = shutter;
-        /* Canon updates ADTG blanking shortly after accepting PROP_SHUTTER.
-         * Leave the effective lock released until that value has settled. */
-        shutter_lock_reciprocal_x1000 = 0;
-        shutter_lock_capture_after = get_ms_clock() + 120;
-    }
     shutter_lock_change_pending = 0;
 }
 
@@ -332,19 +350,15 @@ void shutter_lock_cancel_change(void)
     shutter_lock_change_pending = 0;
 }
 
-void shutter_lock_rebase(void)
-{
-    shutter_lock_reciprocal_x1000 = 0;
-    shutter_lock_capture_after = get_ms_clock() + 300;
-}
-
 int shutter_lock_get_reciprocal_x1000(void)
 {
-    if (!lv || !is_movie_mode() || CONTROL_BV ||
-        shutter_lock_change_pending || shutter_lock_reciprocal_x1000 <= 0)
+    if (!lv || !is_movie_mode() || CONTROL_BV)
         return 0;
 
-    int base_us = 1000000000 / shutter_lock_reciprocal_x1000;
+    int reciprocal_x1000 = shutter_lock_table_reciprocal_x1000();
+    if (reciprocal_x1000 <= 0)
+        return 0;
+    int base_us = 1000000000 / reciprocal_x1000;
     int adjusted_us = base_us + shutter_lock_finetune_us();
     if (adjusted_us <= 0)
         return 0;
@@ -395,11 +409,6 @@ static void shutter_lock_step()
                 msleep(100);
             }
         }
-#ifdef CONFIG_EOSM
-        if (!shutter_lock_reciprocal_x1000 &&
-            get_ms_clock() >= shutter_lock_capture_after)
-            shutter_lock_capture_current();
-#endif
 #ifndef CONFIG_EOSM
         else
             shutter_lock_value = shutter; // accept change from ML menu

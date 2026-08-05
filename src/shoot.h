@@ -73,7 +73,7 @@ void close_liveview();
 void shutter_lock_prepare_change(void);
 void shutter_lock_accept(int shutter);
 void shutter_lock_cancel_change(void);
-void shutter_lock_rebase(void);
+void shutter_lock_set_range(int full_range);
 int shutter_lock_get_reciprocal_x1000(void);
 #endif
 

@@ -1666,18 +1666,6 @@ static int adjust_shutter_blanking(int old)
             (orig_shutter - 250e-6) * default_fps_adj / current_fps;
         });
 
-#ifdef CONFIG_EOSM
-    /* Original and Full Range each use a deterministic shutter table. Only
-     * blanking is recalculated for the active preset timing. */
-    shutter_lock_set_range(shutter_range);
-    int locked_shutter = shutter_lock_get_reciprocal_x1000();
-    if (locked_shutter > 0)
-    {
-        locked_shutter = MAX(locked_shutter, current_fps);
-        new_shutter = 1000.0f / locked_shutter;
-    }
-#endif
-
     /* what value is actually used for timer B? (possibly after our overrides) */
     int fps_timer_b = (shamem_read(0xC0F06014) & 0xFFFF) + 1;
 
@@ -7071,7 +7059,6 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
 #ifdef CONFIG_EOSM
     int mlv_busy = mlv_raw_rec_busy();
-    shutter_lock_set_range(shutter_range);
 #else
     int mlv_busy = 0;
 #endif

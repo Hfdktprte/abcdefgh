@@ -68,15 +68,6 @@ void playback_compare_images_task(int direction);
 void force_liveview();
 void close_liveview();
 
-#ifdef CONFIG_EOSM
-/* Keep the selected effective movie shutter across crop/FPS timing changes. */
-void shutter_lock_prepare_change(void);
-void shutter_lock_accept(int shutter);
-void shutter_lock_cancel_change(void);
-void shutter_lock_set_range(int full_range);
-int shutter_lock_get_reciprocal_x1000(void);
-#endif
-
 /* to be moved to separate file (backlight.c/h?) */
 void set_backlight_level(int level);
 

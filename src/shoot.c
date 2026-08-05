@@ -1840,12 +1840,8 @@ void
 shutter_toggle(void* priv, int sign)
 {
     if (!lens_info.raw_shutter) return;
-#ifdef CONFIG_EOSM
-    shutter_lock_prepare_change();
-#endif
     int i = raw2index_shutter(lens_info.raw_shutter);
     int k;
-    int accepted = 0;
     for (k = 0; k < 15; k++)
     {
         int new_i = i;
@@ -1858,19 +1854,8 @@ shutter_toggle(void* priv, int sign)
         i = new_i;
         if (codes_shutter[i] == 0) continue;
         if (is_movie_mode() && codes_shutter[i] < SHUTTER_1_25) { k--; continue; }  /* there are many values to skip */
-        if (lens_set_rawshutter(codes_shutter[i]))
-        {
-#ifdef CONFIG_EOSM
-            shutter_lock_accept(codes_shutter[i]);
-#endif
-            accepted = 1;
-            break;
-        }
+        if (lens_set_rawshutter(codes_shutter[i])) break;
     }
-#ifdef CONFIG_EOSM
-    if (!accepted)
-        shutter_lock_cancel_change();
-#endif
 }
 
 #endif // FEATURE_EXPO_SHUTTER

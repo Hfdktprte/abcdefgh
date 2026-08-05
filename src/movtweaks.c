@@ -278,100 +278,8 @@ void close_liveview()
 
 static CONFIG_INT("shutter.lock", shutter_lock, 0);
 static CONFIG_INT("shutter.lock.value", shutter_lock_value, 0);
-#ifdef CONFIG_EOSM
-static int shutter_lock_full_range = 0;
-static volatile int shutter_lock_change_pending = 0;
-#endif
 
 #ifdef FEATURE_SHUTTER_LOCK
-#ifdef CONFIG_EOSM
-static int shutter_lock_finetune_us(void)
-{
-    int finetune = shutter_finetune_get_value();
-    if (!finetune || !lv)
-        return 0;
-    return get_shutter_speed_us_from_timer(finetune);
-}
-
-static int shutter_lock_table_reciprocal_x1000(void)
-{
-    int raw = shutter_lock_value ? shutter_lock_value : lens_info.raw_shutter;
-    int reciprocal_x1000;
-
-    /* Movie shutter codes use the fixed Canon display table. This makes each
-     * dial position deterministic instead of measuring preset-specific ADTG
-     * timing, so stepping away and back always returns to the same value. */
-    if (raw >= 70 && raw - 15 < COUNT(values_shutter))
-        reciprocal_x1000 = values_shutter[raw - 15] * 1000;
-    else if (raw > 0)
-        reciprocal_x1000 = (int)roundf(1000.0f / raw2shutterf(raw));
-    else
-        return 0;
-
-    if (shutter_lock_full_range)
-    {
-        /* Fixed 23.976p reference mapping for Full Range. Presets and FPS do
-         * not redefine the list; impossible slow values are clamped later to
-         * the active frame interval. */
-        const int reference_fps_x1000 = 24000 * 1000 / 1001;
-        const int fastest_us = 1000000 / 15000;
-        const int range_scale = 1000000000 / (1000000000 / 33333 - 250);
-        int original_us = 1000000000 / reciprocal_x1000;
-        int mapped_us = fastest_us;
-        if (original_us > 250)
-            mapped_us = MAX(fastest_us,
-                (int)(((int64_t)(original_us - 250) * range_scale) /
-                      reference_fps_x1000));
-        reciprocal_x1000 = 1000000000 / mapped_us;
-    }
-
-    return reciprocal_x1000;
-}
-
-void shutter_lock_set_range(int full_range)
-{
-    shutter_lock_full_range = !!full_range;
-}
-
-void shutter_lock_prepare_change(void)
-{
-    shutter_lock_change_pending = 1;
-}
-
-void shutter_lock_accept(int shutter)
-{
-    if (shutter > 0)
-        shutter_lock_value = shutter;
-    shutter_lock_change_pending = 0;
-}
-
-void shutter_lock_cancel_change(void)
-{
-    shutter_lock_change_pending = 0;
-}
-
-int shutter_lock_get_reciprocal_x1000(void)
-{
-    if (!lv || !is_movie_mode() || CONTROL_BV)
-        return 0;
-
-    int reciprocal_x1000 = shutter_lock_table_reciprocal_x1000();
-    if (reciprocal_x1000 <= 0)
-        return 0;
-    int base_us = 1000000000 / reciprocal_x1000;
-    int adjusted_us = base_us + shutter_lock_finetune_us();
-    if (adjusted_us <= 0)
-        return 0;
-    return 1000000000 / adjusted_us;
-}
-#else
-void shutter_lock_accept(int shutter)
-{
-    if (shutter > 0)
-        shutter_lock_value = shutter;
-}
-#endif
-
 static void
 shutter_lock_print(
     void *          priv,
@@ -394,12 +302,7 @@ static void shutter_lock_step()
     {
         int shutter = lens_info.raw_shutter;
         if (shutter_lock_value == 0) shutter_lock_value = shutter; // make sure it's some valid value
-#ifdef CONFIG_EOSM
-        if (shutter_lock_change_pending || CONTROL_BV)
-            return;
-#else
         if (!gui_menu_shown()) // lock shutter
-#endif
         {
             if (shutter != shutter_lock_value) // i.e. revert it if changed
             {
@@ -409,10 +312,8 @@ static void shutter_lock_step()
                 msleep(100);
             }
         }
-#ifndef CONFIG_EOSM
         else
             shutter_lock_value = shutter; // accept change from ML menu
-#endif
     }
 }
 #endif
@@ -507,11 +408,7 @@ void movtweak_step()
             #endif
             
             #ifdef FEATURE_SHUTTER_LOCK
-            #ifdef CONFIG_EOSM
-            shutter_lock_step();
-            #else
             if (shutter_lock) shutter_lock_step();
-            #endif
             #endif
         }
 

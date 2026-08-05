@@ -280,6 +280,12 @@ static CONFIG_INT("shutter.lock", shutter_lock, 0);
 static CONFIG_INT("shutter.lock.value", shutter_lock_value, 0);
 
 #ifdef FEATURE_SHUTTER_LOCK
+void shutter_lock_accept(int shutter)
+{
+    if (shutter > 0)
+        shutter_lock_value = shutter;
+}
+
 static void
 shutter_lock_print(
     void *          priv,
@@ -302,7 +308,25 @@ static void shutter_lock_step()
     {
         int shutter = lens_info.raw_shutter;
         if (shutter_lock_value == 0) shutter_lock_value = shutter; // make sure it's some valid value
+        /* EOS M slim keeps selected shutter speed across crop presets, video
+         * modes and FPS changes. Only exposure controls may intentionally
+         * replace the held value. */
+        int exposure_menu =
+            is_menu_entry_selected("Expo", "Shutter") ||
+            is_menu_entry_selected("Movie", "Shutter range") ||
+            is_menu_entry_selected("Expo", "Shutter range") ||
+            is_menu_entry_selected("Movie", "Shutter tuning") ||
+            is_menu_entry_selected("Expo", "Shutter tuning") ||
+            is_menu_entry_selected("Movie", "Shutter fine-tuning") ||
+            is_menu_entry_selected("Expo", "Shutter fine-tuning") ||
+            is_menu_entry_selected("Expo", "Expo override");
+#ifdef CONFIG_EOSM
+        if (exposure_menu)
+            shutter_lock_value = shutter;
+        else
+#else
         if (!gui_menu_shown()) // lock shutter
+#endif
         {
             if (shutter != shutter_lock_value) // i.e. revert it if changed
             {
@@ -312,8 +336,10 @@ static void shutter_lock_step()
                 msleep(100);
             }
         }
+#ifndef CONFIG_EOSM
         else
             shutter_lock_value = shutter; // accept change from ML menu
+#endif
     }
 }
 #endif
@@ -408,7 +434,11 @@ void movtweak_step()
             #endif
             
             #ifdef FEATURE_SHUTTER_LOCK
+            #ifdef CONFIG_EOSM
+            shutter_lock_step();
+            #else
             if (shutter_lock) shutter_lock_step();
+            #endif
             #endif
         }
 

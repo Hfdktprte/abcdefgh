@@ -21,18 +21,16 @@ int zebra_draw_enabled(void);
 #ifdef CONFIG_SLIM_MENUS
 #define MONITOR_OFF         0
 #define MONITOR_PERFORMANCE 1
-/* Kept for compatibility with older saved configs; slim menus no longer
- * expose a precision mode and all non-zero values use performance sampling. */
 #define MONITOR_PRECISION   2
 
 static inline int monitoring_enabled(int mode) { return mode != MONITOR_OFF; }
-static inline int monitoring_precision(int mode) { (void) mode; return 0; }
+static inline int monitoring_precision(int mode) { return mode == MONITOR_PRECISION; }
 
 /* Initial hist/waveform refresh countdown while Monitoring menu is transparent. */
 int monitoring_hist_menu_countdown(void);
 /** True when slim RAW scan should use precision sampling (hist and/or waveform). */
 int monitoring_slim_precision_scan(void);
-/** Toggle monitoring tool between OFF and ON (INFO button). */
+/** Toggle monitoring tool between OFF and Performance (INFO button). */
 static inline void monitoring_toggle_tool(int *mode)
 {
     if (!mode) return;

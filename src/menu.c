@@ -6590,6 +6590,10 @@ static void menu_close()
 
 #ifdef CONFIG_SLIM_MENUS
     menu_last_sel_save();
+    /* A Quick Panel opened by touch may be dismissed by MENU, Q,
+     * half-shutter or an automatic menu close. Never let that screen state
+     * leak into the next Down-button launch of the grid. */
+    menu_quick_screen_close();
     menu_grid_close();
 #endif
     customize_mode = 0;

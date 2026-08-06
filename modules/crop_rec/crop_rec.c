@@ -6255,6 +6255,12 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
  * menu_entry lookup and menu semaphores: the menu task is not active while
  * the camera is displaying Live View, and touching these fields must not
  * enter Canon's menu lock path (Err70 on EOS M). */
+/* These entry points are called from core through MODULE_FUNCTION().  Keep
+ * them in the module image even though no in-module caller references them;
+ * otherwise section garbage collection can discard the exports and the core
+ * pointer silently falls back to the weak stub (rendering "--" in the editor).
+ */
+__attribute__((used, noinline))
 int crop_rec_touch_adjust(int control, int delta)
 {
     if (!is_movie_mode() || RECORDING)
@@ -6271,6 +6277,7 @@ int crop_rec_touch_adjust(int control, int delta)
     return 1;
 }
 
+__attribute__((used, noinline))
 int crop_rec_touch_get_value(int control, int slot, char *value, int size)
 {
     int enabled = 1;
@@ -6335,6 +6342,12 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size)
 
     return enabled;
 }
+
+/* Force a relocation to both callbacks for linkers that perform section GC. */
+static void *crop_rec_touch_exports[] __attribute__((used)) = {
+    (void *)&crop_rec_touch_adjust,
+    (void *)&crop_rec_touch_get_value,
+};
 
 static struct menu_entry crop_rec_menu_eosm[] =
 {

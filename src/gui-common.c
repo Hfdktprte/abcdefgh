@@ -13,6 +13,8 @@
 #include <lvinfo.h>
 #include <menu.h>
 #include <menu-grid.h>
+#include <module.h>
+#include "../modules/crop_rec/crop_rec.h"
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -75,39 +77,29 @@ static int slim_touch_pending_menu_change;
 static enum lvinfo_touch_field slim_touch_pending_field;
 static int slim_touch_pending_slot;
 static int slim_touch_pending_sign;
+static int (*crop_rec_touch_adjust_fn)(int, int) = MODULE_FUNCTION(crop_rec_touch_adjust);
+static int (*crop_rec_touch_get_value_fn)(int, int, char *, int) = MODULE_FUNCTION(crop_rec_touch_get_value);
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
  * the normal menu selectors as the sole source of valid Mode/resolution/FPS
  * choices without creating a lock-order dependency in the overlay task. */
 static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
 {
-    struct menu_display_info info = { 0 };
-    struct menu_display_info adjust_info = { 0 };
-    char value[MENU_MAX_VALUE_LEN];
-    char *text;
+    int control = field == LVINFO_TOUCH_CROP ? 0 :
+                  field == LVINFO_TOUCH_FPS ? 1 :
+                  field == LVINFO_TOUCH_BIT_DEPTH ? 2 : -1;
+    char value[32];
 
-    if (field == LVINFO_TOUCH_CROP)
+    if (control < 0 || !crop_rec_touch_get_value_fn)
+        return;
+    if (crop_rec_touch_get_value_fn(control, 0, value, sizeof(value)))
+        lvinfo_touch_editor_set_item(0, value, 1);
+    else
+        lvinfo_touch_editor_set_item(0, value, 0);
+    if (control == 0)
     {
-        text = menu_get_str_value_from_script("Movie", "Mode", &info);
-        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
-        lvinfo_touch_editor_set_item(0, value, info.enabled);
-
-        text = menu_get_str_value_from_script("Movie", "Resolution", &info);
-        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
-        menu_get_str_value_from_script("Movie", "Quick Resolution", &adjust_info);
-        lvinfo_touch_editor_set_item(1, value, adjust_info.enabled);
-    }
-    else if (field == LVINFO_TOUCH_FPS)
-    {
-        text = menu_get_str_value_from_script("Movie", "Frame Rate", &info);
-        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
-        lvinfo_touch_editor_set_item(0, value, info.enabled);
-    }
-    else if (field == LVINFO_TOUCH_BIT_DEPTH)
-    {
-        text = menu_get_str_value_from_script("Movie", "Bit Depth", &info);
-        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
-        lvinfo_touch_editor_set_item(0, value, info.enabled);
+        int enabled = crop_rec_touch_get_value_fn(control, 1, value, sizeof(value));
+        lvinfo_touch_editor_set_item(1, value, enabled);
     }
 }
 
@@ -129,19 +121,19 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
     slim_touch_pending_menu_change = 0;
     if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
     {
-        menu_adjust_value_by_name("Movie",
-            slim_touch_pending_slot == 0 ? "Mode" : "Quick Resolution",
-            slim_touch_pending_sign);
+        if (crop_rec_touch_adjust_fn)
+            crop_rec_touch_adjust_fn(slim_touch_pending_slot == 0 ? 0 : 1,
+                                     slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
     {
-        menu_adjust_value_by_name("Movie", "Frame Rate",
-                                  slim_touch_pending_sign);
+        if (crop_rec_touch_adjust_fn)
+            crop_rec_touch_adjust_fn(2, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
     {
-        menu_adjust_value_by_name("Movie", "Bit Depth",
-                                  slim_touch_pending_sign);
+        if (crop_rec_touch_adjust_fn)
+            crop_rec_touch_adjust_fn(3, slim_touch_pending_sign);
     }
 
     slim_touch_lv_refresh_menu_editor(slim_touch_pending_field);

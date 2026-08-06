@@ -545,8 +545,6 @@ static const struct boot_logo_span boot_logo_spans[] = {
 #define BOOT_LOGO_X ((720 - 320) / 2)
 #define BOOT_LOGO_Y ((480 - 240) / 2)
 
-extern int ml_started;
-
 static void boot_logo_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
@@ -557,15 +555,13 @@ static void boot_logo_draw(void)
     }
 }
 
-static void boot_logo_task(void *unused)
+void boot_logo_show(void)
 {
-    (void) unused;
-    while (!bmp_vram_raw() || !ml_started) msleep(20);
-    msleep(50);
+    if (!bmp_vram_raw()) return;
+
+    /* Keep Canon's dialogs from overwriting the splash while it is visible. */
+    canon_gui_disable_front_buffer();
     BMP_LOCK( boot_logo_draw(); )
     msleep(1000);
-    BMP_LOCK( bmp_fill(COLOR_BLACK, 0, 0, 720, 480); )
-    redraw();
+    clrscr();
 }
-
-TASK_CREATE("boot_logo_task", boot_logo_task, 0, 0x1e, 0x1000);

@@ -523,6 +523,8 @@ static void my_big_init_task()
     menu_init();
     debug_init();
     call_init_funcs();
+    extern void boot_logo_show(void);
+    boot_logo_show();
     msleep(200); // leave some time for property handlers to run
 
     #if defined(CONFIG_AUTOBACKUP_ROM)

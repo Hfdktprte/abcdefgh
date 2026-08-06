@@ -5627,6 +5627,11 @@ static struct menu_entry slim_info_button_menu[] = {
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
 static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
+/* Crop register changes are applied asynchronously at frame boundaries.
+ * Do not let direct-touch input start another transition while the previous
+ * preview geometry is still settling. */
+static int slim_touch_crop_ready_at = 0;
+#define SLIM_TOUCH_CROP_SETTLE_MS 900
 
 /* 1x1 Aspect Ratio UI: 0=2.33:1, 1=2.35:1, 2=16:9, 3=3:2, 4=4:3 */
 static int slim_1x1_ar = 2; /* default 16:9 */
@@ -6263,16 +6268,47 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
 __attribute__((used, noinline))
 int crop_rec_touch_adjust(int control, int delta)
 {
+    int old_irq = 0;
+    int now;
+
     if (!is_movie_mode() || RECORDING)
         return 0;
 
+    if (control == 0 || control == 1)
+    {
+        now = get_ms_clock();
+        if ((int)(now - slim_touch_crop_ready_at) < 0)
+            return 0;
+
+        /* The crop backend reads these configuration words from frame-time
+         * callbacks.  Publish mode/AR/resolution as one atomic state so it
+         * can never observe a new AR paired with the previous resolution. */
+        old_irq = cli();
+    }
+
     switch (control)
     {
-        case 0: slim_crop_mode_select(0, delta); break;
+        case 0:
+            /* Direct Live View editor intentionally offers only 1x1/1x3/3x3.
+             * Full-Res LV remains available in the regular Movie menu. */
+            slim_crop_sync_from_backend();
+            slim_mode_ui = MOD(COERCE(slim_mode_ui, 0, 2) + delta, 3);
+            slim_crop_apply_mode();
+            break;
         case 1: slim_crop_quick_res_select(0, delta); break;
         case 2: slim_crop_fps_select(0, delta); break;
         case 3: slim_crop_bit_select(0, delta); break;
-        default: return 0;
+        default:
+            if (control == 0 || control == 1)
+                sei(old_irq);
+            return 0;
+    }
+
+    if (control == 0 || control == 1)
+    {
+        sei(old_irq);
+        slim_touch_crop_ready_at = get_ms_clock() + SLIM_TOUCH_CROP_SETTLE_MS;
+        raw_set_dirty();
     }
     return 1;
 }

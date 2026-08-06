@@ -131,6 +131,9 @@ int lvinfo_touch_editor_is_open(void);
 enum lvinfo_touch_field lvinfo_touch_editor_field(void);
 void lvinfo_touch_editor_set_item(int slot, const char *value, int enabled);
 int lvinfo_touch_editor_item_enabled(int slot);
+/* Returns 1 inside the visible editor box. sign is +1/-1 over an arrow and
+ * zero over the value/empty center; outside returns 0 and should dismiss. */
+int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign);
 void lvinfo_touch_editor_feedback(int slot, int sign);
 
 /* in lens.c, to be moved */

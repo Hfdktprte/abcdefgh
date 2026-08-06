@@ -122,6 +122,7 @@ static void slim_touch_lv_refresh_menu_editor_delayed(int timer, void *opaque)
 
 static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
 {
+    int changed = 0;
     (void)timer;
     (void)opaque;
     if (!slim_touch_pending_menu_change || !lvinfo_touch_editor_is_open())
@@ -130,18 +131,22 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
     slim_touch_pending_menu_change = 0;
     if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
     {
-        crop_rec_touch_adjust(slim_touch_pending_slot == 0 ? 0 : 1,
-                              slim_touch_pending_sign);
+        changed = crop_rec_touch_adjust(
+            slim_touch_pending_slot == 0 ? 0 : 1,
+            slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
     {
-        crop_rec_touch_adjust(2, slim_touch_pending_sign);
+        changed = crop_rec_touch_adjust(2, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
     {
-        crop_rec_touch_adjust(3, slim_touch_pending_sign);
+        changed = crop_rec_touch_adjust(3, slim_touch_pending_sign);
     }
 
+    if (changed)
+        lvinfo_touch_editor_feedback(
+            slim_touch_pending_slot, slim_touch_pending_sign);
     slim_touch_lv_refresh_menu_editor(slim_touch_pending_field);
     delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
 }
@@ -151,6 +156,7 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
 static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
                                        int slot, int sign)
 {
+    int deferred = 0;
     if (!lvinfo_touch_editor_item_enabled(slot))
         return;
 
@@ -174,6 +180,7 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
             kelvin_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_CROP:
+            deferred = 1;
             slim_touch_pending_menu_change = 1;
             slim_touch_pending_field = field;
             slim_touch_pending_slot = slot;
@@ -181,6 +188,7 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
             delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
         case LVINFO_TOUCH_FPS:
+            deferred = 1;
             slim_touch_pending_menu_change = 1;
             slim_touch_pending_field = field;
             slim_touch_pending_slot = slot;
@@ -188,6 +196,7 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
             delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
         case LVINFO_TOUCH_BIT_DEPTH:
+            deferred = 1;
             slim_touch_pending_menu_change = 1;
             slim_touch_pending_field = field;
             slim_touch_pending_slot = slot;
@@ -197,7 +206,8 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
         default:
             break;
     }
-    lvinfo_touch_editor_feedback(slot, sign);
+    if (!deferred)
+        lvinfo_touch_editor_feedback(slot, sign);
     lens_display_set_dirty();
 }
 
@@ -210,31 +220,13 @@ static int slim_touch_lv_direct_editor(struct event * event)
     if (lvinfo_touch_editor_is_open())
     {
         enum lvinfo_touch_field field = lvinfo_touch_editor_field();
-        int slot = 0;
+        int slot = -1;
         int arrow = 0;
 
-        if (field == LVINFO_TOUCH_CROP)
-        {
-            if (x >= 100 && x < 350) slot = 0;
-            else if (x >= 370 && x <= 620) slot = 1;
-            else slot = -1;
-        }
-        else if (x < 190 || x > 530)
-        {
-            slot = -1;
-        }
-
-        /* Keep the center targets forgiving, but leave a clear empty-space
-         * margin so an accidental tap dismisses the editor. */
-        if (slot >= 0 && y >= 145 && y <= 200)
-            arrow = 1;
-        else if (slot >= 0 && y >= 265 && y <= 325)
-            arrow = -1;
-
-        if (arrow)
-            slim_touch_lv_change_field(field, slot, arrow);
-        else
+        if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))
             lvinfo_touch_editor_close();
+        else if (arrow && slot >= 0)
+            slim_touch_lv_change_field(field, slot, arrow);
         return 1;
     }
 

@@ -30,6 +30,18 @@ static int lvinfo_touch_menu_enabled[2] = { 1, 1 };
 static int lvinfo_touch_feedback_slot = -1;
 static int lvinfo_touch_feedback_sign;
 
+/* The single-value editor is square.  Crop mode + resolution share a wider
+ * rectangle with the same height.  Input uses these exact bounds too. */
+#define LVINFO_TOUCH_BOX_Y          105
+#define LVINFO_TOUCH_BOX_H          270
+#define LVINFO_TOUCH_SINGLE_X       225
+#define LVINFO_TOUCH_SINGLE_W       270
+#define LVINFO_TOUCH_CROP_X          90
+#define LVINFO_TOUCH_CROP_W         540
+#define LVINFO_TOUCH_BOX_CENTER_Y   (LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H / 2)
+#define LVINFO_TOUCH_UP_TIP_Y       (LVINFO_TOUCH_BOX_Y + 30)
+#define LVINFO_TOUCH_DOWN_TIP_Y     (LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H - 30)
+
 static const char * lvinfo_touch_field_name(enum lvinfo_touch_field field)
 {
     switch (field)
@@ -91,7 +103,7 @@ static void lvinfo_touch_draw_arrow(int cx, int tip_y, int up, int color)
 static void lvinfo_touch_draw_value(int slot, int cx, int value_y,
                                     const char *value, int enabled)
 {
-    int color = enabled ? COLOR_ORANGE : COLOR_GRAY(50);
+    int color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
     int width = bmp_string_width(FONT_CANON, value);
     int up_color = enabled ? COLOR_ORANGE : color;
     int down_color = enabled ? COLOR_ORANGE : color;
@@ -101,10 +113,10 @@ static void lvinfo_touch_draw_value(int slot, int cx, int value_y,
         if (lvinfo_touch_feedback_sign > 0) up_color = COLOR_WHITE;
         if (lvinfo_touch_feedback_sign < 0) down_color = COLOR_WHITE;
     }
-    lvinfo_touch_draw_arrow(cx, value_y - 58, 1, up_color);
+    lvinfo_touch_draw_arrow(cx, LVINFO_TOUCH_UP_TIP_Y, 1, up_color);
     bmp_printf(FONT(FONT_CANON, color, NO_BG_ERASE),
                cx - width / 2, value_y, "%s", value);
-    lvinfo_touch_draw_arrow(cx, value_y + 70, 0, down_color);
+    lvinfo_touch_draw_arrow(cx, LVINFO_TOUCH_DOWN_TIP_Y, 0, down_color);
 }
 
 static void lvinfo_touch_draw_editor(void)
@@ -112,27 +124,38 @@ static void lvinfo_touch_draw_editor(void)
     if (lvinfo_touch_field == LVINFO_TOUCH_NONE)
         return;
 
-    /* Transparent cleanup keeps the Live View visible and prevents shorter
-     * values from leaving old characters behind. */
-    bmp_fill(COLOR_EMPTY, 100, 105, 520, 270);
+    int font_h = fontspec_font(FONT_CANON)->height;
+    int value_y = LVINFO_TOUCH_BOX_CENTER_Y - font_h / 2;
+
+    /* Clear the previous editor shape, then provide a solid background so
+     * white values stay readable over every Live View image. */
+    bmp_fill(COLOR_EMPTY, LVINFO_TOUCH_CROP_X - 2,
+             LVINFO_TOUCH_BOX_Y - 2,
+             LVINFO_TOUCH_CROP_W + 4, LVINFO_TOUCH_BOX_H + 4);
 
     if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
     {
-        lvinfo_touch_draw_value(0, 225, 222, lvinfo_touch_menu_value[0],
+        bmp_fill(COLOR_BLACK, LVINFO_TOUCH_CROP_X, LVINFO_TOUCH_BOX_Y,
+                 LVINFO_TOUCH_CROP_W, LVINFO_TOUCH_BOX_H);
+        lvinfo_touch_draw_value(0, 225, value_y, lvinfo_touch_menu_value[0],
                                 lvinfo_touch_menu_enabled[0]);
-        lvinfo_touch_draw_value(1, 495, 222, lvinfo_touch_menu_value[1],
+        lvinfo_touch_draw_value(1, 495, value_y, lvinfo_touch_menu_value[1],
                                 lvinfo_touch_menu_enabled[1]);
-    }
-    else if (lvinfo_touch_field == LVINFO_TOUCH_FPS ||
-             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH)
-    {
-        lvinfo_touch_draw_value(0, 360, 222, lvinfo_touch_menu_value[0],
-                                lvinfo_touch_menu_enabled[0]);
     }
     else
     {
-        lvinfo_touch_draw_value(0, 360, 222,
-                                lvinfo_touch_field_value(lvinfo_touch_field), 1);
+        const char *value =
+            (lvinfo_touch_field == LVINFO_TOUCH_FPS ||
+             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH)
+            ? lvinfo_touch_menu_value[0]
+            : lvinfo_touch_field_value(lvinfo_touch_field);
+        int enabled =
+            (lvinfo_touch_field == LVINFO_TOUCH_FPS ||
+             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH)
+            ? lvinfo_touch_menu_enabled[0] : 1;
+        bmp_fill(COLOR_BLACK, LVINFO_TOUCH_SINGLE_X, LVINFO_TOUCH_BOX_Y,
+                 LVINFO_TOUCH_SINGLE_W, LVINFO_TOUCH_BOX_H);
+        lvinfo_touch_draw_value(0, 360, value_y, value, enabled);
     }
 }
 
@@ -520,6 +543,10 @@ void lvinfo_display_bar(struct lvinfo_item * items[], int count, int bar_x, int 
 {
     int default_bg = FONT_BG(default_font);
     int default_bg_out = (default_bg == COLOR_BG_DARK ? 0 : default_bg);
+    int touch_hx0 = -1;
+    int touch_hy0 = -1;
+    int touch_hw = 0;
+    int touch_hh = 0;
     
     int prev_right = bar_x;
     int prev_bg = default_bg_out;
@@ -588,7 +615,10 @@ void lvinfo_display_bar(struct lvinfo_item * items[], int count, int bar_x, int 
             int hx1 = MIN(bar_x + bar_width - 1, x0 + w + 4);
             int hy0 = MAX(bar_y, y0 + 1);
             int hy1 = MIN(bar_y + bar_height - 1, y0 + bar_height - 2);
-            bmp_draw_rect(COLOR_ORANGE, hx0, hy0, hx1 - hx0 + 1, hy1 - hy0 + 1);
+            touch_hx0 = hx0;
+            touch_hy0 = hy0;
+            touch_hw = hx1 - hx0 + 1;
+            touch_hh = hy1 - hy0 + 1;
         }
         prev_right = x + w/2;
         prev_bg = bg;
@@ -602,6 +632,11 @@ void lvinfo_display_bar(struct lvinfo_item * items[], int count, int bar_x, int 
         bmp_fill(prev_bg, prev_right, bar_y, gap / 2, bar_height);
         bmp_fill(default_bg_out, prev_right + gap / 2, bar_y, gap / 2, bar_height);
     }
+
+    /* Draw selection last.  Gap and neighboring-item background fills used
+     * to overwrite its right edge, leaving a three-sided orange outline. */
+    if (touch_hx0 >= 0)
+        bmp_draw_rect(COLOR_ORANGE, touch_hx0, touch_hy0, touch_hw, touch_hh);
 }
 
 static REQUIRES(lvinfo_sem)
@@ -788,7 +823,9 @@ void lvinfo_touch_editor_close(void)
 {
     lvinfo_touch_field = LVINFO_TOUCH_NONE;
     lvinfo_touch_feedback_slot = -1;
-    bmp_fill(COLOR_EMPTY, 100, 105, 520, 270);
+    bmp_fill(COLOR_EMPTY, LVINFO_TOUCH_CROP_X - 2,
+             LVINFO_TOUCH_BOX_Y - 2,
+             LVINFO_TOUCH_CROP_W + 4, LVINFO_TOUCH_BOX_H + 4);
     lens_display_set_dirty();
 }
 
@@ -815,6 +852,39 @@ void lvinfo_touch_editor_set_item(int slot, const char *value, int enabled)
 int lvinfo_touch_editor_item_enabled(int slot)
 {
     return slot >= 0 && slot <= 1 && lvinfo_touch_menu_enabled[slot];
+}
+
+int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
+{
+    int box_x;
+    int box_w;
+
+    if (slot) *slot = -1;
+    if (sign) *sign = 0;
+    if (lvinfo_touch_field == LVINFO_TOUCH_NONE)
+        return 0;
+
+    box_x = lvinfo_touch_field == LVINFO_TOUCH_CROP
+        ? LVINFO_TOUCH_CROP_X : LVINFO_TOUCH_SINGLE_X;
+    box_w = lvinfo_touch_field == LVINFO_TOUCH_CROP
+        ? LVINFO_TOUCH_CROP_W : LVINFO_TOUCH_SINGLE_W;
+    if (x < box_x || x >= box_x + box_w ||
+        y < LVINFO_TOUCH_BOX_Y || y >= LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H)
+        return 0;
+
+    if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
+        *slot = x < LVINFO_TOUCH_CROP_X + LVINFO_TOUCH_CROP_W / 2 ? 0 : 1;
+    else
+        *slot = 0;
+
+    /* The whole box remains active, but only the generous regions around the
+     * visible arrows change values.  Touching its center simply keeps it open. */
+    if (y < LVINFO_TOUCH_BOX_CENTER_Y - 35)
+        *sign = 1;
+    else if (y > LVINFO_TOUCH_BOX_CENTER_Y + 35)
+        *sign = -1;
+
+    return 1;
 }
 
 static void lvinfo_touch_feedback_clear(int timer, void *opaque)

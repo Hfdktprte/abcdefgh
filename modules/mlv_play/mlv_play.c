@@ -2600,9 +2600,10 @@ static void mlv_play_enter_playback()
     raw_twk_set_zoom(mlv_play_zoom, mlv_play_zoom_x_pct, mlv_play_zoom_y_pct);
     
     /* queue a few buffers that are not allocated yet */
-    /* Keep enough decoded frames queued to absorb storage/decompression
-     * jitter while the presentation task follows the FPS timer. */
-    for(int num = 0; num < 5; num++)
+    /* Three buffers are the maximum safe footprint for high-resolution RAW
+     * playback on EOS M. More buffers can trigger allocation failure before
+     * the first frame is displayed. */
+    for(int num = 0; num < 3; num++)
     {
         frame_buf_t *buffer = malloc(sizeof(frame_buf_t));
         if (buffer)

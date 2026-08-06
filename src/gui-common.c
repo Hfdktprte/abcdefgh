@@ -70,6 +70,68 @@ int get_last_time_active() { return last_time_active; }
 static int slim_touch_tap_count;
 static int slim_touch_tap_deadline;
 static int slim_touch_lv_pressed;
+static int slim_touch_lv_control_consumed;
+
+/* The editor itself is painted by lvinfo, after the bottom status bar has
+ * been laid out.  Keep input here with the other Live View touch routing. */
+static void slim_touch_lv_change_field(enum lvinfo_touch_field field, int sign)
+{
+    switch (field)
+    {
+        case LVINFO_TOUCH_APERTURE:
+            if (lens_info.lens_exists && lens_info.raw_aperture)
+                aperture_toggle((void *)-1, sign);
+            break;
+        case LVINFO_TOUCH_SHUTTER:
+            if (lens_info.raw_shutter)
+                shutter_toggle((void *)-1, sign);
+            break;
+        case LVINFO_TOUCH_ISO:
+            iso_toggle((void *)-1, sign);
+            break;
+        case LVINFO_TOUCH_WB:
+            kelvin_toggle((void *)-1, sign);
+            break;
+        default:
+            break;
+    }
+    lens_display_set_dirty();
+}
+
+static int slim_touch_lv_direct_editor(struct event * event)
+{
+    int x, y;
+    if (!eosm_touch_get_xy(event, &x, &y))
+        return 0;
+
+    if (lvinfo_touch_editor_is_open())
+    {
+        enum lvinfo_touch_field field = lvinfo_touch_editor_field();
+
+        /* The central editor occupies x=240..480, y=118..362.  Arrow touch
+         * targets are deliberately taller and wider than their artwork. */
+        if (x >= 210 && x <= 510 && y >= 135 && y <= 215)
+            slim_touch_lv_change_field(field, 1);
+        else if (x >= 210 && x <= 510 && y >= 270 && y <= 350)
+            slim_touch_lv_change_field(field, -1);
+        else
+            lvinfo_touch_editor_close();
+        return 1;
+    }
+
+    enum lvinfo_touch_field field = lvinfo_touch_field_at(x, y);
+    if (field == LVINFO_TOUCH_NONE)
+        return 0;
+
+    /* Do not open controls that have no valid camera-side adjustment. */
+    if ((field == LVINFO_TOUCH_APERTURE &&
+         (!lens_info.lens_exists || !lens_info.raw_aperture)) ||
+        (field == LVINFO_TOUCH_SHUTTER && !lens_info.raw_shutter))
+        return 1;
+
+    lvinfo_touch_editor_open(field);
+    return 1;
+}
 
 static int slim_touch_lv_context_ok(void)
 {
@@ -148,6 +210,9 @@ static int handle_slim_rec_touch_block(struct event * event)
             return 0;
         if (slim_touch_lv_context_ok())
         {
+            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);
+            if (slim_touch_lv_control_consumed)
+                return 0;
             slim_touch_lv_pressed = 1;
             /* Keep a previous tap pending while the next finger press is held. */
             if (slim_touch_tap_count)
@@ -186,6 +251,12 @@ static int handle_slim_rec_touch_block(struct event * event)
         }
         if (slim_touch_lv_context_ok())
         {
+            if (slim_touch_lv_control_consumed)
+            {
+                slim_touch_lv_control_consumed = 0;
+                slim_touch_lv_pressed = 0;
+                return 0;
+            }
             if (slim_touch_lv_pressed)
                 slim_touch_register_tap();
             slim_touch_lv_pressed = 0;

@@ -3,6 +3,8 @@
 #include <menu.h>
 #include <bmp.h>
 #include <lvinfo.h>
+#include <lens.h>
+#include <fps.h>
 
 #define MAX_ITEMS 64
 #define MIN_SPACING 24
@@ -21,6 +23,80 @@ static GUARDED_BY(lvinfo_sem)   int layout_dirty = 0;
 
 static GUARDED_BY(lvinfo_sem)   int default_font = FONT_MED_LARGE | FONT_ALIGN_CENTER;   /* used in normal situations */
 static GUARDED_BY(lvinfo_sem)   int small_font = FONT_MED | FONT_ALIGN_CENTER;           /* used if the layout gets really tight */
+
+static enum lvinfo_touch_field lvinfo_touch_field = LVINFO_TOUCH_NONE;
+
+static const char * lvinfo_touch_field_name(enum lvinfo_touch_field field)
+{
+    switch (field)
+    {
+        case LVINFO_TOUCH_APERTURE: return "Aperture";
+        case LVINFO_TOUCH_SHUTTER:  return "Shutter";
+        case LVINFO_TOUCH_ISO:      return "ISO";
+        case LVINFO_TOUCH_WB:       return "White Balance";
+        default:                    return 0;
+    }
+}
+
+static const char * lvinfo_touch_field_value(enum lvinfo_touch_field field)
+{
+    static char value[32];
+
+    switch (field)
+    {
+        case LVINFO_TOUCH_APERTURE:
+            return lens_info.raw_aperture ? lens_format_aperture(lens_info.raw_aperture) : "F0.0";
+        case LVINFO_TOUCH_SHUTTER:
+            return lens_format_shutter_reciprocal(get_current_shutter_reciprocal_x1000(), 2);
+        case LVINFO_TOUCH_ISO:
+            return lens_info.raw_iso ? lens_format_iso(lens_info.raw_iso) : "ISO Auto";
+        case LVINFO_TOUCH_WB:
+            if (lens_info.wb_mode == WB_KELVIN)
+            {
+                snprintf(value, sizeof(value), "%dK", lens_info.kelvin);
+                return value;
+            }
+            snprintf(value, sizeof(value), "%s",
+                lens_info.wb_mode == WB_SUNNY ? "Sunny" :
+                lens_info.wb_mode == WB_CLOUDY ? "Cloudy" :
+                lens_info.wb_mode == WB_TUNGSTEN ? "Tungsten" :
+                lens_info.wb_mode == WB_FLUORESCENT ? "Fluorescent" :
+                lens_info.wb_mode == WB_FLASH ? "Flash" :
+                lens_info.wb_mode == WB_SHADE ? "Shade" : "Auto WB");
+            return value;
+        default:
+            return "";
+    }
+}
+
+static void lvinfo_touch_draw_arrow(int cx, int cy, int up)
+{
+    const int half = 30;
+    const int height = 22;
+    int tip_y = up ? cy - height : cy + height;
+    int base_y = up ? cy + height : cy - height;
+    draw_line(cx - half, base_y, cx, tip_y, COLOR_WHITE);
+    draw_line(cx, tip_y, cx + half, base_y, COLOR_WHITE);
+    draw_line(cx - half, base_y + (up ? -1 : 1), cx + half, base_y + (up ? -1 : 1), COLOR_WHITE);
+}
+
+static void lvinfo_touch_draw_editor(void)
+{
+    if (lvinfo_touch_field == LVINFO_TOUCH_NONE)
+        return;
+
+    const char * name = lvinfo_touch_field_name(lvinfo_touch_field);
+    const char * value = lvinfo_touch_field_value(lvinfo_touch_field);
+    const int x = 240, y = 118, w = 240, h = 244;
+
+    bmp_fill(COLOR_BG_DARK, x, y, w, h);
+    bmp_draw_rect(COLOR_ORANGE, x, y, w, h);
+    bmp_printf(FONT_MED | FONT_ALIGN_CENTER, x + w/2, y + 24, "%s", name);
+    lvinfo_touch_draw_arrow(x + w/2, y + 71, 1);
+    bmp_draw_rect(COLOR_ORANGE, x + 18, y + 102, w - 36, 54);
+    bmp_printf(FONT_LARGE | FONT_ALIGN_CENTER, x + w/2, y + 119, "%s", value);
+    lvinfo_touch_draw_arrow(x + w/2, y + 193, 0);
+}
 
 /* fixme: false thread safety warning
  * when called from INIT_FUNC's, the semaphore may not be initialized yet
@@ -466,6 +542,12 @@ void lvinfo_display_bar(struct lvinfo_item * items[], int count, int bar_x, int 
             /* no custom draw? use our default print routine */
             bmp_printf(fnt, x, y, "%s", items[i]->value);
         }
+
+        if (lvinfo_touch_field_name(lvinfo_touch_field) &&
+            !strcmp(items[i]->name, lvinfo_touch_field_name(lvinfo_touch_field)))
+        {
+            bmp_draw_rect(COLOR_ORANGE, x0 - 3, y0 + 2, w + 6, bar_height - 4);
+        }
         prev_right = x + w/2;
         prev_bg = bg;
     }
@@ -583,8 +665,65 @@ void lvinfo_display(int top, int bottom)
     {
         lvinfo_align_and_display(bot_items, bot_count, 0, get_ml_bottombar_pos(), TOTAL_WIDTH, 32);
     }
+
+    lvinfo_touch_draw_editor();
     
     give_semaphore(lvinfo_sem);
+}
+
+EXCLUDES(lvinfo_sem)
+enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y)
+{
+    enum lvinfo_touch_field result = LVINFO_TOUCH_NONE;
+
+    if (!lvinfo_sem)
+        return result;
+
+    take_semaphore(lvinfo_sem, 0);
+    if (y >= get_ml_bottombar_pos() && y < get_ml_bottombar_pos() + 32)
+    {
+        for (int i = 0; i < bot_count; i++)
+        {
+            struct lvinfo_item * item = bot_items[i];
+            int left = item->x - item->width / 2 - 12;
+            int right = item->x + item->width / 2 + 12;
+            const char * name = item->name;
+
+            if (!is_active(item) || x < left || x > right)
+                continue;
+
+            if (!strcmp(name, "Aperture")) result = LVINFO_TOUCH_APERTURE;
+            else if (!strcmp(name, "Shutter")) result = LVINFO_TOUCH_SHUTTER;
+            else if (!strcmp(name, "ISO")) result = LVINFO_TOUCH_ISO;
+            else if (!strcmp(name, "White Balance")) result = LVINFO_TOUCH_WB;
+            if (result != LVINFO_TOUCH_NONE)
+                break;
+        }
+    }
+    give_semaphore(lvinfo_sem);
+    return result;
+}
+
+void lvinfo_touch_editor_open(enum lvinfo_touch_field field)
+{
+    lvinfo_touch_field = field;
+    lens_display_set_dirty();
+}
+
+void lvinfo_touch_editor_close(void)
+{
+    lvinfo_touch_field = LVINFO_TOUCH_NONE;
+    lens_display_set_dirty();
+}
+
+int lvinfo_touch_editor_is_open(void)
+{
+    return lvinfo_touch_field != LVINFO_TOUCH_NONE;
+}
+
+enum lvinfo_touch_field lvinfo_touch_editor_field(void)
+{
+    return lvinfo_touch_field;
 }
 
 static void lvinfo_init()

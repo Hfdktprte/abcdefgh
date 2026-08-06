@@ -31,7 +31,6 @@
 #include <config.h>
 #include <cropmarks.h>
 #include <edmac.h>
-#include <edmac-memcpy.h>
 #include <vram.h>
 #include <raw.h>
 #include <zebra.h>
@@ -49,6 +48,8 @@
 #include "../raw_twk/raw_twk.h"
 #include "../silent/lossless.h"
 #include "console.h"
+
+extern WEAK_FUNC(ret_0) void* edmac_memcpy(void* dest, void* srce, size_t n);
 
 /* uncomment for live debug messages */
 //~ #define trace_write(trace, fmt, ...) { printf(fmt, ## __VA_ARGS__); printf("\n"); msleep(500); }
@@ -1485,7 +1486,10 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
             if (display && staging && display != staging)
             {
                 raw_preview_fast_ex((void*)-1, staging, -1, -1, mlv_play_quality);
-                edmac_memcpy(display, staging, vram->pitch * vram->height);
+                if ((void*)&edmac_memcpy != (void*)&ret_0)
+                    edmac_memcpy(display, staging, vram->pitch * vram->height);
+                else
+                    memcpy(display, staging, vram->pitch * vram->height);
             }
             else
             {

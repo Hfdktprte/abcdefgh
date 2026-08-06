@@ -2647,6 +2647,16 @@ static void boot_logo_present(void)
     bmp_draw_to_idle(0);
 }
 
+/* Canon may perform one delayed overlay update after ML has booted.  The
+ * prepared idle canvas is authoritative for the splash, so copy it back
+ * instead of redrawing the logo and letting that update leak through. */
+static void boot_logo_refresh(void)
+{
+    bmp_draw_to_idle(1);
+    bmp_idle_copy(1, 0);
+    bmp_draw_to_idle(0);
+}
+
 static void boot_logo_clear(void)
 {
     bmp_draw_to_idle(1);
@@ -2670,12 +2680,18 @@ static void boot_logo_task(void *unused)
     (void) unused;
 
     const int fallback_handoff_time = boot_logo_hide_time + 500;
+    int next_refresh_time = get_ms_clock() + 80;
     while (boot_logo_active)
     {
         int splash_time_done = get_ms_clock() >= boot_logo_hide_time;
         int ml_display_ready = ml_started &&
             (liveview_display_idle() || get_ms_clock() >= fallback_handoff_time);
         if (splash_time_done && ml_display_ready) break;
+        if (!splash_time_done && get_ms_clock() >= next_refresh_time)
+        {
+            BMP_LOCK( boot_logo_refresh(); )
+            next_refresh_time = get_ms_clock() + 80;
+        }
         msleep(20);
     }
 

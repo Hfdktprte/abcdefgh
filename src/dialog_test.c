@@ -12,6 +12,11 @@
 #include "gui.h"
 #include "lens.h"
 
+/* The full firmware overrides this while the boot splash owns the display.
+ * Keep this weak fallback for the installer build, which has no splash code. */
+int boot_logo_is_active(void) __attribute__((weak));
+int boot_logo_is_active(void) { return 0; }
+
 void* get_current_dialog_handler()
 {
     struct gui_task * current = gui_task_list.current;
@@ -56,6 +61,7 @@ BMP_LOCK(
 void canon_gui_enable_front_buffer(int also_redraw)
 {
 #ifndef CONFIG_5DC
+    if (boot_logo_is_active()) return;
 BMP_LOCK(
     if (WINSYS_BMP_DIRTY_BIT_NEG)
     {

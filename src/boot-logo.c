@@ -560,6 +560,11 @@ static void boot_logo_draw(void)
 static volatile int boot_logo_active = 0;
 static int boot_logo_hide_time = 0;
 
+int boot_logo_is_active(void)
+{
+    return boot_logo_active;
+}
+
 static void boot_logo_present(void)
 {
     bmp_draw_to_idle(1);
@@ -598,7 +603,7 @@ void boot_logo_show(void)
 
     /* Keep Canon's dialogs from overwriting the splash while it is visible. */
     canon_gui_disable_front_buffer();
-    boot_logo_hide_time = get_ms_clock() + 1000;
+    boot_logo_hide_time = get_ms_clock() + 2000;
     BMP_LOCK( boot_logo_present(); )
     boot_logo_active = 1;
     task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);

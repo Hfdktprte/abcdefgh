@@ -48,6 +48,16 @@
 #include "../silent/lossless.h"
 #include "console.h"
 
+/* The recorder stores 16-bit PCM in AUDF blocks.  Reuse Canon's double
+ * buffered ASIF DAC path used by WAV playback. */
+extern void StartASIFDMADAC(void* buf1, int N1, int buf2, int N2, void (*continue_cbr)(void*), void* cbr_arg_maybe);
+extern void StopASIFDMADAC(void (*stop_cbr)(void*), int cbr_arg_maybe);
+extern void SetNextASIFDACBuffer(void* buf, int size);
+extern void SetSamplingRate(int sampling_rate, int force);
+extern void PowerAudioOutput(void);
+extern void SetAudioVolumeOut(int volume);
+extern void audio_configure(int force);
+
 /* uncomment for live debug messages */
 //~ #define trace_write(trace, fmt, ...) { printf(fmt, ## __VA_ARGS__); printf("\n"); msleep(500); }
 
@@ -81,7 +91,7 @@ static volatile uint32_t mlv_play_render_abort = 0;
 static volatile uint32_t mlv_play_rendering = 0;
 static volatile uint32_t mlv_play_stopfile = 0;
 
-static CONFIG_INT("play.quality", mlv_play_quality, 0); /* range: 0-1, RAW_PREVIEW_* in raw.h  */
+static CONFIG_INT("play.quality", mlv_play_quality, RAW_PREVIEW_COLOR_320P); /* colour playback quality */
 static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 0);
 
 static int mlv_play_zoom = 0;
@@ -110,6 +120,19 @@ static uint32_t mlv_play_paused = 0;
 static uint32_t mlv_play_info = 1;
 static uint32_t mlv_play_timer_stop = 1;
 static uint32_t mlv_play_frames_skipped = 0;
+
+/* Audio state is deliberately independent from the video file handles.  The
+ * video reader seeks constantly while the DAC callback consumes audio, so
+ * sharing FILE* objects would cause corruption and audible drop-outs. */
+static FILE **mlv_play_audio_files;
+static uint32_t mlv_play_audio_file_count;
+static mlv_xref_t *mlv_play_audio_xrefs;
+static uint32_t mlv_play_audio_xref_count;
+static uint32_t mlv_play_audio_xref_pos;
+static uint8_t *mlv_play_audio_buf[2];
+static uint32_t mlv_play_audio_buf_size;
+static uint32_t mlv_play_audio_index;
+static volatile int mlv_play_audio_active;
 
 /* this structure is used to build the mlv_xref_t table */
 typedef struct 
@@ -481,12 +504,15 @@ static void mlv_play_osd_quality(char *msg, uint32_t msg_len, uint32_t selected)
 {
     if(selected)
     {
-        mlv_play_quality = MOD(mlv_play_quality + 1, 2);
+        /* Playback must remain colour.  Keep the legacy setting readable, but
+         * only expose the two colour paths to the user. */
+        mlv_play_quality = (mlv_play_quality == RAW_PREVIEW_COLOR_320P)
+            ? RAW_PREVIEW_COLOR_HALFRES : RAW_PREVIEW_COLOR_320P;
     }
     
     if(msg)
     {
-        snprintf(msg, msg_len, mlv_play_quality?"fast":"color");
+        snprintf(msg, msg_len, mlv_play_quality == RAW_PREVIEW_COLOR_320P ? "color 320p" : "color");
     }
 }
 
@@ -1397,6 +1423,112 @@ static void mlv_play_close_chunks(FILE **chunk_files, uint32_t chunk_count)
     }
 }
 
+static int mlv_play_audio_fill(uint8_t *dst)
+{
+    while (mlv_play_audio_xrefs && mlv_play_audio_xref_pos < mlv_play_audio_xref_count)
+    {
+        mlv_xref_t *xref = &mlv_play_audio_xrefs[mlv_play_audio_xref_pos++];
+        if (xref->frameType != MLV_FRAME_AUDF || xref->fileNumber >= mlv_play_audio_file_count)
+            continue;
+
+        FILE *file = mlv_play_audio_files[xref->fileNumber];
+        mlv_audf_hdr_t hdr;
+        FIO_SeekSkipFile(file, xref->frameOffset, SEEK_SET);
+        if (FIO_ReadFile(file, &hdr, sizeof(hdr)) != sizeof(hdr))
+            return 0;
+
+        uint32_t skip = sizeof(hdr) + hdr.frameSpace;
+        if (hdr.blockSize < skip)
+            return 0;
+        uint32_t payload = MIN(hdr.blockSize - skip, mlv_play_audio_buf_size);
+        FIO_SeekSkipFile(file, xref->frameOffset + skip, SEEK_SET);
+        return FIO_ReadFile(file, dst, payload) == (int32_t)payload ? payload : 0;
+    }
+    return 0;
+}
+
+static void mlv_play_audio_callback(void *arg)
+{
+    (void)arg;
+    if (!mlv_play_audio_active)
+        return;
+
+    uint8_t *buf = mlv_play_audio_buf[mlv_play_audio_index];
+    int bytes = mlv_play_audio_fill(buf);
+    if (!bytes)
+    {
+        mlv_play_audio_active = 0;
+        return;
+    }
+    SetNextASIFDACBuffer(buf, bytes);
+    mlv_play_audio_index ^= 1;
+}
+
+static void mlv_play_audio_stop(void)
+{
+    if (mlv_play_audio_active)
+    {
+        mlv_play_audio_active = 0;
+        StopASIFDMADAC(NULL, 0);
+    }
+    if (mlv_play_audio_files)
+    {
+        mlv_play_close_chunks(mlv_play_audio_files, mlv_play_audio_file_count);
+        mlv_play_audio_files = NULL;
+    }
+    mlv_play_audio_file_count = 0;
+    mlv_play_audio_xrefs = NULL;
+    mlv_play_audio_xref_count = 0;
+    mlv_play_audio_xref_pos = 0;
+    for (int i = 0; i < 2; i++)
+    {
+        if (mlv_play_audio_buf[i])
+            fio_free(mlv_play_audio_buf[i]);
+        mlv_play_audio_buf[i] = NULL;
+    }
+    mlv_play_audio_buf_size = 0;
+}
+
+static void mlv_play_audio_start(char *filename, mlv_wavi_hdr_t *wavi, mlv_xref_t *xrefs, uint32_t xref_count, uint32_t xref_pos)
+{
+    if (mlv_play_audio_active || !wavi || wavi->format != 1 || !wavi->channels || !wavi->samplingRate)
+        return;
+
+    mlv_play_audio_files = mlv_play_load_chunks(filename, &mlv_play_audio_file_count);
+    if (!mlv_play_audio_files || !mlv_play_audio_file_count)
+    {
+        mlv_play_audio_stop();
+        return;
+    }
+    mlv_play_audio_xrefs = xrefs;
+    mlv_play_audio_xref_count = xref_count;
+    mlv_play_audio_xref_pos = xref_pos;
+    mlv_play_audio_buf_size = COERCE(wavi->bytesPerSecond / 5, 8192, 65536);
+    mlv_play_audio_buf[0] = fio_malloc(mlv_play_audio_buf_size);
+    mlv_play_audio_buf[1] = fio_malloc(mlv_play_audio_buf_size);
+    if (!mlv_play_audio_buf[0] || !mlv_play_audio_buf[1])
+    {
+        mlv_play_audio_stop();
+        return;
+    }
+
+    int n1 = mlv_play_audio_fill(mlv_play_audio_buf[0]);
+    int n2 = mlv_play_audio_fill(mlv_play_audio_buf[1]);
+    if (!n1 || !n2)
+    {
+        mlv_play_audio_stop();
+        return;
+    }
+
+    SetSamplingRate(wavi->samplingRate, 1);
+    PowerAudioOutput();
+    audio_configure(1);
+    SetAudioVolumeOut(ASIF_MAX_VOL);
+    mlv_play_audio_index = 0;
+    mlv_play_audio_active = 1;
+    StartASIFDMADAC(mlv_play_audio_buf[0], n1, mlv_play_audio_buf[1], n2, mlv_play_audio_callback, 0);
+}
+
 /* just don't run it on overexposed footage :) */
 static void check_dup_frame(frame_buf_t *buffer)
 {
@@ -1710,7 +1842,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
     mlv_lens_hdr_t lens_block;
     mlv_rawi_hdr_t rawi_block;
     mlv_rawc_hdr_t rawc_block;
-    mlv_rtci_hdr_t wavi_block;
+    mlv_wavi_hdr_t wavi_block;
     mlv_rtci_hdr_t rtci_block;
     mlv_file_hdr_t main_header;
 
@@ -1721,7 +1853,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
     memset(&lens_block, 0x00, sizeof(mlv_lens_hdr_t));
     memset(&rawi_block, 0x00, sizeof(mlv_rawi_hdr_t));
     memset(&rawc_block, 0x00, sizeof(mlv_rawc_hdr_t));
-    memset(&wavi_block, 0x00, sizeof(mlv_rawi_hdr_t));
+    memset(&wavi_block, 0x00, sizeof(mlv_wavi_hdr_t));
     memset(&rtci_block, 0x00, sizeof(mlv_rtci_hdr_t));
     memset(&main_header, 0x00, sizeof(mlv_file_hdr_t));
     
@@ -1903,8 +2035,11 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
                 msleep(1000);
                 break;
             }
-            binning_skipping_y = raw_capture_info.binning_y + raw_capture_info.skipping_y;
-            binning_skipping_x = raw_capture_info.binning_x + raw_capture_info.skipping_x;
+            /* Use the geometry stored in this recording, not the camera's
+             * current capture state.  This is essential for 1x3/1x1/3x3
+             * files and prevents the playback preview from being stretched. */
+            binning_skipping_y = rawc_block.binning_y + rawc_block.skipping_y;
+            binning_skipping_x = rawc_block.binning_x + rawc_block.skipping_x;
         }
         else if(!memcmp(buf.blockType, "WAVI", 4))
         {
@@ -1915,6 +2050,9 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
                 msleep(1000);
                 break;
             }
+            /* Start audio from the first WAVI block. The xref cursor is
+             * already positioned immediately after this metadata block. */
+            mlv_play_audio_start(filename, &wavi_block, xrefs, block_xref->entryCount, block_xref_pos + 1);
         }
         else if(!memcmp(buf.blockType, "AUDF", 4))
         {
@@ -2142,6 +2280,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
     {
         mlv_play_stop_fps_timer();
     }
+    mlv_play_audio_stop();
     free(block_xref);
     
     /* free decompression stuff if needed */

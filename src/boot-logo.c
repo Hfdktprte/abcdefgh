@@ -2599,7 +2599,9 @@ extern int ml_started;
 
 static void boot_logo_draw(void)
 {
-    bmp_fill(COLOR_BLACK, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
+    /* Keep splash writes inside ML's normal LCD canvas.  The surrounding
+     * 960x540 backing surface is changed by Canon during LV/zoom switches. */
+    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
     for (unsigned int i = 0; i < BOOT_LOGO_SPANS; i++)
     {
         const struct boot_logo_span *s = &boot_logo_spans[i];
@@ -2634,7 +2636,7 @@ static void boot_logo_present(void)
 {
     bmp_draw_to_idle(1);
     boot_logo_draw();
-    bmp_idle_copy(1, 1);
+    bmp_idle_copy(1, 0);
     bmp_draw_to_idle(0);
 }
 
@@ -2643,16 +2645,16 @@ static void boot_logo_clear(void)
     bmp_draw_to_idle(1);
     /* Keep the canvas opaque during the handoff.  A transparent frame here
      * exposes a stale Canon fragment before ML draws its own HUD. */
-    bmp_fill(COLOR_BLACK, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
-    bmp_idle_copy(1, 1);
+    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
+    bmp_idle_copy(1, 0);
     bmp_draw_to_idle(0);
 }
 
 static void boot_logo_release_canvas(void)
 {
     bmp_draw_to_idle(1);
-    bmp_fill(COLOR_EMPTY, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
-    bmp_idle_copy(1, 1);
+    bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);
+    bmp_idle_copy(1, 0);
     bmp_draw_to_idle(0);
 }
 

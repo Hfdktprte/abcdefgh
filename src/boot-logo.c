@@ -2623,6 +2623,13 @@ int boot_logo_is_active(void)
     return boot_logo_active;
 }
 
+/* Keep ML's own status bars off the splash.  They are permitted only for
+ * the final handoff frame, while Canon remains masked. */
+int boot_logo_allows_overlay_draw(void)
+{
+    return !boot_logo_active || boot_logo_handoff_pending;
+}
+
 /* Called by the normal ML status-bar renderer.  Do not reveal Canon's
  * overlay until both status bars have had a chance to replace the splash. */
 void boot_logo_overlay_updated(int top, int bottom)
@@ -2694,9 +2701,9 @@ void boot_logo_show(void)
     if (!bmp_vram_raw()) return;
 
     /* Keep Canon's dialogs from overwriting the splash while it is visible. */
+    boot_logo_active = 1;
     canon_gui_disable_front_buffer();
     boot_logo_hide_time = get_ms_clock() + 2000;
     BMP_LOCK( boot_logo_present(); )
-    boot_logo_active = 1;
     task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);
 }

@@ -126,6 +126,10 @@ const char * lens_format_dist( unsigned mm)
 void
 update_lens_display(int top, int bottom)
 {
+    extern int boot_logo_allows_overlay_draw(void) __attribute__((weak));
+    if (boot_logo_allows_overlay_draw && !boot_logo_allows_overlay_draw())
+        return;
+
     if (top) draw_ml_topbar();
     if (bottom) draw_ml_bottombar();
     extern void boot_logo_overlay_updated(int top, int bottom) __attribute__((weak));

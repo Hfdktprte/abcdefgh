@@ -109,6 +109,24 @@ void lvinfo_add_item(struct lvinfo_item * item);
 /* called from backend */
 void lvinfo_display(int top, int bottom);
 
+/* Touch editor for the standard bottom-bar exposure fields.  The GUI owns
+ * input and value changes; lvinfo owns hit testing and drawing so the touch
+ * target always follows the dynamically laid-out status bar. */
+enum lvinfo_touch_field
+{
+    LVINFO_TOUCH_NONE = 0,
+    LVINFO_TOUCH_APERTURE,
+    LVINFO_TOUCH_SHUTTER,
+    LVINFO_TOUCH_ISO,
+    LVINFO_TOUCH_WB,
+};
+
+enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y);
+void lvinfo_touch_editor_open(enum lvinfo_touch_field field);
+void lvinfo_touch_editor_close(void);
+int lvinfo_touch_editor_is_open(void);
+enum lvinfo_touch_field lvinfo_touch_editor_field(void);
+
 /* in lens.c, to be moved */
 extern int get_ml_topbar_pos();
 extern int get_ml_bottombar_pos();

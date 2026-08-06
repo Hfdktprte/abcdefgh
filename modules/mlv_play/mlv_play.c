@@ -31,7 +31,6 @@
 #include <config.h>
 #include <cropmarks.h>
 #include <edmac.h>
-#include <vram.h>
 #include <raw.h>
 #include <zebra.h>
 #include <util.h>
@@ -48,8 +47,6 @@
 #include "../raw_twk/raw_twk.h"
 #include "../silent/lossless.h"
 #include "console.h"
-
-extern WEAK_FUNC(ret_0) void* edmac_memcpy(void* dest, void* srce, size_t n);
 
 /* uncomment for live debug messages */
 //~ #define trace_write(trace, fmt, ...) { printf(fmt, ## __VA_ARGS__); printf("\n"); msleep(500); }
@@ -86,8 +83,6 @@ static volatile uint32_t mlv_play_stopfile = 0;
 
 static CONFIG_INT("play.quality", mlv_play_quality, 0); /* range: 0-1, RAW_PREVIEW_* in raw.h  */
 static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 0);
-static CONFIG_INT("play.engine2", mlv_play_engine2, 1);
-static uint32_t mlv_play_engine_frame_ms = 42;
 
 static int mlv_play_zoom = 0;
 static int mlv_play_zoom_x_pct = 0;
@@ -1474,32 +1469,7 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
     }
     else
     {
-        if (mlv_play_engine2)
-        {
-            /* Render a complete frame away from the scanout buffer, then use
-             * EDMAC for a short presentation copy. This avoids exposing the
-             * slow RAW-to-YUV conversion row-by-row to the LCD. */
-            struct vram_info *vram = get_yuv422_vram();
-            void *display = vram ? vram->vram : NULL;
-            guess_fastrefresh_direction();
-            void *staging = get_fastrefresh_422_buf();
-            if (display && staging && display != staging)
-            {
-                raw_preview_fast_ex((void*)-1, staging, -1, -1, mlv_play_quality);
-                if ((void*)&edmac_memcpy != (void*)&ret_0)
-                    edmac_memcpy(display, staging, vram->pitch * vram->height);
-                else
-                    memcpy(display, staging, vram->pitch * vram->height);
-            }
-            else
-            {
-                raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
-            }
-        }
-        else
-        {
-            raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
-        }
+        raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
 
         if (!mlv_play_paused)
         {
@@ -1511,7 +1481,6 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
 static void mlv_play_render_task(uint32_t priv)
 {
     uint32_t redraw_loop = 0;
-    uint32_t engine_deadline = 0;
     
     frame_buf_t *buffer_paused = NULL;
     
@@ -1566,19 +1535,7 @@ static void mlv_play_render_task(uint32_t priv)
             break;
         }
 
-        if (mlv_play_engine2)
-        {
-            uint32_t now = get_ms_clock();
-            if (!engine_deadline || (int32_t)(now - engine_deadline) > 250)
-                engine_deadline = now;
-            while ((int32_t)(engine_deadline - get_ms_clock()) > 0 && !mlv_play_should_stop())
-                msleep(MIN((uint32_t)(engine_deadline - get_ms_clock()), 4));
-        }
-
         mlv_play_render_frame(buffer);
-
-        if (mlv_play_engine2)
-            engine_deadline += mlv_play_engine_frame_ms;
         
         /* if info display is requested, paint it. todo: thats OSD stuff, so it should be removed from here */
         if(mlv_play_info)
@@ -1819,7 +1776,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
         }
 
         /* if in exact playback and this is a skippable VIDF frame */
-        if(mlv_play_exact_fps && !mlv_play_engine2)
+        if(mlv_play_exact_fps)
         {
             if (xrefs[block_xref_pos].frameType == MLV_FRAME_VIDF)
             {
@@ -1891,12 +1848,6 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
             if(file_hdr.fileNum == 0)
             {
                 memcpy(&main_header, &file_hdr, sizeof(mlv_file_hdr_t));
-                if (mlv_play_engine2 && file_hdr.sourceFpsNom && file_hdr.sourceFpsDenom)
-                {
-                    mlv_play_engine_frame_ms = COERCE(
-                        (1000 * file_hdr.sourceFpsDenom + file_hdr.sourceFpsNom / 2) / file_hdr.sourceFpsNom,
-                        5, 1000);
-                }
             }
             else
             {
@@ -2140,7 +2091,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
                 snprintf(buffer->messages.botRight, SCREEN_MSG_LEN, "%d/%d", vidf_block.frameNumber + 1, frame_count);
                 
                 
-                if (mlv_play_exact_fps && !mlv_play_engine2)
+                if (mlv_play_exact_fps)
                 {
                     if (!fps_timer_started)
                     {
@@ -2970,5 +2921,4 @@ MODULE_PROPHANDLERS_END()
 MODULE_CONFIGS_START()
     MODULE_CONFIG(mlv_play_quality)
     MODULE_CONFIG(mlv_play_exact_fps)
-    MODULE_CONFIG(mlv_play_engine2)
 MODULE_CONFIGS_END()

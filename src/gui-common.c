@@ -71,6 +71,10 @@ static int slim_touch_tap_count;
 static int slim_touch_tap_deadline;
 static int slim_touch_lv_pressed;
 static int slim_touch_lv_control_consumed;
+static int slim_touch_pending_menu_change;
+static enum lvinfo_touch_field slim_touch_pending_field;
+static int slim_touch_pending_slot;
+static int slim_touch_pending_sign;
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
  * the normal menu selectors as the sole source of valid Mode/resolution/FPS
@@ -115,6 +119,35 @@ static void slim_touch_lv_refresh_menu_editor_delayed(int timer, void *opaque)
         slim_touch_lv_refresh_menu_editor(lvinfo_touch_editor_field());
 }
 
+static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (!slim_touch_pending_menu_change || !lvinfo_touch_editor_is_open())
+        return;
+
+    slim_touch_pending_menu_change = 0;
+    if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
+    {
+        menu_adjust_value_by_name("Movie",
+            slim_touch_pending_slot == 0 ? "Mode" : "Quick Resolution",
+            slim_touch_pending_sign);
+    }
+    else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
+    {
+        menu_adjust_value_by_name("Movie", "Frame Rate",
+                                  slim_touch_pending_sign);
+    }
+    else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
+    {
+        menu_adjust_value_by_name("Movie", "Bit Depth",
+                                  slim_touch_pending_sign);
+    }
+
+    slim_touch_lv_refresh_menu_editor(slim_touch_pending_field);
+    delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+}
+
 /* The editor itself is painted by lvinfo, after the status bars have been
  * laid out.  Keep input here with the other Live View touch routing. */
 static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
@@ -134,26 +167,34 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
                 shutter_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_ISO:
-            iso_toggle((void *)-1, sign);
+            /* Match Quick Panel's Expo → ISO selector.  It handles the
+             * EOS-M slim ISO list and Dual ISO pairing consistently. */
+            if (!menu_adjust_value_by_name("Expo", "ISO", sign))
+                iso_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_WB:
             kelvin_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_CROP:
-            menu_adjust_value_by_name("Movie",
-                slot == 0 ? "Mode" : "Quick Resolution", sign);
-            slim_touch_lv_refresh_menu_editor(field);
-            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            slim_touch_pending_menu_change = 1;
+            slim_touch_pending_field = field;
+            slim_touch_pending_slot = slot;
+            slim_touch_pending_sign = sign;
+            delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
         case LVINFO_TOUCH_FPS:
-            menu_adjust_value_by_name("Movie", "Frame Rate", sign);
-            slim_touch_lv_refresh_menu_editor(field);
-            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            slim_touch_pending_menu_change = 1;
+            slim_touch_pending_field = field;
+            slim_touch_pending_slot = slot;
+            slim_touch_pending_sign = sign;
+            delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
         case LVINFO_TOUCH_BIT_DEPTH:
-            menu_adjust_value_by_name("Movie", "Bit Depth", sign);
-            slim_touch_lv_refresh_menu_editor(field);
-            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            slim_touch_pending_menu_change = 1;
+            slim_touch_pending_field = field;
+            slim_touch_pending_slot = slot;
+            slim_touch_pending_sign = sign;
+            delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
         default:
             break;
@@ -176,20 +217,20 @@ static int slim_touch_lv_direct_editor(struct event * event)
 
         if (field == LVINFO_TOUCH_CROP)
         {
-            if (x >= 75 && x < 360) slot = 0;
-            else if (x >= 360 && x <= 645) slot = 1;
+            if (x >= 100 && x < 350) slot = 0;
+            else if (x >= 370 && x <= 620) slot = 1;
             else slot = -1;
         }
-        else if (x < 120 || x > 600)
+        else if (x < 190 || x > 530)
         {
             slot = -1;
         }
 
-        /* Hit areas are much larger than the 60x26 arrow artwork, but the
-         * two Crop columns meet at x=360 and never overlap. */
-        if (slot >= 0 && y >= 115 && y <= 210)
+        /* Keep the center targets forgiving, but leave a clear empty-space
+         * margin so an accidental tap dismisses the editor. */
+        if (slot >= 0 && y >= 145 && y <= 200)
             arrow = 1;
-        else if (slot >= 0 && y >= 245 && y <= 340)
+        else if (slot >= 0 && y >= 265 && y <= 325)
             arrow = -1;
 
         if (arrow)
@@ -210,7 +251,9 @@ static int slim_touch_lv_direct_editor(struct event * event)
         return 1;
 
     lvinfo_touch_editor_open(field);
-    slim_touch_lv_refresh_menu_editor(field);
+    if (field == LVINFO_TOUCH_CROP || field == LVINFO_TOUCH_FPS ||
+        field == LVINFO_TOUCH_BIT_DEPTH)
+        delayed_call(20, slim_touch_lv_refresh_menu_editor_delayed, 0);
     return 1;
 }
 

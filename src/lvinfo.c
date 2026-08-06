@@ -91,7 +91,7 @@ static void lvinfo_touch_draw_arrow(int cx, int tip_y, int up, int color)
 static void lvinfo_touch_draw_value(int slot, int cx, int value_y,
                                     const char *value, int enabled)
 {
-    int color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
+    int color = enabled ? COLOR_ORANGE : COLOR_GRAY(50);
     int width = bmp_string_width(FONT_CANON, value);
     int up_color = enabled ? COLOR_ORANGE : color;
     int down_color = enabled ? COLOR_ORANGE : color;
@@ -584,7 +584,11 @@ void lvinfo_display_bar(struct lvinfo_item * items[], int count, int bar_x, int 
         if (lvinfo_touch_field_name(lvinfo_touch_field) &&
             !strcmp(items[i]->name, lvinfo_touch_field_name(lvinfo_touch_field)))
         {
-            bmp_draw_rect(COLOR_ORANGE, x0 - 3, y0 + 2, w + 6, bar_height - 4);
+            int hx0 = MAX(bar_x, x0 - 4);
+            int hx1 = MIN(bar_x + bar_width - 1, x0 + w + 4);
+            int hy0 = MAX(bar_y, y0 + 1);
+            int hy1 = MIN(bar_y + bar_height - 1, y0 + bar_height - 2);
+            bmp_draw_rect(COLOR_ORANGE, hx0, hy0, hx1 - hx0 + 1, hy1 - hy0 + 1);
         }
         prev_right = x + w/2;
         prev_bg = bg;

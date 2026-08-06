@@ -1,6 +1,3 @@
-Exit code: 0
-Wall time: 0.3 seconds
-Output:
 /* Generated from Filmatura_Full_White.png (320x240 RGBA). */
 #include "dryos.h"
 #include "bmp.h"

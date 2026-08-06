@@ -82,7 +82,10 @@ static volatile uint32_t mlv_play_rendering = 0;
 static volatile uint32_t mlv_play_stopfile = 0;
 
 static CONFIG_INT("play.quality", mlv_play_quality, RAW_PREVIEW_COLOR_320P); /* colour playback quality */
-static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 0);
+/* Pace presentation from the recorded cadence by default.  The previous
+ * unrestricted producer could overwrite the display buffer while the panel
+ * was scanning it, causing visible tearing and an uneven cadence. */
+static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 1);
 
 static int mlv_play_zoom = 0;
 static int mlv_play_zoom_x_pct = 0;
@@ -2597,7 +2600,9 @@ static void mlv_play_enter_playback()
     raw_twk_set_zoom(mlv_play_zoom, mlv_play_zoom_x_pct, mlv_play_zoom_y_pct);
     
     /* queue a few buffers that are not allocated yet */
-    for(int num = 0; num < 3; num++)
+    /* Keep enough decoded frames queued to absorb storage/decompression
+     * jitter while the presentation task follows the FPS timer. */
+    for(int num = 0; num < 5; num++)
     {
         frame_buf_t *buffer = malloc(sizeof(frame_buf_t));
         if (buffer)

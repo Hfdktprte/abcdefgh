@@ -545,6 +545,8 @@ static const struct boot_logo_span boot_logo_spans[] = {
 #define BOOT_LOGO_X ((720 - 320) / 2)
 #define BOOT_LOGO_Y ((480 - 240) / 2)
 
+extern int ml_started;
+
 static void boot_logo_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
@@ -555,13 +557,56 @@ static void boot_logo_draw(void)
     }
 }
 
+static volatile int boot_logo_active = 0;
+static int boot_logo_hide_time = 0;
+
+static void boot_logo_draw_all_buffers(void)
+{
+    bmp_draw_to_idle(0);
+    boot_logo_draw();
+    bmp_draw_to_idle(1);
+    boot_logo_draw();
+    bmp_draw_to_idle(0);
+}
+
+static void boot_logo_clear_all_buffers(void)
+{
+    bmp_draw_to_idle(0);
+    bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);
+    bmp_draw_to_idle(1);
+    bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);
+    bmp_draw_to_idle(0);
+}
+
+static void boot_logo_task(void *unused)
+{
+    (void) unused;
+
+    while (boot_logo_active)
+    {
+        BMP_LOCK( boot_logo_draw_all_buffers(); )
+
+        /* Keep the splash visible through ML initialization to avoid a blank
+         * transition where Canon can briefly draw its own overlays. */
+        if (ml_started && get_ms_clock() >= boot_logo_hide_time)
+        {
+            BMP_LOCK( boot_logo_clear_all_buffers(); )
+            boot_logo_active = 0;
+            break;
+        }
+
+        msleep(50);
+    }
+}
+
 void boot_logo_show(void)
 {
     if (!bmp_vram_raw()) return;
 
     /* Keep Canon's dialogs from overwriting the splash while it is visible. */
     canon_gui_disable_front_buffer();
-    BMP_LOCK( boot_logo_draw(); )
-    msleep(1000);
-    clrscr();
+    boot_logo_hide_time = get_ms_clock() + 1000;
+    BMP_LOCK( boot_logo_draw_all_buffers(); )
+    boot_logo_active = 1;
+    task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);
 }

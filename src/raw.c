@@ -26,7 +26,6 @@
 #include "lens.h"
 #include "module.h"
 #include "menu.h"
-#include "vram.h"
 
 extern WEAK_FUNC(ret_0) int crop_rec_is_enabled();
 #include "edmac-memcpy.h"
@@ -2020,35 +2019,7 @@ int raw_lv_settings_still_valid()
 #define QG ((int)(q->g_lo | (q->g_hi << 2)))
 #define QH ((int)(q->h))
 
-static int color_preview_lv2rx[2048];
-static uint8_t color_preview_gamma_rb[1024];
-static uint8_t color_preview_gamma_g[1024];
-static int color_preview_cache_black = -1;
-static int color_preview_cache_white = -1;
-static int color_preview_cache_div = -1;
-
-static void raw_preview_color_cache(int black, int white, int div, int x1, int x2)
-{
-    if (black != color_preview_cache_black || white != color_preview_cache_white || div != color_preview_cache_div)
-    {
-        for (int i = 0; i < 1024; i++)
-        {
-            int g_rb = COERCE(raw_to_ev((i << div) + black) + 11, 0, 10) * 255 / 10;
-            int g_g  = COERCE(raw_to_ev((i << div) + black) + 10, 0, 10) * 255 / 10;
-            color_preview_gamma_rb[i] = COERCE(g_rb * g_rb / 255, 0, 255);
-            color_preview_gamma_g[i]  = COERCE(g_g * g_g / 255, 0, 255);
-        }
-        color_preview_cache_black = black;
-        color_preview_cache_white = white;
-        color_preview_cache_div = div;
-    }
-    x1 = COERCE(x1, 0, 2047);
-    x2 = COERCE(x2, 0, 2047);
-    for (int x = x1; x < x2; x++)
-        color_preview_lv2rx[x] = LV2RAW_X(x) & ~1;
-}
-
-static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y1, int y2, int reduced)
+static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y1, int y2)
 {
     dbg_printf("Raw color preview...\n");
 
@@ -2076,6 +2047,20 @@ static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y
         div++;
     }
 
+    /* white balance 2,1,2 => use two gamma curves to simplify code */
+    uint8_t gamma_rb[1024];
+    uint8_t gamma_g[1024];
+
+    for (int i = 0; i < 1024; i++)
+    {
+        /* only show 10 bits */
+        int g_rb = COERCE(raw_to_ev((i << div) + black) + 11, 0, 10) * 255 / 10;
+        int g_g  = COERCE(raw_to_ev((i << div) + black) + 10, 0, 10) * 255 / 10;
+        /* gamma 2 */
+        gamma_rb[i] = COERCE(g_rb * g_rb / 255, 0, 255);
+        gamma_g[i]  = COERCE(g_g  * g_g  / 255, 0, 255);
+    }
+    
     int x1 = COERCE(RAW2LV_X(preview_rect_x), 0, vram_lv.width);
     int x2 = COERCE(RAW2LV_X(preview_rect_x + preview_rect_w), 0, vram_lv.width);
     if (x2 < x1) return;
@@ -2083,19 +2068,14 @@ static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y
     /* cache the LV to RAW transformation for the inner loop to make it faster */
     /* we will always choose a green pixel */
     
-    raw_preview_color_cache(black, white, div, x1, x2);
+    int* lv2rx = malloc(x2 * 4);
+    if (!lv2rx) return;
+    for (int x = x1; x < x2; x++)
+        lv2rx[x] = LV2RAW_X(x) & ~1;
 
     /* full-res vertically */
     for (int y = y1; y < y2; y++)
     {
-        /* The 320p path calculates every other display row and copies it to
-         * the following row. This halves RAW demosaic work without changing
-         * the output geometry or aspect ratio. */
-        if (reduced && ((y - y1) & 1))
-        {
-            memcpy(&lv32[LV(0,y)/4], &lv32[LV(0,y-1)/4], vram_lv.pitch);
-            continue;
-        }
         int yr = LV2RAW_Y(y) & ~1;
 
         if (yr <= preview_rect_y || yr >= preview_rect_y + preview_rect_h)
@@ -2114,7 +2094,7 @@ static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y
         /* half-res horizontally, to simplify YUV422 math */
         for (int x = x1; x < x2; x += 2)
         {
-            int xr = color_preview_lv2rx[x];
+            int xr = lv2rx[x];
             struct raw_pixblock * p = row + (xr/8);                 /* RG (xr and yr are multiples of 2) */
             struct raw_pixblock * q = (void*) p + raw_info.pitch;   /* GB, next line */
             int r,g,b;
@@ -2148,14 +2128,15 @@ static void FAST raw_preview_color_work(void* raw_buffer, void* lv_buffer, int y
             }
             
             /* div is chosen so that ((white-black) >> div) < 1024 */
-            r = color_preview_gamma_rb[COERCE(r - black, 0, white-black) >> div];
-            g = color_preview_gamma_g [COERCE(g - black, 0, white-black) >> div];
-            b = color_preview_gamma_rb[COERCE(b - black, 0, white-black) >> div];
+            r = gamma_rb[COERCE(r - black, 0, white-black) >> div];
+            g = gamma_g [COERCE(g - black, 0, white-black) >> div];
+            b = gamma_rb[COERCE(b - black, 0, white-black) >> div];
             
             uint32_t yuv = rgb2yuv422(r,g,b);
             lv32[LV(x,y)/4] = yuv;
         }
     }
+    free(lv2rx);
 }
 
 static void FAST raw_preview_fast_work(void* raw_buffer, void* lv_buffer, int y1, int y2)
@@ -2251,23 +2232,8 @@ void FAST raw_preview_fast_ex(void* raw_buffer, void* lv_buffer, int y1, int y2,
     if (raw_buffer == (void*)-1)
         raw_buffer = (void*)raw_info.buffer;
     
-    int swap_display = 0;
     if (lv_buffer == (void*)-1)
-    {
-        /* Playback must never paint the buffer currently scanned by the LCD.
-         * Render into the alternate Canon buffer, then publish it atomically
-         * after the complete frame is ready. */
-        if (gui_state == GUISTATE_PLAYMENU)
-        {
-            guess_fastrefresh_direction();
-            lv_buffer = get_fastrefresh_422_buf();
-            swap_display = lv_buffer != NULL;
-        }
-        else
-        {
-            lv_buffer = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
-        }
-    }
+        lv_buffer = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
     
     if (y1 == -1)
         y1 = BM2LV_Y(os.y0);
@@ -2286,19 +2252,8 @@ void FAST raw_preview_fast_ex(void* raw_buffer, void* lv_buffer, int y1, int y2,
         
         case RAW_PREVIEW_COLOR_HALFRES:
         default:
-            raw_preview_color_work(raw_buffer, lv_buffer, y1, y2, 0);
+            raw_preview_color_work(raw_buffer, lv_buffer, y1, y2);
             break;
-
-        case RAW_PREVIEW_COLOR_320P:
-            raw_preview_color_work(raw_buffer, lv_buffer, y1, y2, 1);
-            break;
-    }
-
-    if (swap_display)
-    {
-        /* The render is complete, so the next scanout starts from a complete
-         * frame rather than observing partially updated rows. */
-        YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)lv_buffer;
     }
 }
 

@@ -7459,6 +7459,12 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 {
     extern int kill_canon_gui_mode;
 
+    /* Close the touch editor at the REC press itself, before the asynchronous
+     * RAW/H.264 recording state flag changes.  gui-common blocks every touch
+     * once RECORDING is set, regardless of Global Draw. */
+    if (is_EOSM && key == MODULE_KEY_REC && lvinfo_touch_editor_is_open())
+        lvinfo_touch_editor_close();
+
     /* EOS M Live View taps are routed by gui-common.c (Quick Panel, grid,
      * and Last Settings). Do not let the legacy crop.tapdisp shortcuts race
      * that router during boot or Canon INFO transitions. */

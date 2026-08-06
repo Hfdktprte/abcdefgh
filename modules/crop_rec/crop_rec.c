@@ -6278,12 +6278,13 @@ int crop_rec_touch_adjust(int control, int delta)
 }
 
 __attribute__((used, noinline))
-int crop_rec_touch_get_value(int control, int slot, char *value, int size)
+int crop_rec_touch_get_value(int control, int slot, char *value, int size,
+                             int *enabled_out)
 {
     int enabled = 1;
     int w, h;
 
-    if (!value || size <= 0)
+    if (!value || size <= 0 || !enabled_out)
         return 0;
 
     value[0] = '\0';
@@ -6340,7 +6341,8 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size)
         return 0;
     }
 
-    return enabled;
+    *enabled_out = enabled;
+    return 1;
 }
 
 /* Force a relocation to both callbacks for linkers that perform section GC. */

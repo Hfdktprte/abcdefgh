@@ -1779,27 +1779,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
             break;
         }
 
-        /* if in exact playback and this is a skippable VIDF frame */
-        if(mlv_play_exact_fps)
-        {
-            if (xrefs[block_xref_pos].frameType == MLV_FRAME_VIDF)
-            {
-                uint32_t frames_to_skip = 0;
-                msg_queue_count(mlv_play_queue_fps, &frames_to_skip);
-
-                /* skip this frame if we are behind */
-                if(frames_to_skip > 0)
-                {
-                    uint32_t temp = 0;
-                    msg_queue_receive(mlv_play_queue_fps, &temp, 50);
-
-                    mlv_play_frames_skipped++;
-                    block_xref_pos++;
-                    continue;
-                }
-            }
-        }
-        else
+        if(!mlv_play_exact_fps)
         {
             /* if not, just keep the queue clean */
             mlv_play_flush_queue(mlv_play_queue_fps);

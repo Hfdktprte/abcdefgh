@@ -26,6 +26,7 @@
 #include "lens.h"
 #include "module.h"
 #include "menu.h"
+#include "vram.h"
 
 extern WEAK_FUNC(ret_0) int crop_rec_is_enabled();
 #include "edmac-memcpy.h"
@@ -2250,8 +2251,23 @@ void FAST raw_preview_fast_ex(void* raw_buffer, void* lv_buffer, int y1, int y2,
     if (raw_buffer == (void*)-1)
         raw_buffer = (void*)raw_info.buffer;
     
+    int swap_display = 0;
     if (lv_buffer == (void*)-1)
-        lv_buffer = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
+    {
+        /* Playback must never paint the buffer currently scanned by the LCD.
+         * Render into the alternate Canon buffer, then publish it atomically
+         * after the complete frame is ready. */
+        if (gui_state == GUISTATE_PLAYMENU)
+        {
+            guess_fastrefresh_direction();
+            lv_buffer = get_fastrefresh_422_buf();
+            swap_display = lv_buffer != NULL;
+        }
+        else
+        {
+            lv_buffer = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
+        }
+    }
     
     if (y1 == -1)
         y1 = BM2LV_Y(os.y0);
@@ -2276,6 +2292,13 @@ void FAST raw_preview_fast_ex(void* raw_buffer, void* lv_buffer, int y1, int y2,
         case RAW_PREVIEW_COLOR_320P:
             raw_preview_color_work(raw_buffer, lv_buffer, y1, y2, 1);
             break;
+    }
+
+    if (swap_display)
+    {
+        /* The render is complete, so the next scanout starts from a complete
+         * frame rather than observing partially updated rows. */
+        YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)lv_buffer;
     }
 }
 

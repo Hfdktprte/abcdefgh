@@ -1222,43 +1222,9 @@ static void boot_logo_release_canvas(void)
     bmp_draw_to_idle(0);
 }
 
-/* The Canon display buffers are still being swapped during early boot.
- * Wait for two stable LV samples before touching either bitmap buffer. */
-static int boot_logo_wait_for_liveview(void)
-{
-    const int deadline = get_ms_clock() + 1500;
-    int stable_since = 0;
-
-    while (get_ms_clock() < deadline)
-    {
-        if (bmp_vram_raw() && liveview_display_idle())
-        {
-            if (!stable_since)
-                stable_since = get_ms_clock();
-            if (get_ms_clock() - stable_since >= 100)
-                return 1;
-        }
-        else
-        {
-            stable_since = 0;
-        }
-        msleep(20);
-    }
-    return 0;
-}
-
 static void boot_logo_task(void *unused)
 {
     (void) unused;
-
-    /* Never force a splash onto an unstable LV buffer. */
-    if (!boot_logo_wait_for_liveview())
-        return;
-
-    boot_logo_active = 1;
-    canon_gui_disable_front_buffer();
-    boot_logo_hide_time = get_ms_clock() + 2000;
-    BMP_LOCK( boot_logo_present(); )
 
     const int fallback_handoff_time = boot_logo_hide_time + 500;
     while (boot_logo_active)
@@ -1289,6 +1255,12 @@ static void boot_logo_task(void *unused)
 
 void boot_logo_show(void)
 {
-    /* Present from the low-priority task only after Live View is stable. */
+    if (!bmp_vram_raw()) return;
+
+    /* Keep Canon's dialogs from overwriting the splash while it is visible. */
+    boot_logo_active = 1;
+    canon_gui_disable_front_buffer();
+    boot_logo_hide_time = get_ms_clock() + 2000;
+    BMP_LOCK( boot_logo_present(); )
     task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);
 }

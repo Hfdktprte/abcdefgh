@@ -2,6 +2,9 @@
 #include "dryos.h"
 #include "bmp.h"
 #include "gui-common.h"
+#include "lvinfo.h"
+#include "menu.h"
+#include "zebra.h"
 
 struct boot_logo_span { uint16_t y; uint16_t x; uint16_t width; };
 
@@ -542,18 +545,25 @@ static const struct boot_logo_span boot_logo_spans[] = {
 };
 
 #define BOOT_LOGO_SPANS (sizeof(boot_logo_spans) / sizeof(boot_logo_spans[0]))
-#define BOOT_LOGO_X ((720 - 320) / 2)
-#define BOOT_LOGO_Y ((480 - 240) / 2)
+#define BOOT_LOGO_SCALE 2
+#define BOOT_LOGO_W (320 * BOOT_LOGO_SCALE)
+#define BOOT_LOGO_H (240 * BOOT_LOGO_SCALE)
+#define BOOT_LOGO_X ((720 - BOOT_LOGO_W) / 2)
+#define BOOT_LOGO_Y ((480 - BOOT_LOGO_H) / 2)
 
 extern int ml_started;
 
 static void boot_logo_draw(void)
 {
-    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
+    bmp_fill(COLOR_BLACK, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
     for (unsigned int i = 0; i < BOOT_LOGO_SPANS; i++)
     {
         const struct boot_logo_span *s = &boot_logo_spans[i];
-        bmp_draw_rect(COLOR_WHITE, BOOT_LOGO_X + s->x, BOOT_LOGO_Y + s->y, s->width, 1);
+        bmp_fill(COLOR_WHITE,
+            BOOT_LOGO_X + s->x * BOOT_LOGO_SCALE,
+            BOOT_LOGO_Y + s->y * BOOT_LOGO_SCALE,
+            s->width * BOOT_LOGO_SCALE,
+            BOOT_LOGO_SCALE);
     }
 }
 
@@ -569,15 +579,15 @@ static void boot_logo_present(void)
 {
     bmp_draw_to_idle(1);
     boot_logo_draw();
-    bmp_idle_copy(1, 0);
+    bmp_idle_copy(1, 1);
     bmp_draw_to_idle(0);
 }
 
 static void boot_logo_clear(void)
 {
     bmp_draw_to_idle(1);
-    bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);
-    bmp_idle_copy(1, 0);
+    bmp_fill(COLOR_EMPTY, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
+    bmp_idle_copy(1, 1);
     bmp_draw_to_idle(0);
 }
 
@@ -585,14 +595,23 @@ static void boot_logo_task(void *unused)
 {
     (void) unused;
 
-    while (boot_logo_active && (!ml_started || get_ms_clock() < boot_logo_hide_time))
+    const int fallback_handoff_time = boot_logo_hide_time + 500;
+    while (boot_logo_active)
     {
+        int splash_time_done = get_ms_clock() >= boot_logo_hide_time;
+        int ml_display_ready = ml_started &&
+            (liveview_display_idle() || get_ms_clock() >= fallback_handoff_time);
+        if (splash_time_done && ml_display_ready) break;
         msleep(20);
     }
 
     if (boot_logo_active)
     {
+        /* Request ML's first HUD redraw while Canon remains masked. */
+        lens_display_set_dirty();
+        menu_set_dirty();
         BMP_LOCK( boot_logo_clear(); )
+        msleep(250);
         boot_logo_active = 0;
     }
 }

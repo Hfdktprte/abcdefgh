@@ -31,6 +31,8 @@
 #include <config.h>
 #include <cropmarks.h>
 #include <edmac.h>
+#include <edmac-memcpy.h>
+#include <vram.h>
 #include <raw.h>
 #include <zebra.h>
 #include <util.h>
@@ -81,11 +83,10 @@ static volatile uint32_t mlv_play_render_abort = 0;
 static volatile uint32_t mlv_play_rendering = 0;
 static volatile uint32_t mlv_play_stopfile = 0;
 
-static CONFIG_INT("play.quality", mlv_play_quality, RAW_PREVIEW_COLOR_320P); /* colour playback quality */
-/* Pace presentation from the recorded cadence by default.  The previous
- * unrestricted producer could overwrite the display buffer while the panel
- * was scanning it, causing visible tearing and an uneven cadence. */
-static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 1);
+static CONFIG_INT("play.quality", mlv_play_quality, 0); /* range: 0-1, RAW_PREVIEW_* in raw.h  */
+static CONFIG_INT("play.exact_fps", mlv_play_exact_fps, 0);
+static CONFIG_INT("play.engine2", mlv_play_engine2, 1);
+static uint32_t mlv_play_engine_frame_ms = 42;
 
 static int mlv_play_zoom = 0;
 static int mlv_play_zoom_x_pct = 0;
@@ -484,13 +485,12 @@ static void mlv_play_osd_quality(char *msg, uint32_t msg_len, uint32_t selected)
 {
     if(selected)
     {
-        mlv_play_quality = (mlv_play_quality == RAW_PREVIEW_COLOR_320P)
-            ? RAW_PREVIEW_COLOR_HALFRES : RAW_PREVIEW_COLOR_320P;
+        mlv_play_quality = MOD(mlv_play_quality + 1, 2);
     }
     
     if(msg)
     {
-        snprintf(msg, msg_len, mlv_play_quality == RAW_PREVIEW_COLOR_320P ? "color 320p" : "color");
+        snprintf(msg, msg_len, mlv_play_quality?"fast":"color");
     }
 }
 
@@ -1473,7 +1473,28 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
     }
     else
     {
-        raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
+        if (mlv_play_engine2)
+        {
+            /* Render a complete frame away from the scanout buffer, then use
+             * EDMAC for a short presentation copy. This avoids exposing the
+             * slow RAW-to-YUV conversion row-by-row to the LCD. */
+            void *display = (void*)CACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+            guess_fastrefresh_direction();
+            void *staging = get_fastrefresh_422_buf();
+            if (display && staging && display != staging)
+            {
+                raw_preview_fast_ex((void*)-1, staging, -1, -1, mlv_play_quality);
+                edmac_memcpy(display, staging, vram_lv.pitch * vram_lv.height);
+            }
+            else
+            {
+                raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
+            }
+        }
+        else
+        {
+            raw_preview_fast_ex((void*)-1,(void*)-1,-1,-1,mlv_play_quality);
+        }
 
         if (!mlv_play_paused)
         {
@@ -1485,6 +1506,7 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
 static void mlv_play_render_task(uint32_t priv)
 {
     uint32_t redraw_loop = 0;
+    uint32_t engine_deadline = 0;
     
     frame_buf_t *buffer_paused = NULL;
     
@@ -1539,7 +1561,19 @@ static void mlv_play_render_task(uint32_t priv)
             break;
         }
 
+        if (mlv_play_engine2)
+        {
+            uint32_t now = get_ms_clock();
+            if (!engine_deadline || (int32_t)(now - engine_deadline) > 250)
+                engine_deadline = now;
+            while ((int32_t)(engine_deadline - get_ms_clock()) > 0 && !mlv_play_should_stop())
+                msleep(MIN((uint32_t)(engine_deadline - get_ms_clock()), 4));
+        }
+
         mlv_play_render_frame(buffer);
+
+        if (mlv_play_engine2)
+            engine_deadline += mlv_play_engine_frame_ms;
         
         /* if info display is requested, paint it. todo: thats OSD stuff, so it should be removed from here */
         if(mlv_play_info)
@@ -1779,7 +1813,27 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
             break;
         }
 
-        if(!mlv_play_exact_fps)
+        /* if in exact playback and this is a skippable VIDF frame */
+        if(mlv_play_exact_fps && !mlv_play_engine2)
+        {
+            if (xrefs[block_xref_pos].frameType == MLV_FRAME_VIDF)
+            {
+                uint32_t frames_to_skip = 0;
+                msg_queue_count(mlv_play_queue_fps, &frames_to_skip);
+
+                /* skip this frame if we are behind */
+                if(frames_to_skip > 0)
+                {
+                    uint32_t temp = 0;
+                    msg_queue_receive(mlv_play_queue_fps, &temp, 50);
+
+                    mlv_play_frames_skipped++;
+                    block_xref_pos++;
+                    continue;
+                }
+            }
+        }
+        else
         {
             /* if not, just keep the queue clean */
             mlv_play_flush_queue(mlv_play_queue_fps);
@@ -1832,6 +1886,12 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
             if(file_hdr.fileNum == 0)
             {
                 memcpy(&main_header, &file_hdr, sizeof(mlv_file_hdr_t));
+                if (mlv_play_engine2 && file_hdr.sourceFpsNom && file_hdr.sourceFpsDenom)
+                {
+                    mlv_play_engine_frame_ms = COERCE(
+                        (1000 * file_hdr.sourceFpsDenom + file_hdr.sourceFpsNom / 2) / file_hdr.sourceFpsNom,
+                        5, 1000);
+                }
             }
             else
             {
@@ -1887,9 +1947,8 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
                 msleep(1000);
                 break;
             }
-            /* Use geometry stored in the recording, not current camera state. */
-            binning_skipping_y = rawc_block.binning_y + rawc_block.skipping_y;
-            binning_skipping_x = rawc_block.binning_x + rawc_block.skipping_x;
+            binning_skipping_y = raw_capture_info.binning_y + raw_capture_info.skipping_y;
+            binning_skipping_x = raw_capture_info.binning_x + raw_capture_info.skipping_x;
         }
         else if(!memcmp(buf.blockType, "WAVI", 4))
         {
@@ -2076,7 +2135,7 @@ static void mlv_play_mlv(char *filename, FILE **chunk_files, uint32_t chunk_coun
                 snprintf(buffer->messages.botRight, SCREEN_MSG_LEN, "%d/%d", vidf_block.frameNumber + 1, frame_count);
                 
                 
-                if (mlv_play_exact_fps)
+                if (mlv_play_exact_fps && !mlv_play_engine2)
                 {
                     if (!fps_timer_started)
                     {
@@ -2580,9 +2639,6 @@ static void mlv_play_enter_playback()
     raw_twk_set_zoom(mlv_play_zoom, mlv_play_zoom_x_pct, mlv_play_zoom_y_pct);
     
     /* queue a few buffers that are not allocated yet */
-    /* Three buffers are the maximum safe footprint for high-resolution RAW
-     * playback on EOS M. More buffers can trigger allocation failure before
-     * the first frame is displayed. */
     for(int num = 0; num < 3; num++)
     {
         frame_buf_t *buffer = malloc(sizeof(frame_buf_t));
@@ -2909,4 +2965,5 @@ MODULE_PROPHANDLERS_END()
 MODULE_CONFIGS_START()
     MODULE_CONFIG(mlv_play_quality)
     MODULE_CONFIG(mlv_play_exact_fps)
+    MODULE_CONFIG(mlv_play_engine2)
 MODULE_CONFIGS_END()

@@ -13,7 +13,6 @@
 #include <lvinfo.h>
 #include <menu.h>
 #include <menu-grid.h>
-#include <module.h>
 #include "../modules/crop_rec/crop_rec.h"
 
 #if defined(FEATURE_AF_PATTERNS)
@@ -77,8 +76,6 @@ static int slim_touch_pending_menu_change;
 static enum lvinfo_touch_field slim_touch_pending_field;
 static int slim_touch_pending_slot;
 static int slim_touch_pending_sign;
-static int (*crop_rec_touch_adjust_fn)(int, int) = MODULE_FUNCTION(crop_rec_touch_adjust);
-static int (*crop_rec_touch_get_value_fn)(int, int, char *, int) = MODULE_FUNCTION(crop_rec_touch_get_value);
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
  * the normal menu selectors as the sole source of valid Mode/resolution/FPS
@@ -88,17 +85,17 @@ static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
     int control = field == LVINFO_TOUCH_CROP ? 0 :
                   field == LVINFO_TOUCH_FPS ? 1 :
                   field == LVINFO_TOUCH_BIT_DEPTH ? 2 : -1;
-    char value[32];
+    char value[32] = "--";
 
-    if (control < 0 || !crop_rec_touch_get_value_fn)
+    if (control < 0)
         return;
-    if (crop_rec_touch_get_value_fn(control, 0, value, sizeof(value)))
+    if (crop_rec_touch_get_value(control, 0, value, sizeof(value)))
         lvinfo_touch_editor_set_item(0, value, 1);
     else
         lvinfo_touch_editor_set_item(0, value, 0);
     if (control == 0)
     {
-        int enabled = crop_rec_touch_get_value_fn(control, 1, value, sizeof(value));
+        int enabled = crop_rec_touch_get_value(control, 1, value, sizeof(value));
         lvinfo_touch_editor_set_item(1, value, enabled);
     }
 }
@@ -121,19 +118,16 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
     slim_touch_pending_menu_change = 0;
     if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
     {
-        if (crop_rec_touch_adjust_fn)
-            crop_rec_touch_adjust_fn(slim_touch_pending_slot == 0 ? 0 : 1,
-                                     slim_touch_pending_sign);
+        crop_rec_touch_adjust(slim_touch_pending_slot == 0 ? 0 : 1,
+                              slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
     {
-        if (crop_rec_touch_adjust_fn)
-            crop_rec_touch_adjust_fn(2, slim_touch_pending_sign);
+        crop_rec_touch_adjust(2, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
     {
-        if (crop_rec_touch_adjust_fn)
-            crop_rec_touch_adjust_fn(3, slim_touch_pending_sign);
+        crop_rec_touch_adjust(3, slim_touch_pending_sign);
     }
 
     slim_touch_lv_refresh_menu_editor(slim_touch_pending_field);

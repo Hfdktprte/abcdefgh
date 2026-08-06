@@ -14,7 +14,6 @@
 #include <menu.h>
 #include <menu-grid.h>
 #include <module.h>
-#include "../modules/crop_rec/crop_rec.h"
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -77,8 +76,13 @@ static int slim_touch_pending_menu_change;
 static enum lvinfo_touch_field slim_touch_pending_field;
 static int slim_touch_pending_slot;
 static int slim_touch_pending_sign;
-static int (*crop_rec_touch_adjust_fn)(int, int) = MODULE_FUNCTION(crop_rec_touch_adjust);
-static int (*crop_rec_touch_get_value_fn)(int, int, char *, int) = MODULE_FUNCTION(crop_rec_touch_get_value);
+/* MODULE_FUNCTION requires the pointer variable and exported symbol to have
+ * exactly the same name: the loader writes the resolved module address into
+ * that variable.  Do not add an _fn suffix here. */
+static int (*crop_rec_touch_adjust)(int, int) =
+    MODULE_FUNCTION(crop_rec_touch_adjust);
+static int (*crop_rec_touch_get_value)(int, int, char *, int, int *) =
+    MODULE_FUNCTION(crop_rec_touch_get_value);
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
  * the normal menu selectors as the sole source of valid Mode/resolution/FPS
@@ -89,22 +93,22 @@ static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
                   field == LVINFO_TOUCH_FPS ? 1 :
                   field == LVINFO_TOUCH_BIT_DEPTH ? 2 : -1;
     char value[32] = "--";
+    int enabled = 0;
 
     if (control < 0)
         return;
-    int value_ok = crop_rec_touch_get_value_fn(control, 0, value, sizeof(value));
-    if (!value_ok)
-        value_ok = crop_rec_touch_get_value(control, 0, value, sizeof(value));
+    int value_ok = crop_rec_touch_get_value(
+        control, 0, value, sizeof(value), &enabled);
     if (value_ok)
-        lvinfo_touch_editor_set_item(0, value, 1);
+        lvinfo_touch_editor_set_item(0, value, enabled);
     else
         lvinfo_touch_editor_set_item(0, value, 0);
     if (control == 0)
     {
-        int enabled = crop_rec_touch_get_value_fn(control, 1, value, sizeof(value));
-        if (!enabled)
-            enabled = crop_rec_touch_get_value(control, 1, value, sizeof(value));
-        lvinfo_touch_editor_set_item(1, value, enabled);
+        enabled = 0;
+        value_ok = crop_rec_touch_get_value(
+            control, 1, value, sizeof(value), &enabled);
+        lvinfo_touch_editor_set_item(1, value, value_ok && enabled);
     }
 }
 
@@ -126,20 +130,16 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
     slim_touch_pending_menu_change = 0;
     if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
     {
-        if (!crop_rec_touch_adjust_fn(slim_touch_pending_slot == 0 ? 0 : 1,
-                                      slim_touch_pending_sign))
-            crop_rec_touch_adjust(slim_touch_pending_slot == 0 ? 0 : 1,
-                                  slim_touch_pending_sign);
+        crop_rec_touch_adjust(slim_touch_pending_slot == 0 ? 0 : 1,
+                              slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
     {
-        if (!crop_rec_touch_adjust_fn(2, slim_touch_pending_sign))
-            crop_rec_touch_adjust(2, slim_touch_pending_sign);
+        crop_rec_touch_adjust(2, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
     {
-        if (!crop_rec_touch_adjust_fn(3, slim_touch_pending_sign))
-            crop_rec_touch_adjust(3, slim_touch_pending_sign);
+        crop_rec_touch_adjust(3, slim_touch_pending_sign);
     }
 
     slim_touch_lv_refresh_menu_editor(slim_touch_pending_field);

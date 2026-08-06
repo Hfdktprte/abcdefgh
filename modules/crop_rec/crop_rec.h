@@ -10,4 +10,5 @@ extern WEAK_FUNC(ret_0) int is_1080i_Info_Output();
  * 1=frame rate, 2=bit depth. */
 extern WEAK_FUNC(ret_0) int crop_rec_touch_adjust(int control, int delta);
 extern WEAK_FUNC(ret_0) int crop_rec_touch_get_value(int control, int slot,
-                                                      char *value, int size);
+                                                      char *value, int size,
+                                                      int *enabled);

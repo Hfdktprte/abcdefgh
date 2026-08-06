@@ -128,6 +128,9 @@ update_lens_display(int top, int bottom)
 {
     if (top) draw_ml_topbar();
     if (bottom) draw_ml_bottombar();
+    extern void boot_logo_overlay_updated(int top, int bottom) __attribute__((weak));
+    if (boot_logo_overlay_updated)
+        boot_logo_overlay_updated(top, bottom);
     //~ lvinfo_display(top, bottom);
     //~ info_print_screen();
 }

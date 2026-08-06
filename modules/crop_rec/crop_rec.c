@@ -6251,6 +6251,91 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
     /* Never gate Bit Depth on lossless / other settings. */
 }
 
+/* Called by the core Live View touch editor.  This intentionally bypasses
+ * menu_entry lookup and menu semaphores: the menu task is not active while
+ * the camera is displaying Live View, and touching these fields must not
+ * enter Canon's menu lock path (Err70 on EOS M). */
+int crop_rec_touch_adjust(int control, int delta)
+{
+    if (!is_EOSM || !is_movie_mode() || RECORDING)
+        return 0;
+
+    switch (control)
+    {
+        case 0: slim_crop_mode_select(0, delta); break;
+        case 1: slim_crop_quick_res_select(0, delta); break;
+        case 2: slim_crop_fps_select(0, delta); break;
+        case 3: slim_crop_bit_select(0, delta); break;
+        default: return 0;
+    }
+    return 1;
+}
+
+int crop_rec_touch_get_value(int control, int slot, char *value, int size)
+{
+    int enabled = 1;
+    int w, h;
+
+    if (!value || size <= 0 || !is_EOSM)
+        return 0;
+
+    value[0] = '\0';
+    slim_crop_sync_from_backend();
+
+    if (control == 0)
+    {
+        if (slot == 0)
+        {
+            snprintf(value, size, "%s",
+                slim_mode_ui == 0 ? "1x1" :
+                slim_mode_ui == 1 ? "1x3" :
+                slim_mode_ui == 2 ? "3x3" : "LV");
+        }
+        else
+        {
+            slim_crop_expected_res(&w, &h);
+            snprintf(value, size, "%dx%d", w, h);
+            enabled = slim_mode_ui != 3;
+        }
+    }
+    else if (control == 1)
+    {
+        if (slim_mode_ui == 3)
+        {
+            snprintf(value, size, "3");
+            enabled = 0;
+        }
+        else
+        {
+            int mask = slim_crop_fps_mask();
+            int bits = (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1);
+            if (CROP_PRESET_MENU == CROP_PRESET_3X3 && crop_preset_ar_menu < 4)
+            {
+                static const char *hfr[] = { "46.800", "50", "54", "55.6" };
+                snprintf(value, size, "%s", hfr[COERCE(crop_preset_ar_menu, 0, 3)]);
+            }
+            else
+            {
+                static const char *labels[] = { "23.976", "25", "30" };
+                snprintf(value, size, "%s", labels[COERCE(crop_preset_fps_menu, 0, 2)]);
+            }
+            enabled = bits > 1;
+        }
+    }
+    else if (control == 2)
+    {
+        snprintf(value, size, "%s",
+            slim_bit_depth_ui == 0 ? "10 Bit" :
+            slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+    }
+    else
+    {
+        return 0;
+    }
+
+    return enabled;
+}
+
 static struct menu_entry crop_rec_menu_eosm[] =
 {
     {

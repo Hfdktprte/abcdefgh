@@ -119,6 +119,9 @@ enum lvinfo_touch_field
     LVINFO_TOUCH_SHUTTER,
     LVINFO_TOUCH_ISO,
     LVINFO_TOUCH_WB,
+    LVINFO_TOUCH_CROP,
+    LVINFO_TOUCH_FPS,
+    LVINFO_TOUCH_BIT_DEPTH,
 };
 
 enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y);
@@ -126,6 +129,9 @@ void lvinfo_touch_editor_open(enum lvinfo_touch_field field);
 void lvinfo_touch_editor_close(void);
 int lvinfo_touch_editor_is_open(void);
 enum lvinfo_touch_field lvinfo_touch_editor_field(void);
+void lvinfo_touch_editor_set_item(int slot, const char *value, int enabled);
+int lvinfo_touch_editor_item_enabled(int slot);
+void lvinfo_touch_editor_feedback(int slot, int sign);
 
 /* in lens.c, to be moved */
 extern int get_ml_topbar_pos();

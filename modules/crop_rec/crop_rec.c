@@ -6236,9 +6236,9 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
 
 static MENU_SELECT_FUNC(slim_crop_bit_select)
 {
-    /* Both L and R advance the same way: 10 → 12 → 14 → 10. */
-    (void)delta;
-    slim_bit_depth_ui = MOD(slim_bit_depth_ui + 1, 3);
+    /* Direct-touch arrows and menu L/R move in opposite directions:
+     * 10 <-> 12 <-> 14, wrapping at the ends. */
+    slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 3);
     slim_crop_apply_bit_depth();
 }
 

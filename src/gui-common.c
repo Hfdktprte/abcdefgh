@@ -72,10 +72,57 @@ static int slim_touch_tap_deadline;
 static int slim_touch_lv_pressed;
 static int slim_touch_lv_control_consumed;
 
-/* The editor itself is painted by lvinfo, after the bottom status bar has
- * been laid out.  Keep input here with the other Live View touch routing. */
-static void slim_touch_lv_change_field(enum lvinfo_touch_field field, int sign)
+/* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
+ * the normal menu selectors as the sole source of valid Mode/resolution/FPS
+ * choices without creating a lock-order dependency in the overlay task. */
+static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
 {
+    struct menu_display_info info = { 0 };
+    struct menu_display_info adjust_info = { 0 };
+    char value[MENU_MAX_VALUE_LEN];
+    char *text;
+
+    if (field == LVINFO_TOUCH_CROP)
+    {
+        text = menu_get_str_value_from_script("Movie", "Mode", &info);
+        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
+        lvinfo_touch_editor_set_item(0, value, info.enabled);
+
+        text = menu_get_str_value_from_script("Movie", "Resolution", &info);
+        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
+        menu_get_str_value_from_script("Movie", "Quick Resolution", &adjust_info);
+        lvinfo_touch_editor_set_item(1, value, adjust_info.enabled);
+    }
+    else if (field == LVINFO_TOUCH_FPS)
+    {
+        text = menu_get_str_value_from_script("Movie", "Frame Rate", &info);
+        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
+        lvinfo_touch_editor_set_item(0, value, info.enabled);
+    }
+    else if (field == LVINFO_TOUCH_BIT_DEPTH)
+    {
+        text = menu_get_str_value_from_script("Movie", "Bit Depth", &info);
+        snprintf(value, sizeof(value), "%s", text && text[0] ? text : "--");
+        lvinfo_touch_editor_set_item(0, value, info.enabled);
+    }
+}
+
+static void slim_touch_lv_refresh_menu_editor_delayed(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (lvinfo_touch_editor_is_open())
+        slim_touch_lv_refresh_menu_editor(lvinfo_touch_editor_field());
+}
+
+/* The editor itself is painted by lvinfo, after the status bars have been
+ * laid out.  Keep input here with the other Live View touch routing. */
+static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
+                                       int slot, int sign)
+{
+    if (!lvinfo_touch_editor_item_enabled(slot))
+        return;
+
     switch (field)
     {
         case LVINFO_TOUCH_APERTURE:
@@ -92,9 +139,26 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field, int sign)
         case LVINFO_TOUCH_WB:
             kelvin_toggle((void *)-1, sign);
             break;
+        case LVINFO_TOUCH_CROP:
+            menu_adjust_value_by_name("Movie",
+                slot == 0 ? "Mode" : "Quick Resolution", sign);
+            slim_touch_lv_refresh_menu_editor(field);
+            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            break;
+        case LVINFO_TOUCH_FPS:
+            menu_adjust_value_by_name("Movie", "Frame Rate", sign);
+            slim_touch_lv_refresh_menu_editor(field);
+            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            break;
+        case LVINFO_TOUCH_BIT_DEPTH:
+            menu_adjust_value_by_name("Movie", "Bit Depth", sign);
+            slim_touch_lv_refresh_menu_editor(field);
+            delayed_call(500, slim_touch_lv_refresh_menu_editor_delayed, 0);
+            break;
         default:
             break;
     }
+    lvinfo_touch_editor_feedback(slot, sign);
     lens_display_set_dirty();
 }
 
@@ -107,13 +171,29 @@ static int slim_touch_lv_direct_editor(struct event * event)
     if (lvinfo_touch_editor_is_open())
     {
         enum lvinfo_touch_field field = lvinfo_touch_editor_field();
+        int slot = 0;
+        int arrow = 0;
 
-        /* The central editor occupies x=240..480, y=118..362.  Arrow touch
-         * targets are deliberately taller and wider than their artwork. */
-        if (x >= 210 && x <= 510 && y >= 135 && y <= 215)
-            slim_touch_lv_change_field(field, 1);
-        else if (x >= 210 && x <= 510 && y >= 270 && y <= 350)
-            slim_touch_lv_change_field(field, -1);
+        if (field == LVINFO_TOUCH_CROP)
+        {
+            if (x >= 75 && x < 360) slot = 0;
+            else if (x >= 360 && x <= 645) slot = 1;
+            else slot = -1;
+        }
+        else if (x < 120 || x > 600)
+        {
+            slot = -1;
+        }
+
+        /* Hit areas are much larger than the 60x26 arrow artwork, but the
+         * two Crop columns meet at x=360 and never overlap. */
+        if (slot >= 0 && y >= 115 && y <= 210)
+            arrow = 1;
+        else if (slot >= 0 && y >= 245 && y <= 340)
+            arrow = -1;
+
+        if (arrow)
+            slim_touch_lv_change_field(field, slot, arrow);
         else
             lvinfo_touch_editor_close();
         return 1;
@@ -130,6 +210,7 @@ static int slim_touch_lv_direct_editor(struct event * event)
         return 1;
 
     lvinfo_touch_editor_open(field);
+    slim_touch_lv_refresh_menu_editor(field);
     return 1;
 }
 

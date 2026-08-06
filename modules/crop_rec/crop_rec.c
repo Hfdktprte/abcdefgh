@@ -7135,6 +7135,7 @@ static void center_canon_preview()
 
 /* variables for 650D / 700D / EOSM/M2 / 100D help to detect if settings changed */
 static int old_ar_preset;
+static int old_crop_preset_index;
 static int old_fps_preset;
 static int old_1x1_preset;
 static int old_1x3_preset;
@@ -7148,7 +7149,8 @@ static int old_shutter_range;
 
 int check_if_settings_changed()
 {
-    if (old_ar_preset  != crop_preset_ar_menu       ||
+    if (old_crop_preset_index != crop_preset_index  ||
+        old_ar_preset  != crop_preset_ar_menu       ||
         old_fps_preset != crop_preset_fps_menu      ||
         old_1x1_preset != crop_preset_1x1_res_menu  ||
         old_1x3_preset != crop_preset_1x3_res_menu  ||
@@ -7429,8 +7431,9 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         }
 
         if (!menu_shown)
-        {   
+        {
             // check crop_rec configurations while outside ML menu
+            old_crop_preset_index = crop_preset_index;
             old_ar_preset  = crop_preset_ar_menu;
             old_fps_preset = crop_preset_fps_menu;
             old_1x1_preset = crop_preset_1x1_res_menu;

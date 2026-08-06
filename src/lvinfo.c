@@ -32,15 +32,15 @@ static int lvinfo_touch_feedback_sign;
 
 /* The single-value editor is square.  Crop mode + resolution share a wider
  * rectangle with the same height.  Input uses these exact bounds too. */
-#define LVINFO_TOUCH_BOX_Y          105
-#define LVINFO_TOUCH_BOX_H          270
-#define LVINFO_TOUCH_SINGLE_X       225
-#define LVINFO_TOUCH_SINGLE_W       270
-#define LVINFO_TOUCH_CROP_X          90
-#define LVINFO_TOUCH_CROP_W         540
-#define LVINFO_TOUCH_BOX_CENTER_Y   (LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H / 2)
-#define LVINFO_TOUCH_UP_TIP_Y       (LVINFO_TOUCH_BOX_Y + 30)
-#define LVINFO_TOUCH_DOWN_TIP_Y     (LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H - 30)
+#define LVINFO_TOUCH_BOX_Y          150
+#define LVINFO_TOUCH_BOX_H          180
+#define LVINFO_TOUCH_SINGLE_X       270
+#define LVINFO_TOUCH_SINGLE_W       180
+#define LVINFO_TOUCH_CROP_X         105
+#define LVINFO_TOUCH_CROP_W         510
+#define LVINFO_TOUCH_UP_TIP_Y       (LVINFO_TOUCH_BOX_Y + 28)
+#define LVINFO_TOUCH_VALUE_Y        (LVINFO_TOUCH_UP_TIP_Y + 42)
+#define LVINFO_TOUCH_DOWN_TIP_Y     (LVINFO_TOUCH_VALUE_Y + 82)
 
 static const char * lvinfo_touch_field_name(enum lvinfo_touch_field field)
 {
@@ -124,8 +124,7 @@ static void lvinfo_touch_draw_editor(void)
     if (lvinfo_touch_field == LVINFO_TOUCH_NONE)
         return;
 
-    int font_h = fontspec_font(FONT_CANON)->height;
-    int value_y = LVINFO_TOUCH_BOX_CENTER_Y - font_h / 2;
+    int value_y = LVINFO_TOUCH_VALUE_Y;
 
     /* Clear the previous editor shape, then provide a solid background so
      * white values stay readable over every Live View image. */
@@ -137,9 +136,9 @@ static void lvinfo_touch_draw_editor(void)
     {
         bmp_fill(COLOR_BLACK, LVINFO_TOUCH_CROP_X, LVINFO_TOUCH_BOX_Y,
                  LVINFO_TOUCH_CROP_W, LVINFO_TOUCH_BOX_H);
-        lvinfo_touch_draw_value(0, 225, value_y, lvinfo_touch_menu_value[0],
+        lvinfo_touch_draw_value(0, 232, value_y, lvinfo_touch_menu_value[0],
                                 lvinfo_touch_menu_enabled[0]);
-        lvinfo_touch_draw_value(1, 495, value_y, lvinfo_touch_menu_value[1],
+        lvinfo_touch_draw_value(1, 488, value_y, lvinfo_touch_menu_value[1],
                                 lvinfo_touch_menu_enabled[1]);
     }
     else
@@ -763,12 +762,12 @@ enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y)
     int top_y = get_ml_topbar_pos();
     int bottom_y = get_ml_bottombar_pos();
 
-    if (y >= top_y - 12 && y < top_y + 44)
+    if (y >= top_y - 20 && y < top_y + 52)
     {
         items = top_items;
         count = top_count;
     }
-    else if (y >= bottom_y - 12 && y < bottom_y + 44)
+    else if (y >= bottom_y - 20 && y < bottom_y + 52)
     {
         items = bot_items;
         count = bot_count;
@@ -779,8 +778,8 @@ enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y)
         for (int i = 0; i < count; i++)
         {
             struct lvinfo_item * item = items[i];
-            int left = item->x - item->width / 2 - 26;
-            int right = item->x + item->width / 2 + 26;
+            int left = item->x - item->width / 2 - 40;
+            int right = item->x + item->width / 2 + 40;
             int distance = ABS(x - item->x);
             const char * name = item->name;
             enum lvinfo_touch_field candidate = LVINFO_TOUCH_NONE;
@@ -806,6 +805,14 @@ enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y)
     }
     give_semaphore(lvinfo_sem);
     return result;
+}
+
+int lvinfo_touch_is_bar_area(int y)
+{
+    int top_y = get_ml_topbar_pos();
+    int bottom_y = get_ml_bottombar_pos();
+    return (y >= top_y - 20 && y < top_y + 52) ||
+           (y >= bottom_y - 20 && y < bottom_y + 52);
 }
 
 void lvinfo_touch_editor_open(enum lvinfo_touch_field field)
@@ -858,6 +865,9 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
 {
     int box_x;
     int box_w;
+    int arrow_cx;
+    int arrow_left;
+    int arrow_right;
 
     if (slot) *slot = -1;
     if (sign) *sign = 0;
@@ -877,11 +887,20 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
     else
         *slot = 0;
 
-    /* The whole box remains active, but only the generous regions around the
-     * visible arrows change values.  Touching its center simply keeps it open. */
-    if (y < LVINFO_TOUCH_BOX_CENTER_Y - 35)
+    arrow_cx = lvinfo_touch_field == LVINFO_TOUCH_CROP
+        ? (*slot == 0 ? 232 : 488) : 360;
+    arrow_left = arrow_cx - 55;
+    arrow_right = arrow_cx + 55;
+
+    /* Visible triangle is 60x26; use a comfortable 110x56 target around it,
+     * without turning the rest of the black box into an adjustment target. */
+    if (x >= arrow_left && x <= arrow_right &&
+        y >= LVINFO_TOUCH_UP_TIP_Y - 15 &&
+        y <= LVINFO_TOUCH_UP_TIP_Y + 41)
         *sign = 1;
-    else if (y > LVINFO_TOUCH_BOX_CENTER_Y + 35)
+    else if (x >= arrow_left && x <= arrow_right &&
+             y >= LVINFO_TOUCH_DOWN_TIP_Y - 41 &&
+             y <= LVINFO_TOUCH_DOWN_TIP_Y + 15)
         *sign = -1;
 
     return 1;

@@ -241,6 +241,11 @@ static int slim_touch_lv_direct_editor(struct event * event)
         return 1;
 
     lvinfo_touch_editor_open(field);
+    /* A status-bar touch must cancel any unfinished Live View tap sequence;
+     * otherwise its delayed single-tap action could open Quick Panel over the
+     * editor a fraction of a second later. */
+    slim_touch_tap_count = 0;
+    slim_touch_tap_deadline = 0;
     if (field == LVINFO_TOUCH_CROP || field == LVINFO_TOUCH_FPS ||
         field == LVINFO_TOUCH_BIT_DEPTH)
         delayed_call(20, slim_touch_lv_refresh_menu_editor_delayed, 0);
@@ -255,7 +260,7 @@ static int slim_touch_lv_context_ok(void)
 
 static void slim_touch_open_for_taps(int taps)
 {
-    if (!slim_touch_lv_context_ok())
+    if (!slim_touch_lv_context_ok() || lvinfo_touch_editor_is_open())
         return;
 
     if (taps == 1)
@@ -320,6 +325,9 @@ static int handle_slim_rec_touch_block(struct event * event)
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:
+    {
+        int touch_x;
+        int touch_y;
         if (RECORDING)
             return 0;
         if (slim_touch_lv_context_ok())
@@ -327,6 +335,15 @@ static int handle_slim_rec_touch_block(struct event * event)
             slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);
             if (slim_touch_lv_control_consumed)
                 return 0;
+            /* Tap gestures (including Quick Panel) only originate from the
+             * image area. Unassigned space in either status bar is inert. */
+            if (!eosm_touch_get_xy(event, &touch_x, &touch_y) ||
+                lvinfo_touch_is_bar_area(touch_y))
+            {
+                slim_touch_lv_control_consumed = 1;
+                slim_touch_lv_pressed = 0;
+                return 0;
+            }
             slim_touch_lv_pressed = 1;
             /* Keep a previous tap pending while the next finger press is held. */
             if (slim_touch_tap_count)
@@ -335,6 +352,7 @@ static int handle_slim_rec_touch_block(struct event * event)
             return 0;
         }
         break;
+    }
 #ifdef BGMT_TOUCH_MOVE
     case BGMT_TOUCH_MOVE:
         if (RECORDING)
@@ -397,6 +415,51 @@ static int handle_slim_rec_touch_block(struct event * event)
         break;
     }
     return 1;
+}
+
+/* The Live View editor is touch-driven.  While it is visible, keep the rear
+ * dial pad and assigned shortcuts from changing an unrelated setting behind
+ * it. MENU remains available and dismisses the editor before normal handling. */
+static int handle_slim_lv_editor_keys(struct event *event)
+{
+    if (!lvinfo_touch_editor_is_open())
+        return 1;
+
+    if (event->param == BGMT_MENU)
+    {
+        lvinfo_touch_editor_close();
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        return 1;
+    }
+
+    switch (event->param)
+    {
+        case BGMT_PRESS_UP:
+        case BGMT_UNPRESS_UP:
+        case BGMT_PRESS_DOWN:
+        case BGMT_UNPRESS_DOWN:
+        case BGMT_PRESS_LEFT:
+        case BGMT_UNPRESS_LEFT:
+        case BGMT_PRESS_RIGHT:
+        case BGMT_UNPRESS_RIGHT:
+        case BGMT_WHEEL_UP:
+        case BGMT_WHEEL_DOWN:
+        case BGMT_WHEEL_LEFT:
+        case BGMT_WHEEL_RIGHT:
+        case BGMT_PRESS_SET:
+        case BGMT_UNPRESS_SET:
+#ifdef BGMT_Q_SET
+        case BGMT_Q_SET:
+#endif
+        case BGMT_INFO:
+#ifdef BGMT_UNPRESS_INFO
+        case BGMT_UNPRESS_INFO:
+#endif
+            return 0;
+        default:
+            return 1;
+    }
 }
 
 /* Idle movie LV (not recording, ML overlays): open last changed setting from INFO.
@@ -1005,6 +1068,7 @@ int handle_common_events_by_feature(struct event * event)
 
 #ifdef CONFIG_SLIM_MENUS
     if (handle_slim_rec_touch_block(event) == 0) return 0;
+    if (handle_slim_lv_editor_keys(event) == 0) return 0;
     if (handle_slim_info_longpress(event) == 0) return 0;
 #endif
 

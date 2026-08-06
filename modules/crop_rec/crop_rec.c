@@ -6257,7 +6257,7 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
  * enter Canon's menu lock path (Err70 on EOS M). */
 int crop_rec_touch_adjust(int control, int delta)
 {
-    if (!is_EOSM || !is_movie_mode() || RECORDING)
+    if (!is_movie_mode() || RECORDING)
         return 0;
 
     switch (control)
@@ -6276,7 +6276,7 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size)
     int enabled = 1;
     int w, h;
 
-    if (!value || size <= 0 || !is_EOSM)
+    if (!value || size <= 0)
         return 0;
 
     value[0] = '\0';

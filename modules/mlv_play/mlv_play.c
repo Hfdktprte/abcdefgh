@@ -1479,10 +1479,10 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
             /* Render a complete frame away from the scanout buffer, then use
              * EDMAC for a short presentation copy. This avoids exposing the
              * slow RAW-to-YUV conversion row-by-row to the LCD. */
-            void *display = (void*)CACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+            struct vram_info *vram = get_yuv422_vram();
+            void *display = vram ? vram->vram : NULL;
             guess_fastrefresh_direction();
             void *staging = get_fastrefresh_422_buf();
-            struct vram_info *vram = get_yuv422_vram();
             if (display && staging && display != staging)
             {
                 raw_preview_fast_ex((void*)-1, staging, -1, -1, mlv_play_quality);

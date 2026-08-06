@@ -545,7 +545,7 @@ static const struct boot_logo_span boot_logo_spans[] = {
 };
 
 #define BOOT_LOGO_SPANS (sizeof(boot_logo_spans) / sizeof(boot_logo_spans[0]))
-#define BOOT_LOGO_SCALE 2
+#define BOOT_LOGO_SCALE 1
 #define BOOT_LOGO_W (320 * BOOT_LOGO_SCALE)
 #define BOOT_LOGO_H (240 * BOOT_LOGO_SCALE)
 #define BOOT_LOGO_X ((720 - BOOT_LOGO_W) / 2)
@@ -569,10 +569,21 @@ static void boot_logo_draw(void)
 
 static volatile int boot_logo_active = 0;
 static int boot_logo_hide_time = 0;
+static volatile int boot_logo_handoff_pending = 0;
+static volatile int boot_logo_hud_mask = 0;
 
 int boot_logo_is_active(void)
 {
     return boot_logo_active;
+}
+
+/* Called by the normal ML status-bar renderer.  Do not reveal Canon's
+ * overlay until both status bars have had a chance to replace the splash. */
+void boot_logo_overlay_updated(int top, int bottom)
+{
+    if (!boot_logo_handoff_pending) return;
+    if (top)    boot_logo_hud_mask |= 1;
+    if (bottom) boot_logo_hud_mask |= 2;
 }
 
 static void boot_logo_present(void)
@@ -584,6 +595,16 @@ static void boot_logo_present(void)
 }
 
 static void boot_logo_clear(void)
+{
+    bmp_draw_to_idle(1);
+    /* Keep the canvas opaque during the handoff.  A transparent frame here
+     * exposes a stale Canon fragment before ML draws its own HUD. */
+    bmp_fill(COLOR_BLACK, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
+    bmp_idle_copy(1, 1);
+    bmp_draw_to_idle(0);
+}
+
+static void boot_logo_release_canvas(void)
 {
     bmp_draw_to_idle(1);
     bmp_fill(COLOR_EMPTY, BMP_W_MINUS, BMP_H_MINUS, BMP_TOTAL_WIDTH, BMP_TOTAL_HEIGHT);
@@ -608,10 +629,16 @@ static void boot_logo_task(void *unused)
     if (boot_logo_active)
     {
         /* Request ML's first HUD redraw while Canon remains masked. */
+        boot_logo_hud_mask = 0;
+        boot_logo_handoff_pending = 1;
         lens_display_set_dirty();
         menu_set_dirty();
         BMP_LOCK( boot_logo_clear(); )
-        msleep(250);
+        const int hud_deadline = get_ms_clock() + 1000;
+        while (boot_logo_hud_mask != 3 && get_ms_clock() < hud_deadline)
+            msleep(20);
+        boot_logo_handoff_pending = 0;
+        BMP_LOCK( boot_logo_release_canvas(); )
         boot_logo_active = 0;
     }
 }

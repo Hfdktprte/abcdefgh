@@ -1481,10 +1481,11 @@ static void mlv_play_render_frame(frame_buf_t *buffer)
             void *display = (void*)CACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
             guess_fastrefresh_direction();
             void *staging = get_fastrefresh_422_buf();
+            struct vram_info *vram = get_yuv422_vram();
             if (display && staging && display != staging)
             {
                 raw_preview_fast_ex((void*)-1, staging, -1, -1, mlv_play_quality);
-                edmac_memcpy(display, staging, vram_lv.pitch * vram_lv.height);
+                edmac_memcpy(display, staging, vram->pitch * vram->height);
             }
             else
             {

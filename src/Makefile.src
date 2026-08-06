@@ -110,6 +110,7 @@ ML_OBJS-y += \
 ML_SRC_OBJS = \
 	backtrace.o \
 	$(ML_BOOT_HACK_OBJ) \
+	boot-logo.o \
 	fio-ml.o \
 	mem.o \
 	ico.o \

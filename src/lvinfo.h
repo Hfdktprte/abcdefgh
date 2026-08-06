@@ -125,6 +125,7 @@ enum lvinfo_touch_field
 };
 
 enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y);
+int lvinfo_touch_is_bar_area(int y);
 void lvinfo_touch_editor_open(enum lvinfo_touch_field field);
 void lvinfo_touch_editor_close(void);
 int lvinfo_touch_editor_is_open(void);

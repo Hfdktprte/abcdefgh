@@ -322,6 +322,18 @@ static void slim_touch_register_tap(void)
 
 static int handle_slim_rec_touch_block(struct event * event)
 {
+    if (RECORDING)
+    {
+        /* Recording owns the entire touchscreen, independent of Global Draw.
+         * Also discard any editor/tap state that began before REC engaged. */
+        if (lvinfo_touch_editor_is_open())
+            lvinfo_touch_editor_close();
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        slim_touch_lv_pressed = 0;
+        slim_touch_lv_control_consumed = 0;
+    }
+
     switch (event->param)
     {
     case BGMT_TOUCH_1_FINGER:

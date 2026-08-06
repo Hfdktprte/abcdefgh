@@ -126,12 +126,6 @@ static void lvinfo_touch_draw_editor(void)
 
     int value_y = LVINFO_TOUCH_VALUE_Y;
 
-    /* Clear the previous editor shape, then provide a solid background so
-     * white values stay readable over every Live View image. */
-    bmp_fill(COLOR_EMPTY, LVINFO_TOUCH_CROP_X - 2,
-             LVINFO_TOUCH_BOX_Y - 2,
-             LVINFO_TOUCH_CROP_W + 4, LVINFO_TOUCH_BOX_H + 4);
-
     if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
     {
         bmp_fill(COLOR_BLACK, LVINFO_TOUCH_CROP_X, LVINFO_TOUCH_BOX_Y,
@@ -889,18 +883,18 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
 
     arrow_cx = lvinfo_touch_field == LVINFO_TOUCH_CROP
         ? (*slot == 0 ? 232 : 488) : 360;
-    arrow_left = arrow_cx - 55;
-    arrow_right = arrow_cx + 55;
+    arrow_left = arrow_cx - 65;
+    arrow_right = arrow_cx + 65;
 
-    /* Visible triangle is 60x26; use a comfortable 110x56 target around it,
+    /* Visible triangle is 60x26; use a comfortable 130x62 target around it,
      * without turning the rest of the black box into an adjustment target. */
     if (x >= arrow_left && x <= arrow_right &&
-        y >= LVINFO_TOUCH_UP_TIP_Y - 15 &&
-        y <= LVINFO_TOUCH_UP_TIP_Y + 41)
+        y >= LVINFO_TOUCH_UP_TIP_Y - 18 &&
+        y <= LVINFO_TOUCH_UP_TIP_Y + 43)
         *sign = 1;
     else if (x >= arrow_left && x <= arrow_right &&
-             y >= LVINFO_TOUCH_DOWN_TIP_Y - 41 &&
-             y <= LVINFO_TOUCH_DOWN_TIP_Y + 15)
+             y >= LVINFO_TOUCH_DOWN_TIP_Y - 43 &&
+             y <= LVINFO_TOUCH_DOWN_TIP_Y + 18)
         *sign = -1;
 
     return 1;

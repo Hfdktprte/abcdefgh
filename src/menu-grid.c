@@ -25,8 +25,14 @@ static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
-/* Session-only: starts at Mode after boot and is remembered between openings. */
+/* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
+
+#define QUICK_SCREEN_COLS  4
+#define QUICK_SCREEN_ROWS  2
+#define QUICK_SCREEN_COUNT (QUICK_SCREEN_COLS * QUICK_SCREEN_ROWS)
+#define QUICK_SCREEN_CELL_W (720 / QUICK_SCREEN_COLS)
+#define QUICK_SCREEN_TOUCH_HALF_W 74
 
 static int quick_screen_option_enabled(int index);
 static int quick_screen_next_enabled(int start, int direction);
@@ -39,16 +45,18 @@ typedef struct
     const char *adjust_entry;
 } quick_screen_item_t;
 
-/* Resolution displays the computed read-only value, but its arrows drive the
- * Movie Preset selector (Highest / Higher / Medium) for the active Mode. */
-static const quick_screen_item_t quick_screen_items[6] =
+/* Resolution displays the computed read-only value, but its arrows retain
+ * the existing flat selector across every aspect ratio and resolution tier. */
+static const quick_screen_item_t quick_screen_items[QUICK_SCREEN_COUNT] =
 {
-    { "Movie", "Mode",       "Movie", "Mode"       },
-    { "Movie", "Resolution", "Movie", "Quick Resolution" },
-    { "Movie", "Frame Rate", "Movie", "Frame Rate" },
-    { "Expo",  "Shutter",    "Expo",  "Shutter"    },
-    { "Expo",  "Aperture",   "Expo",  "Aperture"   },
-    { "Expo",  "ISO",        "Expo",  "ISO"        },
+    { "Expo",  "White Balance", "Expo",  "White Balance"    },
+    { "Movie", "Mode",          "Movie", "Mode"             },
+    { "Movie", "Aspect Ratio",  "Movie", "Aspect Ratio"     },
+    { "Movie", "Resolution",    "Movie", "Quick Resolution" },
+    { "Movie", "Frame Rate",    "Movie", "Frame Rate"       },
+    { "Expo",  "Shutter",       "Expo",  "Shutter"          },
+    { "Expo",  "Aperture",      "Expo",  "Aperture"         },
+    { "Expo",  "ISO",           "Expo",  "ISO"              },
 };
 
 static void quick_screen_feedback_clear(int timer, void *opaque)
@@ -201,7 +209,8 @@ void menu_quick_screen_open(void)
     quick_screen_touch_latched = 0;
     /* Do not query menu entries here: this runs before menu_open owns the
      * screen and doing so can race Canon's GUI task (Err70). */
-    quick_screen_sel = COERCE(quick_screen_sel, 0, 5);
+    quick_screen_sel = COERCE(
+        quick_screen_sel, 0, QUICK_SCREEN_COUNT - 1);
 }
 
 void menu_quick_screen_close(void)
@@ -242,27 +251,27 @@ static int quick_screen_value(
 
     /* Resolution is displayed by a read-only row, but adjusted by the hidden
      * composite selector that spans every Aspect Ratio and preset. */
-    if (index == 1)
+    if (index == 3)
     {
         menu_get_str_value_from_script(
             item->adjust_menu, item->adjust_entry, &adjust_info);
         enabled = adjust_info.enabled;
     }
 
-    if (index == 3)
+    if (index == 5)
     {
         /* The normal Exposure row already calculates the angle from current
          * FPS. Reuse those digits and draw a Canon-sized degree ring. */
         snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
         *draw_degree = info.rinfo[0] != '\0';
     }
-    else if (index == 4)
+    else if (index == 6)
     {
         snprintf(buf, size, "F%s", raw_value);
         if (streq(raw_value, "0.0"))
             enabled = 0;
     }
-    else if (index == 5)
+    else if (index == 7)
     {
         snprintf(buf, size, "ISO%s", raw_value);
     }
@@ -278,7 +287,7 @@ static int quick_screen_option_enabled(int index)
 {
     char value[MENU_MAX_VALUE_LEN];
     int draw_degree;
-    index = COERCE(index, 0, 5);
+    index = COERCE(index, 0, QUICK_SCREEN_COUNT - 1);
     return quick_screen_value(index, value, sizeof(value), &draw_degree);
 }
 
@@ -286,10 +295,11 @@ static int quick_screen_next_enabled(int start, int direction)
 {
     int i;
     direction = direction < 0 ? -1 : 1;
-    start = MOD(start, 6);
-    for (i = 0; i < 6; i++)
+    start = MOD(start, QUICK_SCREEN_COUNT);
+    for (i = 0; i < QUICK_SCREEN_COUNT; i++)
     {
-        int candidate = MOD(start + i * direction, 6);
+        int candidate = MOD(
+            start + i * direction, QUICK_SCREEN_COUNT);
         if (quick_screen_option_enabled(candidate))
             return candidate;
     }
@@ -299,10 +309,10 @@ static int quick_screen_next_enabled(int start, int direction)
 static void quick_screen_geometry(
     int index, int *cx, int *value_y, int *up_tip_y, int *down_tip_y)
 {
-    int row = index / 3;
-    int col = index % 3;
+    int row = index / QUICK_SCREEN_COLS;
+    int col = index % QUICK_SCREEN_COLS;
     static const int row_up_tip_y[2] = { 77, 278 };
-    *cx = 120 + col * 240;
+    *cx = QUICK_SCREEN_CELL_W / 2 + col * QUICK_SCREEN_CELL_W;
     *up_tip_y = row_up_tip_y[row];
     *value_y = *up_tip_y + 42;
     *down_tip_y = *value_y + 82;
@@ -315,7 +325,7 @@ static int quick_screen_adjust(int index, int delta)
     char value[MENU_MAX_VALUE_LEN];
     const quick_screen_item_t *item;
 
-    index = COERCE(index, 0, 5);
+    index = COERCE(index, 0, QUICK_SCREEN_COUNT - 1);
     item = &quick_screen_items[index];
     enabled = quick_screen_value(
         index, value, sizeof(value), &draw_degree);
@@ -342,7 +352,7 @@ void menu_quick_screen_draw(void)
         quick_screen_sel = quick_screen_next_enabled(
             quick_screen_sel + 1, 1);
 
-    for (index = 0; index < 6; index++)
+    for (index = 0; index < QUICK_SCREEN_COUNT; index++)
     {
         int cx, value_y, up_tip_y, down_tip_y;
         char value[MENU_MAX_VALUE_LEN];
@@ -375,7 +385,7 @@ void menu_quick_screen_draw(void)
             !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
 
-        if (index == quick_screen_sel)
+        if (index == quick_screen_sel && enabled)
         {
             /* Slightly narrower than the 60px arrow for a lighter highlight. */
             bmp_fill(COLOR_YELLOW, cx - 24, up_tip_y - 17, 48, 4);
@@ -397,23 +407,24 @@ int menu_quick_screen_handle_touch(int x, int y)
     if (quick_screen_touch_latched)
         return 0;
 
-    /* Give each visible arrow a forgiving 180px-wide hitbox. Extend the
-     * vertical reach as well, while leaving a small gap around values and
-     * between the two rows so an empty-space tap still exits the panel. */
-    col = COERCE(x / 240, 0, 2);
-    for (row = 0; row < 2; row++)
+    /* Large, non-overlapping arrow hitboxes. The 32px horizontal gaps and
+     * vertical gaps around values remain true empty-space Back targets. */
+    col = COERCE(x / QUICK_SCREEN_CELL_W, 0, QUICK_SCREEN_COLS - 1);
+    for (row = 0; row < QUICK_SCREEN_ROWS; row++)
     {
-        int candidate = row * 3 + col;
+        int candidate = row * QUICK_SCREEN_COLS + col;
         quick_screen_geometry(
             candidate, &cx, &value_y, &up_tip_y, &down_tip_y);
-        if (x >= cx - 90 && x <= cx + 90 &&
+        if (x >= cx - QUICK_SCREEN_TOUCH_HALF_W &&
+            x <= cx + QUICK_SCREEN_TOUCH_HALF_W &&
             y >= up_tip_y - 35 && y <= up_tip_y + 40)
         {
             index = candidate;
             delta = 1;
             break;
         }
-        if (x >= cx - 90 && x <= cx + 90 &&
+        if (x >= cx - QUICK_SCREEN_TOUCH_HALF_W &&
+            x <= cx + QUICK_SCREEN_TOUCH_HALF_W &&
             y >= down_tip_y - 40 && y <= down_tip_y + 35)
         {
             index = candidate;
@@ -442,7 +453,7 @@ int menu_quick_screen_handle_touch(int x, int y)
     }
 
     /* Text is not empty space: leave the page open without changing anything. */
-    for (index = 0; index < 6; index++)
+    for (index = 0; index < QUICK_SCREEN_COUNT; index++)
     {
         int width;
         int text_x;
@@ -483,6 +494,7 @@ int menu_quick_screen_handle_key(int button_code)
     {
     case BGMT_MENU:
     case BGMT_Q:
+    case BGMT_INFO:
         menu_quick_screen_close();
         gui_stop_menu();
         return 0;

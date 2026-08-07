@@ -8,7 +8,6 @@
 #include <module.h>
 
 #ifdef CONFIG_SLIM_MENUS
-#include "../modules/dual_iso/dual_iso.h"
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
 static int (*dual_iso_get_recovery_iso)() = MODULE_FUNCTION(dual_iso_get_recovery_iso);
 #endif

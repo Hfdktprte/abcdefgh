@@ -6155,13 +6155,12 @@ static MENU_UPDATE_FUNC(slim_crop_res_update)
     MENU_SET_ENABLED(0);
 }
 
-/* Quick Screen resolution is a single flat list of every Aspect Ratio and
- * resolution tier available in the current Mode. Apply only the final
- * combination, so touch input cannot expose intermediate invalid states. */
+/* Quick Screen resolution stays within the current Aspect Ratio. Aspect
+ * Ratio is changed only by its own control, so resolution arrows never
+ * expose a temporary cross-aspect combination. */
 static MENU_SELECT_FUNC(slim_crop_quick_res_select)
 {
     int choices;
-    int ar_delta = delta > 0 ? 1 : -1;
 
     slim_crop_sync_from_backend();
     if (slim_mode_ui == 3)
@@ -6170,29 +6169,10 @@ static MENU_SELECT_FUNC(slim_crop_quick_res_select)
     choices = slim_preset_choice_count();
     slim_unified_preset = COERCE(slim_unified_preset, 0, choices - 1);
 
-    if (delta > 0 && slim_unified_preset > 0)
-    {
-        /* Up: move toward a higher resolution in the same Aspect Ratio. */
-        slim_unified_preset--;
-    }
-    else if (delta < 0 && slim_unified_preset < choices - 1)
-    {
-        /* Down: move toward a lower resolution in the same Aspect Ratio. */
-        slim_unified_preset++;
-    }
-    else
-    {
-        /* End of this Aspect Ratio: wrap to the adjacent Aspect Ratio. */
-        if (slim_mode_ui == 0)
-            slim_1x1_ar = MOD(slim_1x1_ar + ar_delta, 5);
-        else
-            crop_preset_ar_menu = MOD(crop_preset_ar_menu + ar_delta, 5);
-
-        choices = slim_preset_choice_count();
-        /* Up enters the next Aspect Ratio at its lowest tier; down enters the
-         * previous one at Highest. This makes both directions exact inverses. */
-        slim_unified_preset = delta > 0 ? choices - 1 : 0;
-    }
+    /* Up moves toward higher resolution; down toward lower resolution.
+     * Clamp at each end rather than crossing into another Aspect Ratio. */
+    slim_unified_preset = COERCE(
+        slim_unified_preset + (delta > 0 ? -1 : 1), 0, choices - 1);
 
     if (slim_mode_ui == 0)
         slim_crop_apply_mode();
@@ -6209,7 +6189,7 @@ static MENU_UPDATE_FUNC(slim_crop_quick_res_update)
     slim_crop_sync_from_backend();
     slim_crop_expected_res(&w, &h);
     MENU_SET_VALUE("%dx%d", w, h);
-    MENU_SET_ENABLED(slim_mode_ui != 3);
+    MENU_SET_ENABLED(slim_mode_ui != 3 && slim_preset_choice_count() > 1);
 }
 
 static MENU_SELECT_FUNC(slim_crop_fps_select)
@@ -6495,7 +6475,7 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .update     = slim_crop_quick_res_update,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .shidden    = 1,
-        .help       = "Quick Screen selector for every Aspect Ratio and resolution.",
+        .help       = "Quick Screen selector for resolutions in this Aspect Ratio.",
     },
     {
         .name       = "Frame Rate",

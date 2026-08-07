@@ -55,12 +55,12 @@ static uint32_t hist_raw_bin_samples(int i)
         MAX(histogram.hist_g[i], histogram.hist_b[i])));
 }
 
-/* Return the RAW EV-histogram bin containing the darkest meaningful 5%.
+/* Return the RAW EV-histogram bin at a low-image percentile (x10).
  * The RAW scanner already builds these bins at the histogram refresh rate,
  * so the shadow meter adds no second image scan or recording-time workload. */
-static int hist_raw_shadow_percentile_bin(void)
+static int hist_raw_shadow_percentile_bin(int percentile_x10)
 {
-    uint32_t target = MAX(histogram.total_px / 20, 1);
+    uint32_t target = MAX((uint64_t)histogram.total_px * percentile_x10 / 1000, 1);
     uint32_t accumulated = 0;
 
     for (int i = 0; i < HIST_WIDTH; i++)
@@ -99,17 +99,27 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
                                    unsigned y_origin, unsigned graph_height)
 {
     /* raw_info.dynamic_range is in 1/100 EV. The leftmost histogram bins are
-     * the sensor noise floor; compare the darkest 5% against that floor. */
+     * the sensor noise floor; evaluate how much meaningful image reaches it. */
     int noise_bin = COERCE((1200 - raw_info.dynamic_range) *
         (HIST_WIDTH - 1) / 1200, 0, HIST_WIDTH - 1);
-    int shadow_bin = hist_raw_shadow_percentile_bin();
-    int margin_x10 = (shadow_bin - noise_bin) * 120 / (HIST_WIDTH - 1);
+    int shadow_10_bin = hist_raw_shadow_percentile_bin(100);
     int floor_ratio = hist_raw_noise_floor_ratio(noise_bin);
-    int target_risk = MAX(floor_ratio,
-        COERCE((10 - margin_x10) * 1000 / 10, 0, 1000));
+    int target_risk;
     int color;
     int width;
     int y = y_origin + graph_height + 3;
+
+    /* 0-1% at the floor: safe. 1-10%: caution. Red requires both 10%+
+     * coverage and the darkest tenth at the floor, so a narrow intentional
+     * black peak cannot trigger a red warning by itself. */
+    if (floor_ratio < 10)
+        target_risk = floor_ratio * 330 / 10;
+    else if (floor_ratio < 100)
+        target_risk = 330 + (floor_ratio - 10) * 330 / 90;
+    else if (shadow_10_bin <= noise_bin + 2)
+        target_risk = 660 + MIN(floor_ratio - 100, 400) * 340 / 400;
+    else
+        target_risk = 659;
 
     /* Ease only across real histogram updates. This removes frame-to-frame
      * steps without creating a new timer or changing the refresh cadence. */
@@ -124,12 +134,11 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
         hist_shadow_meter_risk += step;
     }
 
-    /* Green means >=1 EV of shadow headroom; yellow approaches the floor;
-     * red starts at the actual RAW noise floor, rather than requiring an
-     * impossible value below Canon's black-clamped sensor output. */
-    if (hist_shadow_meter_risk < 100)
+    /* Color states are coverage based: <1% green, 1-10% yellow, and red
+     * only for widespread crushed shadows at the actual RAW noise floor. */
+    if (hist_shadow_meter_risk < 330)
         color = COLOR_GREEN2;
-    else if (hist_shadow_meter_risk < 900)
+    else if (hist_shadow_meter_risk < 660)
         color = COLOR_YELLOW;
     else
         color = COLOR_RED;

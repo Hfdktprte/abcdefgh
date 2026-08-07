@@ -5,7 +5,6 @@
 #include "lvinfo.h"
 #include "menu.h"
 #include "zebra.h"
-#include "fio-ml.h"
 
 #if 0 /* superseded by the color startup bitmap below */
 struct boot_logo_span { uint16_t y; uint16_t x; uint16_t width; };
@@ -1536,117 +1535,10 @@ static const struct boot_logo_span boot_logo_spans[] = {
 
 extern int ml_started;
 
-/* Experimental SD-card splash.  PNG decoding is deliberately not attempted
- * during early boot: it would add a large decompressor and failure surface.
- * BOOT.BMP is a normal uncompressed 24-bit RGB bitmap, exactly 720x480. */
-#define BOOT_LOGO_USER_FILE "ML/LOGO/BOOT.BMP"
-#define BOOT_LOGO_USER_ROW_BYTES (720 * 3)
-static uint8_t boot_logo_user_row[BOOT_LOGO_USER_ROW_BYTES];
-
-static uint16_t boot_logo_le16(const uint8_t *p)
-{
-    return p[0] | (p[1] << 8);
-}
-
-static uint32_t boot_logo_le32(const uint8_t *p)
-{
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
-}
-
-/* Map ordinary RGB artwork onto the portable ML bitmap palette. */
-static int boot_logo_rgb_color(uint8_t r, uint8_t g, uint8_t b)
-{
-    int brightest = MAX(r, MAX(g, b));
-    int darkest = MIN(r, MIN(g, b));
-
-    if (brightest < 64) return COLOR_BLACK;
-    if (darkest > 170 || brightest - darkest < 38) return COLOR_WHITE;
-    if (r > 180 && g > 100 && g < 225 && b < 115) return COLOR_ORANGE;
-    if (r > 150 && g > 150 && b < 120) return COLOR_YELLOW;
-    if (r > g * 3 / 2 && r > b * 3 / 2) return COLOR_RED;
-    if (g > r * 3 / 2 && g > b * 3 / 2) return COLOR_GREEN1;
-    if (b > r * 3 / 2 && b > g * 3 / 2) return COLOR_BLUE;
-    if (r > 130 && b > 130) return COLOR_MAGENTA;
-    if (g > 130 && b > 130) return COLOR_CYAN;
-    return COLOR_WHITE;
-}
-
-static int boot_logo_draw_user_file(void)
-{
-    uint8_t hdr[54] = {0};
-    uint32_t file_size;
-    uint32_t image_offset;
-    uint32_t row_bytes;
-    FILE *file;
-
-    if (FIO_GetFileSize(BOOT_LOGO_USER_FILE, &file_size) != 0)
-        return 0;
-
-    file = FIO_OpenFile(BOOT_LOGO_USER_FILE, O_RDONLY | O_SYNC);
-    if (!file)
-        return 0;
-
-    int valid = FIO_ReadFile(file, hdr, sizeof(hdr)) == sizeof(hdr);
-    image_offset = boot_logo_le32(hdr + 10);
-    row_bytes = ((720 * 3 + 3) & ~3);
-    valid = valid && boot_logo_le16(hdr) == 0x4D42 &&
-        boot_logo_le32(hdr + 14) == 40 &&
-        boot_logo_le32(hdr + 18) == 720 &&
-        boot_logo_le32(hdr + 22) == 480 &&
-        boot_logo_le16(hdr + 26) == 1 &&
-        boot_logo_le16(hdr + 28) == 24 &&
-        boot_logo_le32(hdr + 30) == 0 &&
-        image_offset >= sizeof(hdr) &&
-        image_offset <= file_size &&
-        file_size - image_offset >= row_bytes * 480;
-
-    if (!valid)
-    {
-        FIO_CloseFile(file);
-        return 0;
-    }
-
-    for (int y = 0; y < 480; y++)
-    {
-        /* Windows BMP rows are bottom-up.  Read one row at a time so the
-         * experimental asset never reserves a large startup memory buffer. */
-        if (FIO_SeekSkipFile(file, image_offset + (479 - y) * row_bytes,
-                             SEEK_SET) < 0 ||
-            FIO_ReadFile(file, boot_logo_user_row, row_bytes) != row_bytes)
-        {
-            FIO_CloseFile(file);
-            return 0;
-        }
-
-        int x = 0;
-        while (x < 720)
-        {
-            int color = boot_logo_rgb_color(boot_logo_user_row[x * 3 + 2],
-                                             boot_logo_user_row[x * 3 + 1],
-                                             boot_logo_user_row[x * 3]);
-            int start = x++;
-            while (x < 720 && color == boot_logo_rgb_color(
-                boot_logo_user_row[x * 3 + 2], boot_logo_user_row[x * 3 + 1],
-                boot_logo_user_row[x * 3]))
-                x++;
-            if (color != COLOR_BLACK)
-                bmp_fill(color, start, y, x - start, 1);
-        }
-    }
-
-    FIO_CloseFile(file);
-    return 1;
-}
-
 static void boot_logo_draw(void)
 {
     /* Keep splash writes inside ML's normal LCD canvas.  The surrounding
      * 960x540 backing surface is changed by Canon during LV/zoom switches. */
-    bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
-    if (boot_logo_draw_user_file())
-        return;
-
-    /* No valid SD logo: always retain the embedded Magic Lantern fallback. */
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
     for (unsigned int i = 0; i < BOOT_LOGO_SPANS; i++)
     {

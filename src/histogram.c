@@ -47,6 +47,13 @@ static void histobar_refresh();
 static int r2ev_white_level = -1;
 static int r2ev_black_level = -1;
 static char r2ev[16384];
+static int hist_shadow_meter_risk = -1; /* 0=safe, 1000=noise-floor loss */
+
+static uint32_t hist_raw_bin_samples(int i)
+{
+    return MAX(histogram.hist[i], MAX(histogram.hist_r[i],
+        MAX(histogram.hist_g[i], histogram.hist_b[i])));
+}
 
 /* Return the RAW EV-histogram bin containing the darkest meaningful 5%.
  * The RAW scanner already builds these bins at the histogram refresh rate,
@@ -60,15 +67,32 @@ static int hist_raw_shadow_percentile_bin(void)
     {
         /* Slim builds a green/luma histogram; normal builds RGB histograms.
          * One channel's maximum represents a pixel once in either case. */
-        uint32_t samples = MAX(histogram.hist[i],
-            MAX(histogram.hist_r[i],
-                MAX(histogram.hist_g[i], histogram.hist_b[i])));
+        uint32_t samples = hist_raw_bin_samples(i);
         accumulated += samples;
         if (accumulated >= target)
             return i;
     }
 
     return HIST_WIDTH - 1;
+}
+
+/* Ratio of the sampled RAW frame at/below the calculated noise floor.
+ * Unlike a single percentile this changes smoothly as a dark subject fills
+ * more of the frame, while retaining the same histogram sample data. */
+static int hist_raw_noise_floor_ratio(int noise_bin)
+{
+    uint32_t below = 0;
+    uint32_t total = 0;
+
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        uint32_t samples = hist_raw_bin_samples(i);
+        total += samples;
+        if (i <= noise_bin)
+            below += samples;
+    }
+
+    return total ? (int)((uint64_t)below * 1000 / total) : 0;
 }
 
 static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
@@ -80,30 +104,38 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
         (HIST_WIDTH - 1) / 1200, 0, HIST_WIDTH - 1);
     int shadow_bin = hist_raw_shadow_percentile_bin();
     int margin_x10 = (shadow_bin - noise_bin) * 120 / (HIST_WIDTH - 1);
+    int floor_ratio = hist_raw_noise_floor_ratio(noise_bin);
+    int target_risk = MAX(floor_ratio,
+        COERCE((10 - margin_x10) * 1000 / 10, 0, 1000));
     int color;
     int width;
     int y = y_origin + graph_height + 3;
 
-    /* Solid status color only: green above +1 EV, yellow within +/-1 EV,
-     * red more than 1 EV below the RAW noise floor. Width still conveys how
-     * far into the warning zone the scene's shadow percentile has moved. */
-    if (margin_x10 >= 10)
-    {
-        color = COLOR_GREEN2;
-        width = HIST_WIDTH / 3;
-    }
-    else if (margin_x10 >= -10)
-    {
-        color = COLOR_YELLOW;
-        width = HIST_WIDTH / 3 +
-            (HIST_WIDTH / 3) * (10 - margin_x10) / 20;
-    }
+    /* Ease only across real histogram updates. This removes frame-to-frame
+     * steps without creating a new timer or changing the refresh cadence. */
+    if (hist_shadow_meter_risk < 0)
+        hist_shadow_meter_risk = target_risk;
     else
     {
-        color = COLOR_RED;
-        width = (HIST_WIDTH * 2) / 3 +
-            (HIST_WIDTH / 3) * MIN(-10 - margin_x10, 30) / 30;
+        int delta = target_risk - hist_shadow_meter_risk;
+        int step = delta / 3;
+        if (!step && delta)
+            step = delta > 0 ? 1 : -1;
+        hist_shadow_meter_risk += step;
     }
+
+    /* Green means >=1 EV of shadow headroom; yellow approaches the floor;
+     * red starts at the actual RAW noise floor, rather than requiring an
+     * impossible value below Canon's black-clamped sensor output. */
+    if (hist_shadow_meter_risk < 100)
+        color = COLOR_GREEN2;
+    else if (hist_shadow_meter_risk < 900)
+        color = COLOR_YELLOW;
+    else
+        color = COLOR_RED;
+
+    width = HIST_WIDTH / 4 + hist_shadow_meter_risk *
+        (HIST_WIDTH * 3 / 4) / 1000;
     width = COERCE(width, 1, HIST_WIDTH);
 
     /* Clear the old length first, then draw the current centered solid bar. */

@@ -68,10 +68,14 @@ int get_last_time_active() { return last_time_active; }
  * The tap router owns EOS M Live View touches, including the short boot-time
  * interval while Canon is still reporting an INFO display state. */
 #define SLIM_TOUCH_TAP_WINDOW_MS 330
+#define SLIM_TOUCH_BOOT_GESTURE_TIMEOUT_MS 20000
 static int slim_touch_tap_count;
 static int slim_touch_tap_deadline;
 static int slim_touch_lv_pressed;
 static int slim_touch_lv_control_consumed;
+static int slim_touch_boot_tap_count;
+static int slim_touch_boot_tap_deadline;
+static int slim_touch_boot_pressed;
 static int slim_touch_pending_menu_change;
 static enum lvinfo_touch_field slim_touch_pending_field;
 static int slim_touch_pending_slot;
@@ -296,13 +300,42 @@ static void slim_touch_open_for_taps(int taps)
     }
     else if (taps == 2)
     {
-        menu_grid_open();
-        gui_open_menu();
+        /* Double-tap is the fast return to the last setting the user
+         * changed. Its saved menu/entry pair is restored at boot. */
+        gui_open_last_menu_selection();
     }
     else if (taps >= 3)
     {
         gui_open_last_menu_selection();
     }
+}
+
+/* A boot/menu-return transition may hold the crop guard for several seconds.
+ * Do not turn an early double tap into a later single tap: retain the gesture
+ * and apply it only after the validated Live View pipeline is ready. */
+static void slim_touch_resolve_boot_taps(int timer, void *opaque)
+{
+    int taps;
+    (void)timer;
+    (void)opaque;
+
+    if (!slim_touch_boot_tap_count)
+        return;
+
+    if (slim_crop_rec_transition_busy())
+    {
+        if (get_ms_clock() < slim_touch_boot_tap_deadline)
+            delayed_call(100, slim_touch_resolve_boot_taps, 0);
+        else
+            slim_touch_boot_tap_count = 0;
+        return;
+    }
+
+    taps = slim_touch_boot_tap_count;
+    slim_touch_boot_tap_count = 0;
+    slim_touch_boot_tap_deadline = 0;
+    if (slim_touch_lv_context_ok() && !lvinfo_touch_editor_is_open())
+        slim_touch_open_for_taps(taps);
 }
 
 static void slim_touch_resolve_taps(int timer, void *opaque)
@@ -351,7 +384,29 @@ static int handle_slim_rec_touch_block(struct event * event)
     if (slim_crop_rec_transition_busy())
     {
         /* The crop module is validating Canon's newly-created LV buffers.
-         * Let no touch/dial shortcut alter another property in this window. */
+         * Let no touch/dial shortcut alter another property in this window.
+         * Image-area taps are retained so a deliberate boot-time double tap
+         * remains a double tap once the guard has finished. */
+        if (event->param == BGMT_TOUCH_1_FINGER)
+        {
+            int x, y;
+            slim_touch_boot_pressed = eosm_touch_get_xy(event, &x, &y) &&
+                !lvinfo_touch_is_bar_area(y);
+            return 0;
+        }
+        if (event->param == BGMT_UNTOUCH_1_FINGER)
+        {
+            if (slim_touch_boot_pressed)
+            {
+                slim_touch_boot_pressed = 0;
+                if (slim_touch_boot_tap_count < 3)
+                    slim_touch_boot_tap_count++;
+                slim_touch_boot_tap_deadline = get_ms_clock() +
+                    SLIM_TOUCH_BOOT_GESTURE_TIMEOUT_MS;
+                delayed_call(100, slim_touch_resolve_boot_taps, 0);
+            }
+            return 0;
+        }
         if (lvinfo_touch_editor_is_open())
             lvinfo_touch_editor_close();
         slim_touch_tap_count = 0;

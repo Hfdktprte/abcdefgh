@@ -83,6 +83,22 @@ static int (*crop_rec_touch_adjust)(int, int) =
     MODULE_FUNCTION(crop_rec_touch_adjust);
 static int (*crop_rec_touch_get_value)(int, int, char *, int, int *) =
     MODULE_FUNCTION(crop_rec_touch_get_value);
+static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_slim_step_recovery)(int) =
+    MODULE_FUNCTION(dual_iso_slim_step_recovery);
+
+static int slim_touch_dual_iso_enabled(void)
+{
+    return dual_iso_is_enabled && dual_iso_is_enabled();
+}
+
+static void slim_touch_step_dual_iso_recovery(int sign)
+{
+    /* Consume the ISO tap while Dual ISO is on, even at the end of its
+     * permitted range.  Falling back to normal ISO would break the pair. */
+    if (dual_iso_slim_step_recovery)
+        dual_iso_slim_step_recovery(sign > 0 ? 1 : -1);
+}
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
  * the normal menu selectors as the sole source of valid Mode/resolution/FPS
@@ -171,9 +187,11 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
                 shutter_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_ISO:
-            /* Match Quick Panel's Expo → ISO selector.  It handles the
-             * EOS-M slim ISO list and Dual ISO pairing consistently. */
-            if (!menu_adjust_value_by_name("Expo", "ISO", sign))
+            /* With Dual ISO, base ISO remains fixed and this editor steps
+             * only the recovery ISO.  Otherwise retain the normal ISO path. */
+            if (slim_touch_dual_iso_enabled())
+                slim_touch_step_dual_iso_recovery(sign);
+            else if (!menu_adjust_value_by_name("Expo", "ISO", sign))
                 iso_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_WB:

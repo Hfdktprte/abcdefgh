@@ -91,6 +91,7 @@ extern WEAK_FUNC(ret_0) float raw_to_ev(int ev);
 int dual_iso_set_enabled(bool enabled);
 int dual_iso_is_enabled();
 int dual_iso_slim_step_pair(int delta);
+int dual_iso_slim_step_recovery(int delta);
 int dual_iso_is_active();
 
 /* camera-specific constants */
@@ -780,6 +781,64 @@ int dual_iso_slim_step_pair(int delta)
     isoless_refresh(CTX_SET_RECOVERY_ISO);
     lens_display_set_dirty();
     return 1;
+}
+
+/* Live View's ISO editor controls recovery ISO while Dual ISO is enabled.
+ * Keep the primary ISO untouched and only offer a full-stop recovery value
+ * strictly above it.  This also repairs an old/invalid saved recovery value
+ * before the next recording starts. */
+int dual_iso_slim_step_recovery(int delta)
+{
+    int primary;
+    int current;
+    int current_pos = -1;
+    int valid_count = 0;
+    int new_pos;
+
+    if (!isoless_hdr || delta == 0)
+        return 0;
+
+    primary = lens_info.iso_analog_raw
+        ? raw2iso(lens_info.iso_analog_raw / 8 * 8)
+        : slim_dual_primary_iso();
+    current = raw2iso(72 + isoless_recovery_iso_index() * 8);
+
+    for (unsigned i = 0; i < COUNT(slim_dual_recs); i++)
+    {
+        if (slim_dual_recs[i] <= primary)
+            continue;
+        if (slim_dual_recs[i] == current)
+            current_pos = valid_count;
+        valid_count++;
+    }
+
+    if (!valid_count)
+        return 0;
+
+    /* A recovery ISO at or below base ISO is invalid: restore the lowest
+     * usable recovery ISO instead of exposing it in the editor. */
+    if (current_pos < 0)
+        new_pos = 0;
+    else
+        new_pos = COERCE(current_pos + (delta > 0 ? 1 : -1),
+                         0, valid_count - 1);
+
+    int pos = 0;
+    for (unsigned i = 0; i < COUNT(slim_dual_recs); i++)
+    {
+        if (slim_dual_recs[i] <= primary)
+            continue;
+        if (pos++ != new_pos)
+            continue;
+
+        isoless_hdr = 1;
+        isoless_recovery_iso = slim_dual_rec_to_index(slim_dual_recs[i]);
+        isoless_refresh(CTX_SET_RECOVERY_ISO);
+        lens_display_set_dirty();
+        return 1;
+    }
+
+    return 0;
 }
 
 static MENU_UPDATE_FUNC(isoless_update)

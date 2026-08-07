@@ -45,8 +45,8 @@ typedef struct
     const char *adjust_entry;
 } quick_screen_item_t;
 
-/* Resolution displays the computed read-only value, but its arrows retain
- * the existing flat selector across every aspect ratio and resolution tier. */
+/* Resolution displays the computed read-only value. Its arrows stay within
+ * the Aspect Ratio currently selected beside it. */
 static const quick_screen_item_t quick_screen_items[QUICK_SCREEN_COUNT] =
 {
     { "Expo",  "White Balance", "Expo",  "White Balance"    },

@@ -6,6 +6,7 @@
 #include "menu.h"
 #include "zebra.h"
 
+#if 0 /* superseded by the color startup bitmap below */
 struct boot_logo_span { uint16_t y; uint16_t x; uint16_t width; };
 
 static const struct boot_logo_span boot_logo_spans[] = {
@@ -1521,6 +1522,10 @@ static const struct boot_logo_span boot_logo_spans[] = {
     { 336, 355, 1 },
 };
 
+#endif
+
+#include "boot-logo-spans.inc"
+
 #define BOOT_LOGO_SPANS (sizeof(boot_logo_spans) / sizeof(boot_logo_spans[0]))
 #define BOOT_LOGO_SCALE 1
 #define BOOT_LOGO_W (720 * BOOT_LOGO_SCALE)
@@ -1538,7 +1543,7 @@ static void boot_logo_draw(void)
     for (unsigned int i = 0; i < BOOT_LOGO_SPANS; i++)
     {
         const struct boot_logo_span *s = &boot_logo_spans[i];
-        bmp_fill(COLOR_WHITE,
+        bmp_fill(s->color,
             BOOT_LOGO_X + s->x * BOOT_LOGO_SCALE,
             BOOT_LOGO_Y + s->y * BOOT_LOGO_SCALE,
             s->width * BOOT_LOGO_SCALE,

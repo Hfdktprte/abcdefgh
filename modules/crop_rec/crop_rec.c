@@ -330,6 +330,12 @@ static void set_zoom(int zoom)
     prop_request_change_wait(PROP_LV_DISPSIZE, &zoom, 4, 1000);
 }
 
+#ifdef CONFIG_EOSM
+/* AF changes rebuild Canon's Live View pipeline just like a zoom or menu
+ * return.  Keep that rebuild inside the same transition controller. */
+static void eosm_lv_guard_request(void);
+#endif
+
 /* faster version than the one from ML core */
 static void set_lv_af_mode(int lv_af_mode)
 {
@@ -337,6 +343,9 @@ static void set_lv_af_mode(int lv_af_mode)
     if (RECORDING) return;
     if (lv_af_mode > 3 && lv_af_mode != 0) lv_af_mode = 1;
     prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
+#ifdef CONFIG_EOSM
+    eosm_lv_guard_request();
+#endif
 }
 
 //Photo mode
@@ -4938,6 +4947,7 @@ static int patch_active = 0;
  * record-stop and zoom changes.  Keep the crop hooks quiet until the base
  * x5 pipeline has delivered stable RAW dimensions, then apply once. */
 #define EOSM_LV_GUARD_SETTLE_MS 350
+#define EOSM_LV_GUARD_QUIET_MS 120
 #define EOSM_LV_GUARD_STABLE_FRAMES 3
 static volatile int eosm_lv_guard_pending = 1;
 static volatile int eosm_lv_guard_busy = 0;
@@ -4946,11 +4956,18 @@ static int eosm_lv_guard_state;
 static int eosm_lv_guard_stable_frames;
 static int eosm_lv_guard_width;
 static int eosm_lv_guard_height;
+static int eosm_lv_guard_pitch;
+static uintptr_t eosm_lv_guard_raw_buffer;
+static uint32_t eosm_lv_guard_display_buffer;
+static int eosm_lv_guard_quiet_since;
+static int eosm_lv_guard_retries;
 static int eosm_lv_guard_internal_zoom;
 
 enum eosm_lv_guard_state
 {
     EOSM_LV_GUARD_WAIT = 0,
+    EOSM_LV_GUARD_APPLY_X1,
+    EOSM_LV_GUARD_APPLY_X5,
     EOSM_LV_GUARD_VALIDATE,
     EOSM_LV_GUARD_RECOVER_X1,
     EOSM_LV_GUARD_RECOVER_X5,
@@ -4973,6 +4990,11 @@ static void eosm_lv_guard_request(void)
     eosm_lv_guard_stable_frames = 0;
     eosm_lv_guard_width = 0;
     eosm_lv_guard_height = 0;
+    eosm_lv_guard_pitch = 0;
+    eosm_lv_guard_raw_buffer = 0;
+    eosm_lv_guard_display_buffer = 0;
+    eosm_lv_guard_quiet_since = 0;
+    eosm_lv_guard_retries = 0;
 }
 
 static void eosm_lv_guard_set_zoom(int zoom)
@@ -7213,6 +7235,8 @@ static int crop_rec_lv_dirty = 1;
 
 static int eosm_lv_guard_pipeline_ready(void)
 {
+    uint32_t display_buffer;
+
     if (!liveview_display_idle() || !CROP_PRESET_MENU || !patch_active)
         return 0;
 
@@ -7220,20 +7244,47 @@ static int eosm_lv_guard_pipeline_ready(void)
     if (!is_movie_mode() || lv_dispsize != 5 || PathDriveMode->zoom != 5)
         return 0;
 
-    if (raw_info.width <= 0 || raw_info.height <= 0)
+    /* Dimensions alone are not enough: early boot may still expose the
+     * previous RAW geometry while Canon is replacing the actual buffers. */
+    display_buffer = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    if (raw_info.width <= 0 || raw_info.height <= 0 || raw_info.pitch <= 0 ||
+        !raw_info.buffer || !display_buffer)
         return 0;
 
     if (raw_info.width == eosm_lv_guard_width &&
-        raw_info.height == eosm_lv_guard_height)
+        raw_info.height == eosm_lv_guard_height &&
+        raw_info.pitch == eosm_lv_guard_pitch &&
+        (uintptr_t)raw_info.buffer == eosm_lv_guard_raw_buffer &&
+        display_buffer == eosm_lv_guard_display_buffer)
         eosm_lv_guard_stable_frames++;
     else
     {
         eosm_lv_guard_width = raw_info.width;
         eosm_lv_guard_height = raw_info.height;
+        eosm_lv_guard_pitch = raw_info.pitch;
+        eosm_lv_guard_raw_buffer = (uintptr_t)raw_info.buffer;
+        eosm_lv_guard_display_buffer = display_buffer;
         eosm_lv_guard_stable_frames = 1;
+        eosm_lv_guard_quiet_since = 0;
     }
 
-    return eosm_lv_guard_stable_frames >= EOSM_LV_GUARD_STABLE_FRAMES;
+    if (eosm_lv_guard_stable_frames < EOSM_LV_GUARD_STABLE_FRAMES)
+        return 0;
+
+    /* Canon often performs one final asynchronous write after raw geometry
+     * becomes valid. Require a quiet buffer window before Crop Rec owns x5. */
+    if (!eosm_lv_guard_quiet_since)
+        eosm_lv_guard_quiet_since = get_ms_clock();
+
+    return get_ms_clock() - eosm_lv_guard_quiet_since >= EOSM_LV_GUARD_QUIET_MS;
+}
+
+static void eosm_lv_guard_clear(void)
+{
+    eosm_lv_guard_pending = 0;
+    eosm_lv_guard_busy = 0;
+    crop_rec_lv_dirty = 0;
+    settings_changed = 0;
 }
 
 static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
@@ -7281,24 +7332,63 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             {
                 eosm_lv_guard_set_zoom(5);
                 eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
                 return 1;
             }
             if (!eosm_lv_guard_pipeline_ready())
                 return 1;
-            CheckPreviewRegsValuesAndForce();
-            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+
+            /* Always rebuild x5 in a controlled way. This makes menu exits,
+             * record-stop and boot use exactly the same known-good path,
+             * instead of trusting whatever preview state Canon left behind. */
+            eosm_lv_guard_set_zoom(1);
+            eosm_lv_guard_state = EOSM_LV_GUARD_APPLY_X1;
+            eosm_lv_guard_started = now;
             eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            return 1;
+
+        case EOSM_LV_GUARD_APPLY_X1:
+            if (lv_dispsize != 1)
+                return 1;
+            if (now - eosm_lv_guard_started < 80)
+                return 1;
+            eosm_lv_guard_set_zoom(5);
+            eosm_lv_guard_state = EOSM_LV_GUARD_APPLY_X5;
+            eosm_lv_guard_started = now;
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            return 1;
+
+        case EOSM_LV_GUARD_APPLY_X5:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS ||
+                !eosm_lv_guard_pipeline_ready())
+                return 1;
+            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            eosm_lv_guard_started = now;
             return 1;
 
         case EOSM_LV_GUARD_VALIDATE:
-            if (!eosm_lv_guard_pipeline_ready())
+            /* Verify x5 remains quiet after Canon has had time to consume the
+             * final zoom request. Do not declare success immediately after a
+             * register or property write. */
+            if (!eosm_lv_guard_pipeline_ready() ||
+                now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
                 return 1;
             if (!crop_rec_needs_lv_refresh())
             {
-                eosm_lv_guard_pending = 0;
-                eosm_lv_guard_busy = 0;
-                crop_rec_lv_dirty = 0;
-                settings_changed = 0;
+                eosm_lv_guard_clear();
+                return 0;
+            }
+
+            /* One automatic x1/x5 recovery is safe. A second failure means
+             * Canon has not supplied a usable pipeline; leave controls free
+             * and retain the normal yellow refresh warning instead of looping
+             * forever or issuing unsafe repeated zoom requests. */
+            if (eosm_lv_guard_retries >= 1)
+            {
+                NotifyBox(2000, "Live View not ready - retry after Canon settles");
+                eosm_lv_guard_clear();
                 return 0;
             }
 
@@ -7308,6 +7398,8 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;
             eosm_lv_guard_started = now;
             eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            eosm_lv_guard_retries++;
             return 1;
 
         case EOSM_LV_GUARD_RECOVER_X1:
@@ -7323,18 +7415,16 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X5;
             eosm_lv_guard_started = now;
             eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
             return 1;
 
         case EOSM_LV_GUARD_RECOVER_X5:
             if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS ||
                 !eosm_lv_guard_pipeline_ready())
                 return 1;
-            CheckPreviewRegsValuesAndForce();
-            eosm_lv_guard_pending = 0;
-            eosm_lv_guard_busy = 0;
-            crop_rec_lv_dirty = 0;
-            settings_changed = 0;
-            return 0;
+            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            eosm_lv_guard_started = now;
+            return 1;
     }
 
     eosm_lv_guard_request();
@@ -7646,6 +7736,20 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 static unsigned int crop_rec_keypress_cbr(unsigned int key)
 {
     extern int kill_canon_gui_mode;
+
+#ifdef CONFIG_EOSM
+    /* The transition controller owns Live View until its post-x5 validation
+     * passes. Swallow only controls that can alter preview state; REC and
+     * MENU remain available for normal camera safety and escape behavior. */
+    if (eosm_lv_guard_busy && lv && !RECORDING &&
+        (key == MODULE_KEY_TOUCH_1_FINGER ||
+         key == MODULE_KEY_PRESS_SET ||
+         key == MODULE_KEY_PRESS_UP || key == MODULE_KEY_PRESS_DOWN ||
+         key == MODULE_KEY_PRESS_LEFT || key == MODULE_KEY_PRESS_RIGHT ||
+         key == MODULE_KEY_WHEEL_LEFT || key == MODULE_KEY_WHEEL_RIGHT ||
+         key == MODULE_KEY_INFO))
+        return 0;
+#endif
 
     /* Close the touch editor at the REC press itself, before the asynchronous
      * RAW/H.264 recording state flag changes.  gui-common blocks every touch

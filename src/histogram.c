@@ -40,12 +40,81 @@ struct Histogram histogram;
 
 #define HIST_METER_DYNAMIC_RANGE 1
 #define HIST_METER_ETTR_HINT 2
+#define HIST_SHADOW_METER_HEIGHT 5
 
 static void histobar_refresh();
 
 static int r2ev_white_level = -1;
 static int r2ev_black_level = -1;
 static char r2ev[16384];
+
+/* Return the RAW EV-histogram bin containing the darkest meaningful 5%.
+ * The RAW scanner already builds these bins at the histogram refresh rate,
+ * so the shadow meter adds no second image scan or recording-time workload. */
+static int hist_raw_shadow_percentile_bin(void)
+{
+    uint32_t target = MAX(histogram.total_px / 20, 1);
+    uint32_t accumulated = 0;
+
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        /* Slim builds a green/luma histogram; normal builds RGB histograms.
+         * One channel's maximum represents a pixel once in either case. */
+        uint32_t samples = MAX(histogram.hist[i],
+            MAX(histogram.hist_r[i],
+                MAX(histogram.hist_g[i], histogram.hist_b[i])));
+        accumulated += samples;
+        if (accumulated >= target)
+            return i;
+    }
+
+    return HIST_WIDTH - 1;
+}
+
+static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
+                                   unsigned y_origin, unsigned graph_height)
+{
+    /* raw_info.dynamic_range is in 1/100 EV. The leftmost histogram bins are
+     * the sensor noise floor; compare the darkest 5% against that floor. */
+    int noise_bin = COERCE((1200 - raw_info.dynamic_range) *
+        (HIST_WIDTH - 1) / 1200, 0, HIST_WIDTH - 1);
+    int shadow_bin = hist_raw_shadow_percentile_bin();
+    int margin_x10 = (shadow_bin - noise_bin) * 120 / (HIST_WIDTH - 1);
+    int color;
+    int width;
+    int y = y_origin + graph_height + 3;
+
+    /* Solid status color only: green above +1 EV, yellow within +/-1 EV,
+     * red more than 1 EV below the RAW noise floor. Width still conveys how
+     * far into the warning zone the scene's shadow percentile has moved. */
+    if (margin_x10 >= 10)
+    {
+        color = COLOR_GREEN2;
+        width = HIST_WIDTH / 3;
+    }
+    else if (margin_x10 >= -10)
+    {
+        color = COLOR_YELLOW;
+        width = HIST_WIDTH / 3 +
+            (HIST_WIDTH / 3) * (10 - margin_x10) / 20;
+    }
+    else
+    {
+        color = COLOR_RED;
+        width = (HIST_WIDTH * 2) / 3 +
+            (HIST_WIDTH / 3) * MIN(-10 - margin_x10, 30) / 30;
+    }
+    width = COERCE(width, 1, HIST_WIDTH);
+
+    /* Clear the old length first, then draw the current centered solid bar. */
+    for (int row = 0; row < 2; row++)
+        for (int x = 0; x < HIST_WIDTH; x++)
+            bvram[x_origin + x + (y + row) * BMPPITCH] = COLOR_BG;
+    for (int row = 0; row < 2; row++)
+        for (int x = (HIST_WIDTH - width) / 2;
+             x < (HIST_WIDTH + width) / 2; x++)
+            bvram[x_origin + x + (y + row) * BMPPITCH] = color;
+}
 
 static void hist_build_r2ev_cache()
 {
@@ -424,6 +493,15 @@ void hist_draw_image(
     // Align the x origin, just in case
     x_origin &= ~3;
 
+#ifdef FEATURE_RAW_HISTOGRAM
+    /* Keep the meter within the normal histogram allocation so its bottom
+     * placement remains safe for the screen-edge histogram layout. */
+    unsigned graph_height = histogram.is_raw ?
+        hist_height - HIST_SHADOW_METER_HEIGHT : hist_height;
+#else
+    unsigned graph_height = hist_height;
+#endif
+
     uint8_t * row = bvram + x_origin + y_origin * BMPPITCH;
     if( histogram.max == 0 )
         histogram.max = 1;
@@ -441,17 +519,17 @@ void hist_draw_image(
         // Scale by the maximum bin value
 #ifdef CONFIG_SLIM_MENUS
         const uint32_t hist_val = histogram.is_rgb ? histogram.hist[i] : hist_smooth[i];
-        const uint32_t size  = hist_log ? log_length(hist_val)   * hist_height / log_max : (hist_val   * hist_height) / histogram.max;
+        const uint32_t size  = hist_log ? log_length(hist_val)   * graph_height / log_max : (hist_val   * graph_height) / histogram.max;
 #else
-        const uint32_t size  = hist_log ? log_length(histogram.hist[i])   * hist_height / log_max : (histogram.hist[i]   * hist_height) / histogram.max;
+        const uint32_t size  = hist_log ? log_length(histogram.hist[i])   * graph_height / log_max : (histogram.hist[i]   * graph_height) / histogram.max;
 #endif
-        const uint32_t sizeR = hist_log ? log_length(histogram.hist_r[i]) * hist_height / log_max : (histogram.hist_r[i] * hist_height) / histogram.max;
-        const uint32_t sizeG = hist_log ? log_length(histogram.hist_g[i]) * hist_height / log_max : (histogram.hist_g[i] * hist_height) / histogram.max;
-        const uint32_t sizeB = hist_log ? log_length(histogram.hist_b[i]) * hist_height / log_max : (histogram.hist_b[i] * hist_height) / histogram.max;
+        const uint32_t sizeR = hist_log ? log_length(histogram.hist_r[i]) * graph_height / log_max : (histogram.hist_r[i] * graph_height) / histogram.max;
+        const uint32_t sizeG = hist_log ? log_length(histogram.hist_g[i]) * graph_height / log_max : (histogram.hist_g[i] * graph_height) / histogram.max;
+        const uint32_t sizeB = hist_log ? log_length(histogram.hist_b[i]) * graph_height / log_max : (histogram.hist_b[i] * graph_height) / histogram.max;
 
         uint8_t * col = row + i;
         // vertical line up to the hist size
-        for( y=hist_height ; y>0 ; y-- , col += BMPPITCH )
+        for( y=graph_height ; y>0 ; y-- , col += BMPPITCH )
         {
             if (histogram.is_rgb)
                 *col = hist_rgb_color(y, sizeR, sizeG, sizeB);
@@ -516,9 +594,12 @@ void hist_draw_image(
     }
 
     /* draw histogram border */
-    bmp_draw_rect(60, x_origin-1, y_origin-1, HIST_WIDTH+2, hist_height+2);
+    bmp_draw_rect(60, x_origin-1, y_origin-1, HIST_WIDTH+2, graph_height+2);
 
     #ifdef FEATURE_RAW_HISTOGRAM
+    if (histogram.is_raw)
+        hist_draw_shadow_meter(bvram, x_origin, y_origin, graph_height);
+
     if (histogram.is_raw && hist_meter)
     {
         char msg[10];

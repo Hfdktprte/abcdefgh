@@ -1,8 +1,10 @@
 name: Build EOS M
+run-name: Build EOS M
 
 on:
   push:
-  workflow_dispatch:
+    branches:
+      - eosm-slim-gui
 
 jobs:
   build:

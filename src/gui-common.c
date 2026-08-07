@@ -83,6 +83,8 @@ static int (*crop_rec_touch_adjust)(int, int) =
     MODULE_FUNCTION(crop_rec_touch_adjust);
 static int (*crop_rec_touch_get_value)(int, int, char *, int, int *) =
     MODULE_FUNCTION(crop_rec_touch_get_value);
+static int (*crop_rec_lv_transition_busy)() =
+    MODULE_FUNCTION(crop_rec_lv_transition_busy);
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
 static int (*dual_iso_slim_step_recovery)(int) =
     MODULE_FUNCTION(dual_iso_slim_step_recovery);
@@ -98,6 +100,11 @@ static void slim_touch_step_dual_iso_recovery(int sign)
      * permitted range.  Falling back to normal ISO would break the pair. */
     if (dual_iso_slim_step_recovery)
         dual_iso_slim_step_recovery(sign > 0 ? 1 : -1);
+}
+
+static int slim_crop_rec_transition_busy(void)
+{
+    return crop_rec_lv_transition_busy && crop_rec_lv_transition_busy();
 }
 
 /* Cache menu-backed values outside lvinfo's drawing semaphore.  This keeps
@@ -273,7 +280,8 @@ static int slim_touch_lv_direct_editor(struct event * event)
 static int slim_touch_lv_context_ok(void)
 {
     return lv && is_movie_mode() && !RECORDING &&
-           !gui_menu_shown() && lv_dispsize != 10;
+           !gui_menu_shown() && lv_dispsize != 10 &&
+           !slim_crop_rec_transition_busy();
 }
 
 static void slim_touch_open_for_taps(int taps)
@@ -340,6 +348,19 @@ static void slim_touch_register_tap(void)
 
 static int handle_slim_rec_touch_block(struct event * event)
 {
+    if (slim_crop_rec_transition_busy())
+    {
+        /* The crop module is validating Canon's newly-created LV buffers.
+         * Let no touch/dial shortcut alter another property in this window. */
+        if (lvinfo_touch_editor_is_open())
+            lvinfo_touch_editor_close();
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        slim_touch_lv_pressed = 0;
+        slim_touch_lv_control_consumed = 0;
+        return 0;
+    }
+
     if (RECORDING)
     {
         /* Recording owns the entire touchscreen, independent of Global Draw.

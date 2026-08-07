@@ -438,10 +438,8 @@ int menu_quick_screen_handle_touch(int x, int y)
         quick_screen_touch_latched = 1;
         if (!quick_screen_option_enabled(index))
         {
-            /* A disabled tile cannot be selected. Skip to the next usable
-             * tile in the direction of the touched arrow. */
-            quick_screen_sel = quick_screen_next_enabled(index, delta);
-            menu_redraw();
+            /* Disabled tiles are inert: do not move the yellow selector. */
+            return 0;
         }
         else
         {

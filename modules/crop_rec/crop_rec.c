@@ -6170,9 +6170,9 @@ static MENU_SELECT_FUNC(slim_crop_quick_res_select)
     slim_unified_preset = COERCE(slim_unified_preset, 0, choices - 1);
 
     /* Up moves toward higher resolution; down toward lower resolution.
-     * Clamp at each end rather than crossing into another Aspect Ratio. */
-    slim_unified_preset = COERCE(
-        slim_unified_preset + (delta > 0 ? -1 : 1), 0, choices - 1);
+     * Wrap inside this Aspect Ratio, never into an adjacent one. */
+    slim_unified_preset = MOD(
+        slim_unified_preset + (delta > 0 ? -1 : 1), choices);
 
     if (slim_mode_ui == 0)
         slim_crop_apply_mode();

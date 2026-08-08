@@ -6347,7 +6347,13 @@ void
 gui_open_menu( )
 {
     if (!gui_menu_shown())
+    {
+#ifdef CONFIG_SLIM_MENUS
+        /* Lock synchronously, before waking the asynchronous menu task. */
+        if (lv) canon_gui_front_buffer_lock_for_ml();
+#endif
         give_semaphore(gui_sem);
+    }
 }
 
 #ifdef CONFIG_SLIM_MENUS
@@ -6427,6 +6433,9 @@ void gui_open_menu_at_entry(const char * menu_name, const char * entry_name)
         return;
     }
 
+    /* Direct Last Settings opens bypass gui_open_menu, so acquire the same
+     * transition lock before waking the menu task. */
+    if (lv) canon_gui_front_buffer_lock_for_ml();
     give_semaphore(gui_sem);
 }
 
@@ -6535,6 +6544,11 @@ static void menu_open()
 { 
     if (menu_shown) return;
 
+#ifdef CONFIG_SLIM_MENUS
+    /* Failsafe for any legacy caller that signals gui_sem directly. */
+    if (lv) canon_gui_front_buffer_lock_for_ml();
+#endif
+
     
     // start in my menu, if configured
     /*
@@ -6603,6 +6617,10 @@ static void menu_close()
     menu_lv_transparent_mode = 0;
     
     close_canon_menu();
+#ifdef CONFIG_SLIM_MENUS
+    /* Canon may own the display again only after the ML screen is closed. */
+    canon_gui_front_buffer_unlock_for_ml();
+#endif
     canon_gui_enable_front_buffer(0);
     redraw();
     if (lv) bmp_on();

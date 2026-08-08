@@ -474,10 +474,9 @@ int monitoring_graph_touch_toggle(int x, int y)
 {
     if (histogram_touch_toggle_at(x, y))
     {
-        /* Graphs are drawn directly into the bitmap overlay, so their former
-         * larger pixels are not covered by a smaller redraw. Force the normal
-         * redraw path to clear that old graph immediately. */
-        redraw();
+        /* histogram_touch_toggle_at already clears the previous footprint.
+         * The normal overlay task will draw the new size without asking Canon
+         * to redraw its dialog/front buffer. */
         return 1;
     }
 
@@ -491,9 +490,8 @@ int monitoring_graph_touch_toggle(int x, int y)
     BMP_LOCK( bmp_fill(0, waveform_touch_x - 1, waveform_touch_y - 1,
                        waveform_touch_w + 20, waveform_touch_h + 2); )
     waveform_touch_expanded = !waveform_touch_expanded;
-    /* See histogram toggle above: discard the previous size before drawing
-     * the new one, avoiding a lingering duplicate waveform. */
-    redraw();
+    /* The normal overlay task redraws this at its next monitoring refresh.
+     * Never call the generic redraw path here: it temporarily exposes Canon. */
     return 1;
 }
 

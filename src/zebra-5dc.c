@@ -2006,7 +2006,7 @@ void draw_histogram_and_waveform(int allow_play)
 
     if( hist_draw )
     {
-        BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH - 5, os.y0 + 100, -1); )
+        BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH - 5, os.y0 + 100, 1); )
     }
 
     if( waveform_draw)

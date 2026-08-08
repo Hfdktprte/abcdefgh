@@ -6348,12 +6348,6 @@ gui_open_menu( )
 {
     if (!gui_menu_shown())
     {
-#ifdef CONFIG_SLIM_MENUS
-        /* Suppress Canon synchronously, before waking the asynchronous menu
-         * task. Do not keep a software lock across SetGUIRequestMode: Canon
-         * needs to manage that transition and blocking it can cause ERR70. */
-        if (lv) canon_gui_disable_front_buffer();
-#endif
         give_semaphore(gui_sem);
     }
 }
@@ -6435,9 +6429,6 @@ void gui_open_menu_at_entry(const char * menu_name, const char * entry_name)
         return;
     }
 
-    /* Direct Last Settings opens bypass gui_open_menu, so suppress Canon
-     * before waking the asynchronous menu task here as well. */
-    if (lv) canon_gui_disable_front_buffer();
     give_semaphore(gui_sem);
 }
 
@@ -6545,6 +6536,13 @@ static void close_canon_menu()
 static void menu_open() 
 { 
     if (menu_shown) return;
+
+#ifdef CONFIG_SLIM_MENUS
+    /* WINSYS/BMP locking is unsafe from the delayed touch resolver and caused
+     * EOS M ERR70. The menu task owns the transition, so suppress Canon here,
+     * before changing any Quick Panel/grid state or Canon GUI mode. */
+    if (lv) canon_gui_disable_front_buffer();
+#endif
 
     
     // start in my menu, if configured

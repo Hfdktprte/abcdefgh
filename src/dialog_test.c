@@ -17,6 +17,10 @@
 int boot_logo_is_active(void) __attribute__((weak));
 int boot_logo_is_active(void) { return 0; }
 
+/* Set before an asynchronous ML menu-open request is queued. This closes the
+ * scheduler gap where Canon could draw one frame before menu_open ran. */
+static volatile int canon_gui_ml_front_buffer_lock = 0;
+
 void* get_current_dialog_handler()
 {
     struct gui_task * current = gui_task_list.current;
@@ -58,12 +62,31 @@ BMP_LOCK(
 #endif
 }
 
+void canon_gui_front_buffer_lock_for_ml(void)
+{
+    /* Store first: a concurrent enable request must already see the lock. */
+    canon_gui_ml_front_buffer_lock = 1;
+    canon_gui_disable_front_buffer();
+}
+
+void canon_gui_front_buffer_unlock_for_ml(void)
+{
+    canon_gui_ml_front_buffer_lock = 0;
+}
+
+int canon_gui_front_buffer_locked_for_ml(void)
+{
+    return canon_gui_ml_front_buffer_lock;
+}
+
 void canon_gui_enable_front_buffer(int also_redraw)
 {
 #ifndef CONFIG_5DC
-    if (boot_logo_is_active()) return;
+    if (boot_logo_is_active() || canon_gui_ml_front_buffer_lock) return;
 BMP_LOCK(
-    if (WINSYS_BMP_DIRTY_BIT_NEG)
+    /* Check again inside the bitmap lock so an ML transition beginning
+     * between the first check and this critical section still wins. */
+    if (!canon_gui_ml_front_buffer_lock && WINSYS_BMP_DIRTY_BIT_NEG)
     {
         WINSYS_BMP_DIRTY_BIT_NEG = 0;
         if (also_redraw) redraw();

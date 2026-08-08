@@ -208,6 +208,14 @@ void canon_gui_disable_front_buffer();
 void canon_gui_enable_front_buffer(int also_redraw);
 int canon_gui_front_buffer_disabled();
 
+/* ML-owned full-screen UI guard. While held, Canon redraw code cannot
+ * re-enable its front buffer from the initiating event through the lifetime
+ * of the ML screen. The guard is intentionally separate from x10/Canon GUI
+ * ownership, where Canon overlays must remain available. */
+void canon_gui_front_buffer_lock_for_ml(void);
+void canon_gui_front_buffer_unlock_for_ml(void);
+int canon_gui_front_buffer_locked_for_ml(void);
+
 void canon_gui_disable();
 void canon_gui_enable();
 int canon_gui_disabled();

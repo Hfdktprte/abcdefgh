@@ -388,6 +388,25 @@ static uint8_t* bvram_mirror = 0;
 uint8_t* get_bvram_mirror() { return bvram_mirror; }
 //~ #define bvram_mirror bmp_vram_idle()
 
+void monitoring_graph_clear_region(int x, int y, int w, int h)
+{
+    x = COERCE(x, BMP_W_MINUS, BMP_W_PLUS - 1);
+    y = COERCE(y, BMP_H_MINUS, BMP_H_PLUS - 1);
+    w = COERCE(w, 0, BMP_W_PLUS - x - 1);
+    h = COERCE(h, 0, BMP_H_PLUS - y - 1);
+
+    BMP_LOCK(
+        /* Clear both copies. Clearing only the visible buffer lets a later
+         * mirror refresh restore the old 2x graph as a black rectangle. */
+        bmp_fill(0, x, y, w, h);
+        if (bvram_mirror)
+        {
+            for (int row = y; row < y + h; row++)
+                memset(bvram_mirror + BM(x, row), 0, w);
+        }
+    )
+}
+
 #include "cropmarks.c"
 
 PROP_HANDLER(PROP_HOUTPUT_TYPE)
@@ -487,8 +506,10 @@ int monitoring_graph_touch_toggle(int x, int y)
 
     /* Like the histogram, remove every pixel of the old graph, including
      * the external clipping-dot lane, before switching its scale. */
-    BMP_LOCK( bmp_fill(0, waveform_touch_x - 1, waveform_touch_y - 1,
-                       waveform_touch_w + 20, waveform_touch_h + 2); )
+    monitoring_graph_clear_region(waveform_touch_x - 1,
+                                  waveform_touch_y - 1,
+                                  waveform_touch_w + 20,
+                                  waveform_touch_h + 2);
     waveform_touch_expanded = !waveform_touch_expanded;
     /* The normal overlay task redraws this at its next monitoring refresh.
      * Never call the generic redraw path here: it temporarily exposes Canon. */

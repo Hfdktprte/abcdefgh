@@ -6349,8 +6349,10 @@ gui_open_menu( )
     if (!gui_menu_shown())
     {
 #ifdef CONFIG_SLIM_MENUS
-        /* Lock synchronously, before waking the asynchronous menu task. */
-        if (lv) canon_gui_front_buffer_lock_for_ml();
+        /* Suppress Canon synchronously, before waking the asynchronous menu
+         * task. Do not keep a software lock across SetGUIRequestMode: Canon
+         * needs to manage that transition and blocking it can cause ERR70. */
+        if (lv) canon_gui_disable_front_buffer();
 #endif
         give_semaphore(gui_sem);
     }
@@ -6433,9 +6435,9 @@ void gui_open_menu_at_entry(const char * menu_name, const char * entry_name)
         return;
     }
 
-    /* Direct Last Settings opens bypass gui_open_menu, so acquire the same
-     * transition lock before waking the menu task. */
-    if (lv) canon_gui_front_buffer_lock_for_ml();
+    /* Direct Last Settings opens bypass gui_open_menu, so suppress Canon
+     * before waking the asynchronous menu task here as well. */
+    if (lv) canon_gui_disable_front_buffer();
     give_semaphore(gui_sem);
 }
 
@@ -6544,11 +6546,6 @@ static void menu_open()
 { 
     if (menu_shown) return;
 
-#ifdef CONFIG_SLIM_MENUS
-    /* Failsafe for any legacy caller that signals gui_sem directly. */
-    if (lv) canon_gui_front_buffer_lock_for_ml();
-#endif
-
     
     // start in my menu, if configured
     /*
@@ -6617,10 +6614,6 @@ static void menu_close()
     menu_lv_transparent_mode = 0;
     
     close_canon_menu();
-#ifdef CONFIG_SLIM_MENUS
-    /* Canon may own the display again only after the ML screen is closed. */
-    canon_gui_front_buffer_unlock_for_ml();
-#endif
     canon_gui_enable_front_buffer(0);
     redraw();
     if (lv) bmp_on();
@@ -7340,7 +7333,14 @@ int handle_longpress_events(struct event * event)
     }
     else if (event->param == BGMT_UNPRESS_DOWN)
     {
+        int routed_by_longpress = erase_longpress.pressed;
         erase_longpress.pressed = 0;
+        /* The physical DOWN press was swallowed and the long-press router
+         * emits a complete synthetic short/long action. Do not leak the lone
+         * physical release to Canon; it can redraw the exposure GUI for one
+         * frame while the ML grid is opening. */
+        if (routed_by_longpress)
+            return 0;
     }
 #endif
 

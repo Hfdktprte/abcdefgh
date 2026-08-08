@@ -67,8 +67,8 @@ int histogram_touch_toggle_at(int x, int y)
     /* Histograms are direct bitmap pixels rather than retained UI widgets.
      * Clear the previous full footprint first; otherwise shrinking leaves the
      * old right/top part of the 2x graph on screen until another UI redraw. */
-    BMP_LOCK( bmp_fill(COLOR_BG, hist_touch_x - 1, hist_touch_y - 1,
-                       hist_touch_w + 2, hist_touch_h + 2); )
+    monitoring_graph_clear_region(hist_touch_x - 1, hist_touch_y - 1,
+                                  hist_touch_w + 2, hist_touch_h + 2);
     hist_touch_expanded = !hist_touch_expanded;
     return 1;
 }

@@ -70,6 +70,7 @@ void draw_histogram_and_waveform(int allow_play);
 int histogram_or_small_waveform_enabled();
 int should_draw_bottom_graphs();
 int monitoring_graph_touch_toggle(int x, int y);
+void monitoring_graph_clear_region(int x, int y, int w, int h);
 
 /* true if should draw Magic Zoom (setting + preconditions) */
 int should_draw_zoom_overlay();

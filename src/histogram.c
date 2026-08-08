@@ -674,11 +674,8 @@ void hist_draw_image(
 
     }
 
-    /* The RAW shadow meter occupies the reserved bottom rows. Keep one outer
-     * border around the complete histogram footprint so its bottom line is
-     * exactly level with the waveform's bottom line. */
-    bmp_draw_rect(60, x_origin-1, y_origin-1,
-                  hist_width+2, hist_height * scale + 2);
+    /* draw histogram border */
+    bmp_draw_rect(60, x_origin-1, y_origin-1, hist_width+2, graph_height+2);
 
     #ifdef FEATURE_RAW_HISTOGRAM
     if (histogram.is_raw)

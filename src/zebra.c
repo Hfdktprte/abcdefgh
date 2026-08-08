@@ -1284,7 +1284,7 @@ static void waveform_draw_clip_points(unsigned x_origin, unsigned y_origin,
     (void) scale;
     /* The waveform is redrawn in place. Clear the old dot lane first so a
      * point disappears as soon as clipping falls below the histogram rule. */
-    bmp_fill(0, x_origin + width + 2, y_origin, 16, height);
+    bmp_fill(COLOR_BG, x_origin + width + 2, y_origin, 16, height);
 
     /* Same circular RGB clip indicators as the histogram, positioned as a
      * vertical stack just outside the waveform's right border. */
@@ -1339,11 +1339,6 @@ waveform_draw_image(
         histogram.max = 1;
 
     int i, y;
-
-    /* Draw the frame first. A crushed-shadow sample in the lowest waveform
-     * bin may then reach the bottom border instead of being hidden one row
-     * above it by a border drawn afterwards. */
-    bmp_draw_rect(60, x_origin-1, y_origin-1, draw_width+1, height+1);
 
     // vertical line up to the hist size
     for (int k = 0; k < WAVEFORM_FACTOR; k++)
@@ -1429,6 +1424,7 @@ waveform_draw_image(
                 }
             }
         }
+        bmp_draw_rect(60, x_origin-1, y_origin-1, draw_width+1, height+1);
     }
     waveform_draw_clip_points(x_origin, y_origin, draw_width, height, scale);
 }

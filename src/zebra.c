@@ -474,7 +474,6 @@ int monitoring_graph_touch_toggle(int x, int y)
 {
     if (histogram_touch_toggle_at(x, y))
     {
-        waveform_touch_expanded = 0;
         /* Graphs are drawn directly into the bitmap overlay, so their former
          * larger pixels are not covered by a smaller redraw. Force the normal
          * redraw path to clear that old graph immediately. */
@@ -489,7 +488,7 @@ int monitoring_graph_touch_toggle(int x, int y)
 
     /* Like the histogram, remove every pixel of the old graph, including
      * the external clipping-dot lane, before switching its scale. */
-    BMP_LOCK( bmp_fill(COLOR_BG, waveform_touch_x - 1, waveform_touch_y - 1,
+    BMP_LOCK( bmp_fill(0, waveform_touch_x - 1, waveform_touch_y - 1,
                        waveform_touch_w + 20, waveform_touch_h + 2); )
     waveform_touch_expanded = !waveform_touch_expanded;
     /* See histogram toggle above: discard the previous size before drawing
@@ -1282,9 +1281,11 @@ static void waveform_draw_clip_points(unsigned x_origin, unsigned y_origin,
     int radius = 5;
 
     (void) scale;
-    /* The waveform is redrawn in place. Clear the old dot lane first so a
-     * point disappears as soon as clipping falls below the histogram rule. */
-    bmp_fill(COLOR_BG, x_origin + width + 2, y_origin, 16, height);
+    /* Clear only the three former round points. A filled vertical lane made
+     * the external clipping area visibly darker than the rest of the UI. */
+    fill_circle(x, y_origin + height / 4, radius, 0);
+    fill_circle(x, y_origin + height / 2, radius, 0);
+    fill_circle(x, y_origin + height * 3 / 4, radius, 0);
 
     /* Same circular RGB clip indicators as the histogram, positioned as a
      * vertical stack just outside the waveform's right border. */

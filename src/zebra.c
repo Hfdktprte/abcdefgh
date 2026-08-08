@@ -67,6 +67,10 @@
 // spotmeter_formula modes
 #define SPTMTR_F_RGB_PERCENT 4
 
+/* Graph touch handling needs the common overlay cleanup path before its
+ * definition later in this file. */
+void redraw(void);
+
 #ifdef CONFIG_KILL_FLICKER // this will block all Canon drawing routines when the camera is idle 
 extern int kill_canon_gui_mode;
 #endif                      // but it will display ML graphics
@@ -471,6 +475,10 @@ int monitoring_graph_touch_toggle(int x, int y)
     if (histogram_touch_toggle_at(x, y))
     {
         waveform_touch_expanded = 0;
+        /* Graphs are drawn directly into the bitmap overlay, so their former
+         * larger pixels are not covered by a smaller redraw. Force the normal
+         * redraw path to clear that old graph immediately. */
+        redraw();
         return 1;
     }
 
@@ -479,7 +487,14 @@ int monitoring_graph_touch_toggle(int x, int y)
         y < waveform_touch_y || y >= waveform_touch_y + waveform_touch_h)
         return 0;
 
+    /* Like the histogram, remove every pixel of the old graph, including
+     * the external clipping-dot lane, before switching its scale. */
+    BMP_LOCK( bmp_fill(COLOR_BG, waveform_touch_x - 1, waveform_touch_y - 1,
+                       waveform_touch_w + 20, waveform_touch_h + 2); )
     waveform_touch_expanded = !waveform_touch_expanded;
+    /* See histogram toggle above: discard the previous size before drawing
+     * the new one, avoiding a lingering duplicate waveform. */
+    redraw();
     return 1;
 }
 
@@ -555,7 +570,7 @@ void waveform_slim_scan_begin(void)
     slim_wf_from_raw_scan = 1;
 }
 
-void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r, int g, int b)
+void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r_clip, int g_clip, int b_clip)
 {
     if (!slim_wf_from_raw_scan || !waveform) return;
     int Y = (ev_bin * 255 + (HIST_WIDTH-1)/2) / (HIST_WIDTH-1);
@@ -564,9 +579,9 @@ void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r, int g, int b)
     uint8_t* w = &waveform[bin_x + bin_y * WAVEFORM_WIDTH];
     if ((*w) < 250) (*w)++;
     waveform_clip_total++;
-    if (r >= raw_info.white_level * 98 / 100) waveform_clip_r++;
-    if (g >= raw_info.white_level * 98 / 100) waveform_clip_g++;
-    if (b >= raw_info.white_level * 98 / 100) waveform_clip_b++;
+    if (r_clip) waveform_clip_r++;
+    if (g_clip) waveform_clip_g++;
+    if (b_clip) waveform_clip_b++;
 }
 
 int waveform_slim_using_raw_scan(void)
@@ -1263,8 +1278,13 @@ static void waveform_draw_clip_points(unsigned x_origin, unsigned y_origin,
                                       unsigned scale)
 {
     uint32_t threshold = MAX(waveform_clip_total / 100000, 1);
-    int x = x_origin + width + 8 * scale;
-    int radius = 5 * scale;
+    int x = x_origin + width + 8;
+    int radius = 5;
+
+    (void) scale;
+    /* The waveform is redrawn in place. Clear the old dot lane first so a
+     * point disappears as soon as clipping falls below the histogram rule. */
+    bmp_fill(COLOR_BG, x_origin + width + 2, y_origin, 16, height);
 
     /* Same circular RGB clip indicators as the histogram, positioned as a
      * vertical stack just outside the waveform's right border. */
@@ -1355,10 +1375,6 @@ waveform_draw_image(
                         count = COLOR_RED;
                     else if( count > 6 )
                         count = COLOR_WHITE;
-                    else if( y == (WAVEFORM_HEIGHT*1)>>2 )
-                        count = COLOR_BLUE;
-                    else if( y == (WAVEFORM_HEIGHT*3)>>2 )
-                        count = COLOR_BLUE;
                     else
                         count = waveform_bg;
                 }
@@ -1366,10 +1382,6 @@ waveform_draw_image(
                     count = COLOR_RED;
                 else if( count > 0 )
                     count = COLOR_WHITE;
-                else if( y == (WAVEFORM_HEIGHT*1)>>2 )
-                    count = COLOR_BLUE;
-                else if( y == (WAVEFORM_HEIGHT*3)>>2 )
-                    count = COLOR_BLUE;
                 else
                     count = waveform_bg;
 #else
@@ -4268,7 +4280,7 @@ void draw_histogram_and_waveform(int allow_play)
         #endif
         if (should_draw_bottom_graphs())
             BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 4,
-                                       480 - hist_height * hist_scale - 1, hist_scale); )
+                                       480 - hist_height * hist_scale, hist_scale); )
         else if (console_visible)
             BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 5,
                                        os.y0 + 70, hist_scale); )

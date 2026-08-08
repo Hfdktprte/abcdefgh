@@ -69,7 +69,7 @@ void hist_invalidate_r2ev_cache(void);
 
 #if defined(CONFIG_SLIM_MENUS) && defined(FEATURE_WAVEFORM)
 void waveform_slim_scan_begin(void);
-void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r, int g, int b);
+void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r_clip, int g_clip, int b_clip);
 int waveform_slim_using_raw_scan(void);
 void waveform_build_raw_slim(void);
 #endif

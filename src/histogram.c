@@ -64,6 +64,11 @@ int histogram_touch_toggle_at(int x, int y)
         y < hist_touch_y || y >= hist_touch_y + hist_touch_h)
         return 0;
 
+    /* Histograms are direct bitmap pixels rather than retained UI widgets.
+     * Clear the previous full footprint first; otherwise shrinking leaves the
+     * old right/top part of the 2x graph on screen until another UI redraw. */
+    BMP_LOCK( bmp_fill(COLOR_BG, hist_touch_x - 1, hist_touch_y - 1,
+                       hist_touch_w + 2, hist_touch_h + 2); )
     hist_touch_expanded = !hist_touch_expanded;
     return 1;
 }
@@ -281,7 +286,12 @@ static int hist_slim_scan_raw_pixels(int accumulate_hist)
                 histogram.total_px++;
             }
 #if defined(FEATURE_WAVEFORM)
-            waveform_slim_scan_pixel(j, ev, r, g, b);
+            /* Use the exact same final RAW histogram bin as the clipping
+             * indicators.  The waveform must not use a separate 98% rule. */
+            waveform_slim_scan_pixel(j, ev,
+                r2ev[r] == HIST_WIDTH - 1,
+                r2ev[g] == HIST_WIDTH - 1,
+                r2ev[b] == HIST_WIDTH - 1);
 #endif
         }
     }
@@ -634,9 +644,11 @@ void hist_draw_image(
                 unsigned int over_b = histogram.hist_b[i];
 
 #ifdef CONFIG_SLIM_MENUS
-                if (over_r > thr) hist_dot(x_origin + HIST_WIDTH*scale/2 - 25*scale, yw, COLOR_RED,   bg, hist_clip_dot_radius(over_r, histogram.total_px) * scale, hist_clip_dot_label(over_r, histogram.total_px));
-                if (over_g > thr) hist_dot(x_origin + HIST_WIDTH*scale/2           , yw, COLOR_GREEN2, bg, hist_clip_dot_radius(over_g, histogram.total_px) * scale, hist_clip_dot_label(over_g, histogram.total_px));
-                if (over_b > thr) hist_dot(x_origin + HIST_WIDTH*scale/2 + 25*scale, yw, COLOR_CYAN,  bg, hist_clip_dot_radius(over_b, histogram.total_px) * scale, hist_clip_dot_label(over_b, histogram.total_px));
+                /* Keep clipping points at their normal physical size when the
+                 * graph grows; only their positions follow the graph scale. */
+                if (over_r > thr) hist_dot(x_origin + HIST_WIDTH*scale/2 - 25*scale, yw, COLOR_RED,   bg, hist_clip_dot_radius(over_r, histogram.total_px), hist_clip_dot_label(over_r, histogram.total_px));
+                if (over_g > thr) hist_dot(x_origin + HIST_WIDTH*scale/2           , yw, COLOR_GREEN2, bg, hist_clip_dot_radius(over_g, histogram.total_px), hist_clip_dot_label(over_g, histogram.total_px));
+                if (over_b > thr) hist_dot(x_origin + HIST_WIDTH*scale/2 + 25*scale, yw, COLOR_CYAN,  bg, hist_clip_dot_radius(over_b, histogram.total_px), hist_clip_dot_label(over_b, histogram.total_px));
 #else
                 if (over_r > thr) hist_dot(x_origin + HIST_WIDTH/2 - 25, yw, COLOR_RED,        bg, hist_clip_dot_radius(over_r, histogram.total_px), hist_clip_dot_label(over_r, histogram.total_px));
                 if (over_g > thr) hist_dot(x_origin + HIST_WIDTH/2     , yw, COLOR_GREEN1,     bg, hist_clip_dot_radius(over_g, histogram.total_px), hist_clip_dot_label(over_g, histogram.total_px));
@@ -646,7 +658,7 @@ void hist_draw_image(
             else
             {
                 unsigned int over = histogram.hist[i] + histogram.hist[i-1];
-                if (over > thr) hist_dot(x_origin + HIST_WIDTH*scale/2, yw, COLOR_RED, bg, hist_clip_dot_radius(over, histogram.total_px) * scale, hist_clip_dot_label(over, histogram.total_px));
+                if (over > thr) hist_dot(x_origin + HIST_WIDTH*scale/2, yw, COLOR_RED, bg, hist_clip_dot_radius(over, histogram.total_px), hist_clip_dot_label(over, histogram.total_px));
             }
         }
 #endif

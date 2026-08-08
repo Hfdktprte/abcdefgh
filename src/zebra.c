@@ -462,6 +462,26 @@ int get_global_draw_setting() // whatever is set in menu
 static uint8_t* waveform = 0;
 #define WAVEFORM_UNSAFE(x,y) (waveform[(x) + (y) * WAVEFORM_WIDTH])
 #define WAVEFORM(x,y) (waveform[COERCE((x), 0, WAVEFORM_WIDTH-1) + COERCE((y), 0, WAVEFORM_HEIGHT-1) * WAVEFORM_WIDTH])
+static int waveform_touch_expanded;
+static int waveform_touch_x, waveform_touch_y, waveform_touch_w, waveform_touch_h;
+static uint32_t waveform_clip_r, waveform_clip_g, waveform_clip_b, waveform_clip_total;
+
+int monitoring_graph_touch_toggle(int x, int y)
+{
+    if (histogram_touch_toggle_at(x, y))
+    {
+        waveform_touch_expanded = 0;
+        return 1;
+    }
+
+    if (!monitoring_enabled(waveform_draw) ||
+        x < waveform_touch_x || x >= waveform_touch_x + waveform_touch_w ||
+        y < waveform_touch_y || y >= waveform_touch_y + waveform_touch_h)
+        return 0;
+
+    waveform_touch_expanded = !waveform_touch_expanded;
+    return 1;
+}
 
 /** Generate the histogram data from the YUV frame buffer.
  *
@@ -514,6 +534,16 @@ static inline void waveform_add_pixel(int x, int Y)
     if ((*w) < 250) (*w)++;
 }
 
+static inline void waveform_add_clip_pixel(uint32_t pixel)
+{
+    int Y, R, G, B;
+    COMPUTE_UYVY2YRGB(pixel, Y, R, G, B);
+    waveform_clip_total++;
+    if (R >= 254) waveform_clip_r++;
+    if (G >= 254) waveform_clip_g++;
+    if (B >= 254) waveform_clip_b++;
+}
+
 #if defined(CONFIG_SLIM_MENUS)
 static int slim_wf_from_raw_scan = 0;
 
@@ -525,7 +555,7 @@ void waveform_slim_scan_begin(void)
     slim_wf_from_raw_scan = 1;
 }
 
-void waveform_slim_scan_pixel(int bmp_j, int ev_bin)
+void waveform_slim_scan_pixel(int bmp_j, int ev_bin, int r, int g, int b)
 {
     if (!slim_wf_from_raw_scan || !waveform) return;
     int Y = (ev_bin * 255 + (HIST_WIDTH-1)/2) / (HIST_WIDTH-1);
@@ -533,6 +563,10 @@ void waveform_slim_scan_pixel(int bmp_j, int ev_bin)
     int bin_y = COERCE((Y * WAVEFORM_HEIGHT) >> 8, 0, WAVEFORM_HEIGHT-1);
     uint8_t* w = &waveform[bin_x + bin_y * WAVEFORM_WIDTH];
     if ((*w) < 250) (*w)++;
+    waveform_clip_total++;
+    if (r >= raw_info.white_level * 98 / 100) waveform_clip_r++;
+    if (g >= raw_info.white_level * 98 / 100) waveform_clip_g++;
+    if (b >= raw_info.white_level * 98 / 100) waveform_clip_b++;
 }
 
 int waveform_slim_using_raw_scan(void)
@@ -650,6 +684,7 @@ hist_build()
             if (monitoring_enabled(waveform_draw)) 
             {
                 waveform_add_pixel(x, Y);
+                waveform_add_clip_pixel(pixel);
             }
             #endif
             
@@ -1223,6 +1258,24 @@ static int zebra_rgb_solid_color(int underexposed, int clipR, int clipG, int cli
 #endif
 
 #ifdef FEATURE_WAVEFORM
+static void waveform_draw_clip_points(unsigned x_origin, unsigned y_origin,
+                                      unsigned width, unsigned height,
+                                      unsigned scale)
+{
+    uint32_t threshold = MAX(waveform_clip_total / 100000, 1);
+    int x = x_origin + width + 8 * scale;
+    int radius = 5 * scale;
+
+    /* Same circular RGB clip indicators as the histogram, positioned as a
+     * vertical stack just outside the waveform's right border. */
+    if (waveform_clip_r > threshold)
+        fill_circle(x, y_origin + height / 4, radius, COLOR_RED);
+    if (waveform_clip_g > threshold)
+        fill_circle(x, y_origin + height / 2, radius, COLOR_GREEN2);
+    if (waveform_clip_b > threshold)
+        fill_circle(x, y_origin + height * 3 / 4, radius, COLOR_CYAN);
+}
+
 /** Draw the waveform image into the bitmap framebuffer.
  *
  * Draw one pixel at a time; it seems to be ok with err70.
@@ -1234,7 +1287,8 @@ static void
 waveform_draw_image(
     unsigned        x_origin,
     unsigned        y_origin,
-    unsigned        height
+    unsigned        height,
+    unsigned        scale
 )
 {
     if (!waveform) return;
@@ -1250,10 +1304,17 @@ waveform_draw_image(
 
     // Ensure that x_origin is quad-word aligned
     x_origin &= ~3;
+    scale = COERCE(scale, 1, 2);
     
     uint8_t * const bvram = bmp_vram();
     if (!bvram) return;
     unsigned pitch = BMPPITCH;
+    unsigned base_width = WAVEFORM_WIDTH * WAVEFORM_FACTOR;
+    unsigned draw_width = base_width * scale;
+    waveform_touch_x = x_origin;
+    waveform_touch_y = y_origin;
+    waveform_touch_w = draw_width;
+    waveform_touch_h = height;
     if( histogram.max == 0 )
         histogram.max = 1;
 
@@ -1271,7 +1332,7 @@ waveform_draw_image(
             uint8_t * row = bvram + x_origin + y_bmp * pitch;
             //int y_next = (y-1) * height / WAVEFORM_HEIGHT;
             uint32_t pixel = 0;
-            int w = WAVEFORM_WIDTH*WAVEFORM_FACTOR;
+            int w = base_width;
             for( i=0 ; i<w; i++ )
             {
                 uint32_t count = WAVEFORM_UNSAFE( i / WAVEFORM_FACTOR, WAVEFORM_HEIGHT - y - 1);
@@ -1332,19 +1393,28 @@ waveform_draw_image(
                     count = waveform_bg; // transparent
 #endif
 
-                pixel |= (count << ((i & 3)<<3));
+                if (scale == 1)
+                {
+                    pixel |= (count << ((i & 3)<<3));
 
-                if( (i & 3) != 3 )
-                    continue;
+                    if( (i & 3) != 3 )
+                        continue;
 
-                // Draw the pixel, rounding down to the nearest
-                // quad word write (and then nop to avoid err70).
-                *(uint32_t*) ALIGN32(row + i) = pixel;
-                pixel = 0;
+                    // Draw the pixel, rounding down to the nearest
+                    // quad word write (and then nop to avoid err70).
+                    *(uint32_t*) ALIGN32(row + i) = pixel;
+                    pixel = 0;
+                }
+                else
+                {
+                    row[i * scale] = count;
+                    row[i * scale + 1] = count;
+                }
             }
         }
-        bmp_draw_rect(60, x_origin-1, y_origin-1, WAVEFORM_WIDTH*WAVEFORM_FACTOR+1, height+1);
+        bmp_draw_rect(60, x_origin-1, y_origin-1, draw_width+1, height+1);
     }
+    waveform_draw_clip_points(x_origin, y_origin, draw_width, height, scale);
 }
 #endif
 
@@ -1356,6 +1426,8 @@ static void waveform_init()
     if (!waveform)
         waveform = malloc(WAVEFORM_WIDTH * WAVEFORM_HEIGHT);
     bzero32(waveform, WAVEFORM_WIDTH * WAVEFORM_HEIGHT);
+    waveform_clip_r = waveform_clip_g = waveform_clip_b = 0;
+    waveform_clip_total = 0;
 #endif
 }
 
@@ -4182,6 +4254,8 @@ void draw_histogram_and_waveform(int allow_play)
     if (is_zoom_mode_so_no_zebras()) return;
 
     int screen_layout = get_screen_layout();
+    int hist_scale = histogram_touch_scale();
+    int waveform_scale = waveform_touch_expanded ? 2 : 1;
 
 #ifdef FEATURE_HISTOGRAM
     if( monitoring_enabled(hist_draw) && !WAVEFORM_FULLSCREEN)
@@ -4189,17 +4263,21 @@ void draw_histogram_and_waveform(int allow_play)
         extern int console_visible;
         #ifdef CONFIG_4_3_SCREEN
         if (PLAY_OR_QR_MODE)
-            BMP_LOCK( hist_draw_image( os.x0 + 500,  1); )
+            BMP_LOCK( hist_draw_image( os.x0 + 500,  1, hist_scale); )
         else
         #endif
         if (should_draw_bottom_graphs())
-            BMP_LOCK( hist_draw_image( os.x0 + 50,  480 - hist_height - 1); )
+            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 4,
+                                       480 - hist_height * hist_scale - 1, hist_scale); )
         else if (console_visible)
-            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH - 5, os.y0 + 70); )
+            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 5,
+                                       os.y0 + 70, hist_scale); )
         else if (screen_layout == SCREENLAYOUT_3_2)
-            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH - 2,  os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height - 1); )
+            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 2,
+                                       os.y_max - (lv ? os.off_169 + 10 : 0) - hist_height * hist_scale - 1, hist_scale); )
         else
-            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH - 5, os.y0 + 100); )
+            BMP_LOCK( hist_draw_image( os.x_max - HIST_WIDTH * hist_scale - 5,
+                                       os.y0 + 100, hist_scale); )
     }
 #endif
 
@@ -4213,20 +4291,29 @@ void draw_histogram_and_waveform(int allow_play)
     {
         #ifdef CONFIG_4_3_SCREEN
         if (PLAY_OR_QR_MODE && WAVEFORM_FACTOR == 1)
-            BMP_LOCK( waveform_draw_image( os.x0 + 100,  1, 54); )
+            BMP_LOCK( waveform_draw_image( os.x0 + 100,  1,
+                                            54 * waveform_scale, waveform_scale); )
         else
         #endif
         if (should_draw_bottom_graphs() && WAVEFORM_FACTOR == 1)
-            BMP_LOCK( waveform_draw_image( os.x0 + 250,  480 - 54, 54); )
+            BMP_LOCK( waveform_draw_image( os.x0 + 4,
+                                            480 - 54 * waveform_scale,
+                                            54 * waveform_scale, waveform_scale); )
         else if (screen_layout == SCREENLAYOUT_3_2 && !WAVEFORM_FULLSCREEN)
         {
             if (WAVEFORM_FACTOR == 1)
-                BMP_LOCK( waveform_draw_image( os.x0 + 4, os.y_max - (lv ? os.off_169 : 0) - (gui_menu_shown() ? 25 : 0) - 54, 54); )
+                BMP_LOCK( waveform_draw_image( os.x0 + 4,
+                                                os.y_max - (lv ? os.off_169 : 0) - (gui_menu_shown() ? 25 : 0) - 54 * waveform_scale,
+                                                54 * waveform_scale, waveform_scale); )
             else
-                BMP_LOCK( waveform_draw_image( os.x_max - WAVEFORM_WIDTH*WAVEFORM_FACTOR - 4, os.y0 + 100, WAVEFORM_HEIGHT*WAVEFORM_FACTOR ); );
+                BMP_LOCK( waveform_draw_image( os.x0 + 4,
+                                                os.y_max - WAVEFORM_HEIGHT * WAVEFORM_FACTOR * waveform_scale - WAVEFORM_OFFSET,
+                                                WAVEFORM_HEIGHT * WAVEFORM_FACTOR * waveform_scale, waveform_scale ); );
         }
         else
-            BMP_LOCK( waveform_draw_image( os.x_max - WAVEFORM_WIDTH*WAVEFORM_FACTOR - (WAVEFORM_FULLSCREEN ? 0 : 4), os.y_max - WAVEFORM_HEIGHT*WAVEFORM_FACTOR - WAVEFORM_OFFSET, WAVEFORM_HEIGHT*WAVEFORM_FACTOR ); )
+            BMP_LOCK( waveform_draw_image( os.x0 + (WAVEFORM_FULLSCREEN ? 0 : 4),
+                                            os.y_max - WAVEFORM_HEIGHT * WAVEFORM_FACTOR * waveform_scale - WAVEFORM_OFFSET,
+                                            WAVEFORM_HEIGHT * WAVEFORM_FACTOR * waveform_scale, waveform_scale ); )
     }
 #endif
 

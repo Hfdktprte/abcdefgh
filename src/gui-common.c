@@ -246,6 +246,9 @@ static int slim_touch_lv_direct_editor(struct event * event)
     if (!eosm_touch_get_xy(event, &x, &y))
         return 0;
 
+    if (monitoring_graph_touch_toggle(x, y))
+        return 1;
+
     if (lvinfo_touch_editor_is_open())
     {
         enum lvinfo_touch_field field = lvinfo_touch_editor_field();

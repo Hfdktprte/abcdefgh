@@ -4605,6 +4605,9 @@ livev_hipriority_task( void* unused )
          * was itself visible as flicker. Live View continues underneath. */
         if (menu_white_card_wb_is_active())
         {
+            /* Keep all white-card bitmap access in this renderer. Timer and
+             * input callbacks only request a paint or clear operation. */
+            BMP_LOCK(menu_white_card_wb_render_step();)
             msleep(20);
             continue;
         }

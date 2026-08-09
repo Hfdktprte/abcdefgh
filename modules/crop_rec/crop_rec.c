@@ -14,6 +14,7 @@
 #include <shoot.h>
 #include <lens.h>
 #include <focus.h>
+#include <vram.h>
 #include "../mlv_lite/mlv_lite.h"
 #include "../dual_iso/dual_iso.h"
 #include "histogram.h"
@@ -4950,6 +4951,7 @@ static int patch_active = 0;
 #define EOSM_LV_GUARD_QUIET_MS 120
 #define EOSM_LV_GUARD_STABLE_FRAMES 3
 #define EOSM_LV_GUARD_MAX_RECOVERIES 2
+#define EOSM_LV_GUARD_CONTENT_SAMPLES 3
 static volatile int eosm_lv_guard_pending = 1;
 static volatile int eosm_lv_guard_busy = 0;
 static int eosm_lv_guard_started;
@@ -4963,6 +4965,8 @@ static uint32_t eosm_lv_guard_display_buffer;
 static int eosm_lv_guard_quiet_since;
 static int eosm_lv_guard_retries;
 static int eosm_lv_guard_internal_zoom;
+static int eosm_lv_guard_content_dark_frames;
+static int eosm_lv_guard_content_retries;
 
 enum eosm_lv_guard_state
 {
@@ -4970,6 +4974,7 @@ enum eosm_lv_guard_state
     EOSM_LV_GUARD_APPLY_X1,
     EOSM_LV_GUARD_APPLY_X5,
     EOSM_LV_GUARD_VALIDATE,
+    EOSM_LV_GUARD_CONTENT,
     EOSM_LV_GUARD_RECOVER_X1,
     EOSM_LV_GUARD_RECOVER_X5,
 };
@@ -4996,6 +5001,8 @@ static void eosm_lv_guard_request(void)
     eosm_lv_guard_display_buffer = 0;
     eosm_lv_guard_quiet_since = 0;
     eosm_lv_guard_retries = 0;
+    eosm_lv_guard_content_dark_frames = 0;
+    eosm_lv_guard_content_retries = 0;
 }
 
 static void eosm_lv_guard_set_zoom(int zoom)
@@ -7302,6 +7309,40 @@ static int eosm_lv_guard_selected_geometry_ready(void)
            raw_info.height >= expected_h && raw_info.height <= expected_h + 64;
 }
 
+/* A valid RAW geometry does not guarantee that Canon restored the visible
+ * YUV path. Sample a sparse center grid from the displayed UYVY buffer: this
+ * is intentionally tiny and read-only, so it cannot disturb EDMAC or RAW
+ * recording. Return false only for a uniformly video-black screen. */
+static int eosm_lv_guard_display_has_content(void)
+{
+    const uint8_t *vram;
+    int x, y;
+    int width = vram_lv.width;
+    int height = vram_lv.height;
+    int pitch = vram_lv.pitch;
+    static const uint8_t x_pos[] = { 2, 4, 6, 8 };
+    static const uint8_t y_pos[] = { 3, 5, 7 };
+
+    if (!YUV422_LV_BUFFER_DISPLAY_ADDR || width < 64 || height < 64 ||
+        pitch < width * 2)
+        return 1; /* unavailable data is handled by the geometry guard */
+
+    vram = (const uint8_t *)UNCACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+    for (y = 0; y < COUNT(y_pos); y++)
+    {
+        int py = height * y_pos[y] / 10;
+        for (x = 0; x < COUNT(x_pos); x++)
+        {
+            int px = width * x_pos[x] / 10;
+            /* UYVY: luma is the second byte of each two-byte pixel. */
+            if (vram[py * pitch + px * 2 + 1] > 20)
+                return 1;
+        }
+    }
+
+    return 0;
+}
+
 static void eosm_lv_guard_clear(void)
 {
     eosm_lv_guard_pending = 0;
@@ -7401,8 +7442,12 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             if (eosm_lv_guard_selected_geometry_ready() &&
                 !crop_rec_needs_lv_refresh())
             {
-                eosm_lv_guard_clear();
-                return 0;
+                /* Geometry is correct. Confirm the LCD path has delivered a
+                 * real frame before releasing the transition controller. */
+                eosm_lv_guard_state = EOSM_LV_GUARD_CONTENT;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_content_dark_frames = 0;
+                return 1;
             }
 
             /* Rebuild the selected x5 path again when Canon retained a stable
@@ -7430,6 +7475,36 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             eosm_lv_guard_quiet_since = 0;
             eosm_lv_guard_retries++;
             return 1;
+
+        case EOSM_LV_GUARD_CONTENT:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
+                return 1;
+
+            if (eosm_lv_guard_display_has_content())
+            {
+                eosm_lv_guard_clear();
+                return 0;
+            }
+
+            /* A genuine dark scene is possible. Require consecutive samples,
+             * then make only one extra recovery attempt and accept a persistently
+             * black scene afterward rather than trapping the user in a loop. */
+            if (++eosm_lv_guard_content_dark_frames < EOSM_LV_GUARD_CONTENT_SAMPLES)
+                return 1;
+
+            if (eosm_lv_guard_content_retries++ == 0)
+            {
+                eosm_lv_guard_set_zoom(1);
+                eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
+                eosm_lv_guard_retries++;
+                return 1;
+            }
+
+            eosm_lv_guard_clear();
+            return 0;
 
         case EOSM_LV_GUARD_RECOVER_X1:
             if (lv_dispsize != 1)

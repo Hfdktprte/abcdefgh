@@ -10,6 +10,8 @@
 #include "shoot.h"
 #include "fps.h"
 
+extern void lens_display_set_dirty(void);
+
 #ifdef CONFIG_SLIM_MENUS
 
 #define GRID_COLS       2

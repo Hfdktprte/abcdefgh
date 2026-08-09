@@ -2180,7 +2180,7 @@ unsigned int raw_rec_polling_cbr(unsigned int unused)
     if (!compress_mq) return 0;
 
     static int lvrecov_aux = INT_MIN;
-    if (should_run_polling_action(500, &lvrecov_aux))
+    if (should_run_polling_action(100, &lvrecov_aux))
         lvrecov_log_state();
 
     raw_lv_request_update();
@@ -2982,6 +2982,8 @@ int raw_rec_start_ready(void)
 
 /* Event-only diagnostics for unstable LiveView transitions. */
 #define LVRECOV_LOG_FILE "ML/LOGS/LVRECOV.LOG"
+static int (*crop_rec_lv_transition_diag)(char *, int) =
+    MODULE_FUNCTION(crop_rec_lv_transition_diag);
 
 static void lvrecov_log_state(void)
 {
@@ -2995,6 +2997,7 @@ static void lvrecov_log_state(void)
     static int last_res_y = -1;
     static int last_raw_x = -1;
     static int last_raw_y = -1;
+    static int last_guard_signature = INT_MIN;
 
     /* Never touch the card from this diagnostic path while a clip is active. */
     if (RAW_IS_RECORDING || RAW_IS_PREPARING)
@@ -3012,10 +3015,14 @@ static void lvrecov_log_state(void)
     uint32_t edmac_write = edmac_get_base(raw_write_chan);
     int edmac_ready = edmac_read != 0xffffffff && edmac_write != 0xffffffff;
     int invalid = lv && (fps <= 0 || !raw_ready || !geometry_ready || !buffers_ready || !edmac_ready);
+    char guard[128] = "";
+    int guard_signature = crop_rec_lv_transition_diag ?
+        crop_rec_lv_transition_diag(guard, sizeof(guard)) : 0;
 
     if (lv == last_lv && invalid == last_invalid && fps == last_fps && zoom == last_zoom
         && crop == last_crop && ar == last_ar && res_x == last_res_x && res_y == last_res_y
-        && raw_info.width == last_raw_x && raw_info.height == last_raw_y)
+        && raw_info.width == last_raw_x && raw_info.height == last_raw_y
+        && guard_signature == last_guard_signature)
         return;
 
     last_lv = lv;
@@ -3028,14 +3035,15 @@ static void lvrecov_log_state(void)
     last_res_y = res_y;
     last_raw_x = raw_info.width;
     last_raw_y = raw_info.height;
+    last_guard_signature = guard_signature;
 
-    char line[256];
+    char line[384];
     int len = snprintf(line, sizeof(line),
-        "%08d %s lv=%d fps=%d zoom=x%d crop=%d ar=%d out=%dx%d raw=%dx%d buf=%08x slots=%d frame=%d ready=%d/%d/%d/%d edmac=%08x/%08x\n",
+        "%08d %s lv=%d fps=%d zoom=x%d crop=%d ar=%d out=%dx%d raw=%dx%d buf=%08x slots=%d frame=%d ready=%d/%d/%d/%d edmac=%08x/%08x %s\n",
         get_ms_clock(), invalid ? "INVALID" : "STATE",
         lv, fps, zoom, crop, ar, res_x, res_y, raw_info.width, raw_info.height,
         (uint32_t)raw_info.buffer, valid_slot_count, max_frame_size,
-        raw_ready, geometry_ready, buffers_ready, edmac_ready, edmac_read, edmac_write);
+        raw_ready, geometry_ready, buffers_ready, edmac_ready, edmac_read, edmac_write, guard);
 
     unsigned size = 0;
     FILE *f = FIO_CreateFileOrAppend(LVRECOV_LOG_FILE);

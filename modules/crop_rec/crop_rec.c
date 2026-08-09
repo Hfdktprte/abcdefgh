@@ -336,6 +336,7 @@ static void set_zoom(int zoom)
  * return.  Keep that rebuild inside the same transition controller. */
 static void eosm_lv_guard_request(void);
 #endif
+int crop_rec_lv_transition_diag(char *buffer, int size);
 
 /* faster version than the one from ML core */
 static void set_lv_af_mode(int lv_af_mode)
@@ -5015,6 +5016,11 @@ static void eosm_lv_guard_set_zoom(int zoom)
 }
 #else
 int crop_rec_lv_transition_busy(void) { return 0; }
+int crop_rec_lv_transition_diag(char *buffer, int size)
+{
+    if (buffer && size > 0) buffer[0] = '\0';
+    return 0;
+}
 static void eosm_lv_guard_request(void) {}
 #endif
 
@@ -6458,6 +6464,7 @@ static void *crop_rec_touch_exports[] __attribute__((used)) = {
     (void *)&crop_rec_touch_adjust,
     (void *)&crop_rec_touch_get_value,
     (void *)&crop_rec_lv_transition_busy,
+    (void *)&crop_rec_lv_transition_diag,
 };
 
 static struct menu_entry crop_rec_menu_eosm[] =
@@ -7316,10 +7323,11 @@ static int eosm_lv_guard_selected_geometry_ready(void)
  * YUV path. Sample a sparse center grid from the displayed UYVY buffer: this
  * is intentionally tiny and read-only, so it cannot disturb EDMAC or RAW
  * recording. Return false only for a uniformly video-black screen. */
-static int eosm_lv_guard_display_has_content(void)
+static int eosm_lv_guard_display_luma_max(void)
 {
     const uint8_t *vram;
     int x, y;
+    int luma_max = 0;
     int width = vram_lv.width;
     int height = vram_lv.height;
     int pitch = vram_lv.pitch;
@@ -7328,7 +7336,7 @@ static int eosm_lv_guard_display_has_content(void)
 
     if (!YUV422_LV_BUFFER_DISPLAY_ADDR || width < 64 || height < 64 ||
         pitch < width * 2)
-        return 1; /* unavailable data is handled by the geometry guard */
+        return 255; /* unavailable data is handled by the geometry guard */
 
     vram = (const uint8_t *)UNCACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
     for (y = 0; y < COUNT(y_pos); y++)
@@ -7338,12 +7346,16 @@ static int eosm_lv_guard_display_has_content(void)
         {
             int px = width * x_pos[x] / 10;
             /* UYVY: luma is the second byte of each two-byte pixel. */
-            if (vram[py * pitch + px * 2 + 1] > 20)
-                return 1;
+            luma_max = MAX(luma_max, vram[py * pitch + px * 2 + 1]);
         }
     }
 
-    return 0;
+    return luma_max;
+}
+
+static int eosm_lv_guard_display_has_content(void)
+{
+    return eosm_lv_guard_display_luma_max() > 20;
 }
 
 /* These are the display-route values already supplied by the Crop Rec ENGIO
@@ -7368,6 +7380,31 @@ static void eosm_lv_guard_reapply_display_route(void)
     EngDrvOutLV(0xC0F11BC8, YUV_HD_S_V_E);
     EngDrvOutLV(0xC0F11ACC, YUV_LV_S_V);
     EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
+}
+
+/* Exported for LVRECOV.LOG. The signature changes only when the transition
+ * controller changes state, so the recorder log stays event-only. */
+__attribute__((used, noinline))
+int crop_rec_lv_transition_diag(char *buffer, int size)
+{
+    int luma = eosm_lv_guard_display_luma_max();
+    int route_ok = eosm_lv_guard_display_route_ready();
+    int signature = (eosm_lv_guard_pending ? 1 : 0) |
+        (eosm_lv_guard_busy ? 2 : 0) |
+        (eosm_lv_guard_state << 2) |
+        (eosm_lv_guard_content_dark_frames << 6) |
+        (eosm_lv_guard_content_retries << 10) |
+        (eosm_lv_guard_route_retries << 12) |
+        (route_ok ? 1 << 14 : 0);
+
+    if (buffer && size > 0)
+        snprintf(buffer, size,
+            "guard=%d/%d/%d luma=%d dark=%d contentfix=%d route=%d routefix=%d",
+            eosm_lv_guard_pending, eosm_lv_guard_busy, eosm_lv_guard_state,
+            luma, eosm_lv_guard_content_dark_frames,
+            eosm_lv_guard_content_retries, route_ok, eosm_lv_guard_route_retries);
+
+    return signature;
 }
 
 static void eosm_lv_guard_clear(void)

@@ -265,14 +265,13 @@ static void white_card_wb_close_delayed(int timer, void *opaque)
     menu_white_card_wb_close();
 }
 
-static void white_card_wb_refresh(int timer, void *opaque)
+static void white_card_wb_draw_delayed(int timer, void *opaque)
 {
     (void)timer;
     (void)opaque;
     if (!white_card_wb_active)
         return;
-    lens_display_set_dirty();
-    delayed_call(100, white_card_wb_refresh, 0);
+    BMP_LOCK(menu_white_card_wb_draw();)
 }
 
 void menu_white_card_wb_open(void)
@@ -284,7 +283,8 @@ void menu_white_card_wb_open(void)
     quick_screen_active = 0;
     quick_screen_touch_latched = 0;
     lens_display_set_dirty();
-    delayed_call(20, white_card_wb_refresh, 0);
+    /* Let the Quick Panel finish closing, then paint this screen once. */
+    delayed_call(80, white_card_wb_draw_delayed, 0);
 }
 
 static void white_card_wb_panel_geometry(int *x, int *y, int *w, int *h,
@@ -428,6 +428,7 @@ int menu_white_card_wb_handle_key(int button_code, int is_fake)
         white_card_wb_capturing = 1;
         white_card_wb_auto_start();
         lens_display_set_dirty();
+        delayed_call(1, white_card_wb_draw_delayed, 0);
     }
     return 0;
 }
@@ -439,6 +440,7 @@ void menu_white_card_wb_capture_finished(void)
     white_card_wb_capturing = 0;
     white_card_wb_done = 1;
     lens_display_set_dirty();
+    delayed_call(1, white_card_wb_draw_delayed, 0);
     delayed_call(1000, white_card_wb_close_delayed, 0);
 }
 

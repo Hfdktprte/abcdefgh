@@ -240,7 +240,7 @@ static void white_card_wb_clear_overlay(void)
 {
     /* Include a generous glyph margin so no antialiasing/shadow pixels from
      * the previous frame remain after dismissing the overlay. */
-    bmp_fill(COLOR_EMPTY, 160, 120, 400, 184);
+    bmp_fill(COLOR_EMPTY, 100, 194, 520, 196);
 }
 
 void menu_white_card_wb_close(void)
@@ -284,17 +284,52 @@ void menu_white_card_wb_open(void)
     delayed_call(20, white_card_wb_refresh, 0);
 }
 
+static void white_card_wb_panel_geometry(int *x, int *y, int *w, int *h,
+                                         const char **line1, const char **line2)
+{
+    const int padding = 12;
+    const int line_gap = 6;
+    const int font_h = fontspec_font(FONT_MED)->height;
+    int width1;
+    int width2 = 0;
+
+    if (white_card_wb_done)
+    {
+        *line1 = "White Balance Set";
+        *line2 = 0;
+    }
+    else if (white_card_wb_capturing)
+    {
+        *line1 = "Setting White Balance...";
+        *line2 = 0;
+    }
+    else
+    {
+        *line1 = "Place the White Card in";
+        *line2 = "the box and press SET";
+    }
+
+    width1 = bmp_string_width(FONT_MED, *line1);
+    if (*line2)
+        width2 = bmp_string_width(FONT_MED, *line2);
+    *w = MAX(width1, width2) + padding * 2;
+    *h = font_h + padding * 2 + (*line2 ? font_h + line_gap : 0);
+    *x = 360 - *w / 2;
+    *y = 292;
+}
+
 void menu_white_card_wb_draw(void)
 {
     const int border = white_card_wb_done ? COLOR_GREEN1 : COLOR_ORANGE;
     const int box_x = 326;
-    const int box_y = 132;
+    const int box_y = 206;
     const int box_w = 68;
     const int box_h = 68;
-    const int text_x = 172;
-    const int text_y = 210;
-    const int text_w = 376;
-    const int text_h = 76;
+    const int padding = 12;
+    const int line_gap = 6;
+    int text_x, text_y, text_w, text_h;
+    const char *line1;
+    const char *line2;
 
     if (!white_card_wb_active)
         return;
@@ -308,41 +343,39 @@ void menu_white_card_wb_draw(void)
     bmp_fill(border, box_x, box_y + 5, 5, box_h - 10);
     bmp_fill(border, box_x + box_w - 5, box_y + 5, 5, box_h - 10);
 
+    white_card_wb_panel_geometry(
+        &text_x, &text_y, &text_w, &text_h, &line1, &line2);
     bmp_fill(COLOR_BLACK, text_x, text_y, text_w, text_h);
-    if (white_card_wb_done)
-    {
-        const char *line = "White Balance Set";
-        int width = bmp_string_width(FONT_MED, line);
-        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
-            360 - width / 2, 236, "%s", line);
-    }
-    else if (white_card_wb_capturing)
-    {
-        const char *line = "Setting White Balance...";
-        int width = bmp_string_width(FONT_MED, line);
-        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
-            360 - width / 2, 236, "%s", line);
-    }
-    else
-    {
-        const char *line1 = "Place the White Card in";
-        const char *line2 = "the box and press SET";
-        int width1 = bmp_string_width(FONT_MED, line1);
-        int width2 = bmp_string_width(FONT_MED, line2);
-        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
-            360 - width1 / 2, 218, "%s", line1);
-        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
-            360 - width2 / 2, 250, "%s", line2);
-    }
+    /* RBF fonts do not implement NO_BG_ERASE; using it became palette 0xFF
+     * and produced a cyan fringe. The already-black panel is the true bg. */
+    bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+        360 - bmp_string_width(FONT_MED, line1) / 2,
+        text_y + padding, "%s", line1);
+    if (line2)
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+            360 - bmp_string_width(FONT_MED, line2) / 2,
+            text_y + padding + fontspec_font(FONT_MED)->height + line_gap,
+            "%s", line2);
 }
 
 int menu_white_card_wb_handle_touch(int x, int y)
 {
+    int text_x, text_y, text_w, text_h;
+    const char *line1;
+    const char *line2;
+    int in_guide;
+    int in_panel;
+
     /* The guide and message are intentionally inert. A tap outside them is
      * the only touch gesture that dismisses this exclusive capture mode. */
     if (!white_card_wb_active)
         return 1;
-    if (x < 172 || x >= 548 || y < 128 || y >= 286)
+    white_card_wb_panel_geometry(
+        &text_x, &text_y, &text_w, &text_h, &line1, &line2);
+    in_guide = x >= 326 && x < 394 && y >= 206 && y < 274;
+    in_panel = x >= text_x && x < text_x + text_w &&
+               y >= text_y && y < text_y + text_h;
+    if (!in_guide && !in_panel)
         menu_white_card_wb_close();
     return 0;
 }

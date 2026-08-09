@@ -447,6 +447,7 @@ static GUARDED_BY(RawRecTask)   uint64_t mlv_start_timestamp = 0;
        GUARDED_BY(RawRecTask)   uint32_t raw_rec_trace_ctx = TRACE_ERROR;
 
 static int raw_rec_should_preview(void);
+static void lvrecov_log_state(void);
 
 /* old mlv_rec interface stuff here */
 struct msg_queue *mlv_block_queue = NULL;
@@ -2178,6 +2179,10 @@ unsigned int raw_rec_polling_cbr(unsigned int unused)
 {
     if (!compress_mq) return 0;
 
+    static int lvrecov_aux = INT_MIN;
+    if (should_run_polling_action(500, &lvrecov_aux))
+        lvrecov_log_state();
+
     raw_lv_request_update();
 
     /* auto-disable raw video in photo mode or outside LiveView */
@@ -2973,6 +2978,81 @@ int raw_rec_start_ready(void)
         fps, raw_ready, geometry_ready, buffers_ready, edmac_ready,
         res_x, res_y, valid_slot_count, max_frame_size, (uint32_t) raw_info.buffer);
     return 0;
+}
+
+/* Event-only diagnostics for unstable LiveView transitions. */
+#define LVRECOV_LOG_FILE "ML/LOGS/LVRECOV.LOG"
+
+static void lvrecov_log_state(void)
+{
+    static int last_lv = -1;
+    static int last_invalid = -1;
+    static int last_fps = -1;
+    static int last_zoom = -1;
+    static int last_crop = -1;
+    static int last_ar = -1;
+    static int last_res_x = -1;
+    static int last_res_y = -1;
+    static int last_raw_x = -1;
+    static int last_raw_y = -1;
+
+    /* Never touch the card from this diagnostic path while a clip is active. */
+    if (RAW_IS_RECORDING || RAW_IS_PREPARING)
+        return;
+
+    int fps = fps_get_current_x1000();
+    int zoom = lv_dispsize;
+    int crop = get_config_var("crop.preset");
+    int ar = get_config_var("crop.preset_aspect_ratio");
+    int raw_ready = raw_params_ready_for_rec();
+    int geometry_ready = raw_info.width > 0 && raw_info.height > 0 && raw_info.buffer;
+    int buffers_ready = max_frame_size > VIDF_HDR_SIZE
+        && frame_size_uncompressed > 0 && valid_slot_count >= 2;
+    uint32_t edmac_read = edmac_get_base(OUTPUT_COMPRESSION ? 8 : edmac_read_chan);
+    uint32_t edmac_write = edmac_get_base(raw_write_chan);
+    int edmac_ready = edmac_read != 0xffffffff && edmac_write != 0xffffffff;
+    int invalid = lv && (fps <= 0 || !raw_ready || !geometry_ready || !buffers_ready || !edmac_ready);
+
+    if (lv == last_lv && invalid == last_invalid && fps == last_fps && zoom == last_zoom
+        && crop == last_crop && ar == last_ar && res_x == last_res_x && res_y == last_res_y
+        && raw_info.width == last_raw_x && raw_info.height == last_raw_y)
+        return;
+
+    last_lv = lv;
+    last_invalid = invalid;
+    last_fps = fps;
+    last_zoom = zoom;
+    last_crop = crop;
+    last_ar = ar;
+    last_res_x = res_x;
+    last_res_y = res_y;
+    last_raw_x = raw_info.width;
+    last_raw_y = raw_info.height;
+
+    char line[256];
+    int len = snprintf(line, sizeof(line),
+        "%08d %s lv=%d fps=%d zoom=x%d crop=%d ar=%d out=%dx%d raw=%dx%d buf=%08x slots=%d frame=%d ready=%d/%d/%d/%d edmac=%08x/%08x\n",
+        get_ms_clock(), invalid ? "INVALID" : "STATE",
+        lv, fps, zoom, crop, ar, res_x, res_y, raw_info.width, raw_info.height,
+        (uint32_t)raw_info.buffer, valid_slot_count, max_frame_size,
+        raw_ready, geometry_ready, buffers_ready, edmac_ready, edmac_read, edmac_write);
+
+    unsigned size = 0;
+    FILE *f = FIO_CreateFileOrAppend(LVRECOV_LOG_FILE);
+    if (!f)
+        return;
+
+    FIO_GetFileSize(LVRECOV_LOG_FILE, &size);
+    if (size > 64 * 1024)
+    {
+        FIO_CloseFile(f);
+        f = FIO_CreateFile(LVRECOV_LOG_FILE);
+        if (!f)
+            return;
+    }
+
+    FIO_WriteFile(f, line, len);
+    FIO_CloseFile(f);
 }
 
 

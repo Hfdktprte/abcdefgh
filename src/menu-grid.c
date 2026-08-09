@@ -238,19 +238,21 @@ int menu_white_card_wb_is_active(void)
 
 static void white_card_wb_clear_overlay(void)
 {
-    /* Only clear pixels owned by this overlay; do not disturb the live image. */
-    bmp_fill(COLOR_EMPTY, 294, 128, 132, 80);
-    bmp_fill(COLOR_EMPTY, 190, 206, 340, 92);
+    /* Include a generous glyph margin so no antialiasing/shadow pixels from
+     * the previous frame remain after dismissing the overlay. */
+    bmp_fill(COLOR_EMPTY, 160, 120, 400, 184);
 }
 
 void menu_white_card_wb_close(void)
 {
     if (!white_card_wb_active)
         return;
-    white_card_wb_clear_overlay();
     white_card_wb_active = 0;
     white_card_wb_capturing = 0;
     white_card_wb_done = 0;
+    /* Mark inactive before clearing, so a concurrent status-bar refresh can
+     * no longer repaint the overlay after this cleanup pass. */
+    white_card_wb_clear_overlay();
     lens_display_set_dirty();
 }
 
@@ -289,34 +291,48 @@ void menu_white_card_wb_draw(void)
     const int box_y = 132;
     const int box_w = 68;
     const int box_h = 68;
-    const int text_x = 212;
-    const int text_y = 206;
+    const int text_x = 172;
+    const int text_y = 210;
+    const int text_w = 376;
+    const int text_h = 76;
 
     if (!white_card_wb_active)
         return;
 
     /* Thick guide border, deliberately centered on the spot sampled by
      * Magic Lantern's existing automatic Kelvin/green calculation. */
-    for (int i = 0; i < 4; i++)
-        bmp_draw_rect(border, box_x + i, box_y + i, box_w - i * 2, box_h - i * 2);
+    /* Filled edges are more reliable than nested one-pixel rectangles on the
+     * EOS M bitmap buffer and remain visibly thick over bright Live View. */
+    bmp_fill(border, box_x, box_y, box_w, 5);
+    bmp_fill(border, box_x, box_y + box_h - 5, box_w, 5);
+    bmp_fill(border, box_x, box_y + 5, 5, box_h - 10);
+    bmp_fill(border, box_x + box_w - 5, box_y + 5, 5, box_h - 10);
 
-    bmp_fill(COLOR_BLACK, text_x, text_y, 296, 83);
+    bmp_fill(COLOR_BLACK, text_x, text_y, text_w, text_h);
     if (white_card_wb_done)
     {
-        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 278, 233,
-            "White Balance Set");
+        const char *line = "White Balance Set";
+        int width = bmp_string_width(FONT_MED, line);
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
+            360 - width / 2, 236, "%s", line);
     }
     else if (white_card_wb_capturing)
     {
-        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 254, 233,
-            "Setting White Balance...");
+        const char *line = "Setting White Balance...";
+        int width = bmp_string_width(FONT_MED, line);
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
+            360 - width / 2, 236, "%s", line);
     }
     else
     {
-        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 226, 226,
-            "Place a White Card In");
-        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 226, 258,
-            "the box and Press SET");
+        const char *line1 = "Place the White Card in";
+        const char *line2 = "the box and press SET";
+        int width1 = bmp_string_width(FONT_MED, line1);
+        int width2 = bmp_string_width(FONT_MED, line2);
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
+            360 - width1 / 2, 218, "%s", line1);
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, NO_BG_ERASE),
+            360 - width2 / 2, 250, "%s", line2);
     }
 }
 
@@ -326,7 +342,7 @@ int menu_white_card_wb_handle_touch(int x, int y)
      * the only touch gesture that dismisses this exclusive capture mode. */
     if (!white_card_wb_active)
         return 1;
-    if (x < 190 || x >= 530 || y < 128 || y >= 298)
+    if (x < 172 || x >= 548 || y < 128 || y >= 286)
         menu_white_card_wb_close();
     return 0;
 }
@@ -356,7 +372,11 @@ int menu_white_card_wb_handle_key(int button_code, int is_fake)
         return 1;
     }
 
-    if (button_code == BGMT_PRESS_SET && !white_card_wb_capturing && !white_card_wb_done)
+    if ((button_code == BGMT_PRESS_SET
+#ifdef BGMT_Q_SET
+         || button_code == BGMT_Q_SET
+#endif
+        ) && !white_card_wb_capturing && !white_card_wb_done)
     {
         white_card_wb_capturing = 1;
         white_card_wb_auto_start();

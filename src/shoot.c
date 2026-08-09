@@ -2053,6 +2053,12 @@ void white_card_wb_auto_start()
 {
     if (lv)
     {
+        /* Custom/preset WB may leave Kelvin unset or stale. Start the solver
+         * from a known valid midpoint; it will immediately measure and refine
+         * this value from the white-card box. */
+        if (lens_info.wb_mode != WB_KELVIN ||
+            lens_info.kelvin < KELVIN_MIN || lens_info.kelvin > KELVIN_MAX)
+            lens_set_kelvin(5500);
         /* The Quick Panel guide is centered at x=360, y=166. */
         white_card_wb_sample_active = 1;
         kelvin_auto_flag = 1;
@@ -2134,7 +2140,8 @@ static int crit_kelvin(int k)
     int R,G,B;
     yuv2rgb(Y,U,V,&R,&G,&B);
     
-    NotifyBox(5000, "Adjusting white balance...");
+    if (!white_card_wb_sample_active)
+        NotifyBox(5000, "Adjusting white balance...");
 
     return B - R;
 }
@@ -2156,7 +2163,8 @@ static int crit_wbs_gm(int k)
     int R,G,B;
     yuv2rgb(Y,U,V,&R,&G,&B);
 
-    NotifyBox(5000, "Adjusting white balance shift...");
+    if (!white_card_wb_sample_active)
+        NotifyBox(5000, "Adjusting white balance shift...");
 
     //~ BMP_LOCK( draw_ml_bottombar(0,0); )
     return (R+B)/2 - G;

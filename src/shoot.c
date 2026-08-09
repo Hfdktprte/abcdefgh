@@ -2059,7 +2059,7 @@ void white_card_wb_auto_start()
         if (lens_info.wb_mode != WB_KELVIN ||
             lens_info.kelvin < KELVIN_MIN || lens_info.kelvin > KELVIN_MAX)
             lens_set_kelvin(5500);
-        /* The Quick Panel guide is centered at x=360, y=166. */
+        /* The Quick Panel guide is centered at x=360, y=240. */
         white_card_wb_sample_active = 1;
         kelvin_auto_flag = 1;
         wbs_gm_auto_flag = 1;
@@ -2133,7 +2133,7 @@ static int crit_kelvin(int k)
 
     int Y, U, V;
     if (white_card_wb_sample_active)
-        get_spot_yuv_ex(34, 0, -74, &Y, &U, &V, 0, 0);
+        get_spot_yuv_ex(34, 0, 0, &Y, &U, &V, 0, 0);
     else
         get_spot_yuv(100, &Y, &U, &V);
 
@@ -2156,7 +2156,7 @@ static int crit_wbs_gm(int k)
 
     int Y, U, V;
     if (white_card_wb_sample_active)
-        get_spot_yuv_ex(34, 0, -74, &Y, &U, &V, 0, 0);
+        get_spot_yuv_ex(34, 0, 0, &Y, &U, &V, 0, 0);
     else
         get_spot_yuv(100, &Y, &U, &V);
 

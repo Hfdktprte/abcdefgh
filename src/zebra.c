@@ -40,6 +40,7 @@
 #include "focus.h"
 #include "lvinfo.h"
 #include "powersave.h"
+#include "menu-grid.h"
 
 #include "imgconv.h"
 #include "falsecolor.h"
@@ -4770,6 +4771,14 @@ livev_hipriority_task( void* unused )
                 if (lens_display_dirty) lens_display_dirty--;
             }
         }
+
+#ifdef CONFIG_SLIM_MENUS
+        /* Keep the white-card guide as the final bitmap layer. Focus peaking,
+         * zebras and cropmark refreshes can otherwise erase parts of it while
+         * the camera is moving, which looks like overlay flicker. */
+        if (lv && !gui_menu_shown() && menu_white_card_wb_is_active())
+            BMP_LOCK(menu_white_card_wb_draw();)
+#endif
     }
 }
 

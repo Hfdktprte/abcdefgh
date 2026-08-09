@@ -34,6 +34,7 @@ static int quick_screen_touch_latched = 0;
 static int white_card_wb_active = 0;
 static int white_card_wb_capturing = 0;
 static int white_card_wb_done = 0;
+static int white_card_wb_draw_state = -1;
 /* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
 /* Persisted Quick Panel preference: 0 = shutter angle, 1 = shutter speed. */
@@ -250,6 +251,7 @@ void menu_white_card_wb_close(void)
     white_card_wb_active = 0;
     white_card_wb_capturing = 0;
     white_card_wb_done = 0;
+    white_card_wb_draw_state = -1;
     /* Mark inactive before clearing, so a concurrent status-bar refresh can
      * no longer repaint the overlay after this cleanup pass. */
     white_card_wb_clear_overlay();
@@ -278,6 +280,7 @@ void menu_white_card_wb_open(void)
     white_card_wb_active = 1;
     white_card_wb_capturing = 0;
     white_card_wb_done = 0;
+    white_card_wb_draw_state = -1;
     quick_screen_active = 0;
     quick_screen_touch_latched = 0;
     lens_display_set_dirty();
@@ -330,9 +333,20 @@ void menu_white_card_wb_draw(void)
     int text_x, text_y, text_w, text_h;
     const char *line1;
     const char *line2;
+    int draw_state;
 
     if (!white_card_wb_active)
         return;
+
+    draw_state = white_card_wb_done ? 2 : white_card_wb_capturing ? 1 : 0;
+    if (draw_state != white_card_wb_draw_state)
+    {
+        /* State text has different dimensions. Clear the complete maximum
+         * panel once before drawing the new state, otherwise the old two-line
+         * message remains underneath the smaller progress message. */
+        bmp_fill(COLOR_EMPTY, 100, 286, 520, 104);
+        white_card_wb_draw_state = draw_state;
+    }
 
     /* Thick guide border, deliberately centered on the spot sampled by
      * Magic Lantern's existing automatic Kelvin/green calculation. */

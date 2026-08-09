@@ -5,6 +5,9 @@
 #include "menu.h"
 #include "menu-grid.h"
 #include "gui-common.h"
+#include "config.h"
+#include "lens.h"
+#include "fps.h"
 
 #ifdef CONFIG_SLIM_MENUS
 
@@ -27,6 +30,8 @@ static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
 /* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
+/* Persisted Quick Panel preference: 0 = shutter angle, 1 = shutter speed. */
+CONFIG_INT("menu.quick.shutter.speed", quick_screen_shutter_speed, 0);
 
 #define QUICK_SCREEN_COLS  4
 #define QUICK_SCREEN_ROWS  2
@@ -260,10 +265,20 @@ static int quick_screen_value(
 
     if (index == 5)
     {
-        /* The normal Exposure row already calculates the angle from current
-         * FPS. Reuse those digits and draw a Canon-sized degree ring. */
-        snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
-        *draw_degree = info.rinfo[0] != '\0';
+        if (quick_screen_shutter_speed)
+        {
+            /* This is the effective current shutter speed, including the
+             * active FPS/timing adjustment, e.g. 1/60.04. */
+            snprintf(buf, size, "%s", lens_format_shutter_reciprocal(
+                get_current_shutter_reciprocal_x1000(), 5));
+        }
+        else
+        {
+            /* The normal Exposure row already calculates the angle from
+             * current FPS. Reuse those digits and draw the degree ring. */
+            snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
+            *draw_degree = info.rinfo[0] != '\0';
+        }
     }
     else if (index == 6)
     {
@@ -450,7 +465,8 @@ int menu_quick_screen_handle_touch(int x, int y)
         return 0;
     }
 
-    /* Text is not empty space: leave the page open without changing anything. */
+    /* Text is not empty space. Only the shutter value itself toggles its
+     * display format; its bounds deliberately stay clear of both arrows. */
     for (index = 0; index < QUICK_SCREEN_COUNT; index++)
     {
         int width;
@@ -463,6 +479,17 @@ int menu_quick_screen_handle_touch(int x, int y)
         width = bmp_string_width(FONT_CANON, value) +
                 (draw_degree ? 12 : 0);
         text_x = cx - width / 2;
+        if (index == 5 &&
+            x >= text_x && x <= text_x + width &&
+            y >= value_y && y < down_tip_y - 40)
+        {
+            quick_screen_touch_latched = 1;
+            set_config_var_ptr(
+                &quick_screen_shutter_speed,
+                !quick_screen_shutter_speed);
+            menu_redraw();
+            return 0;
+        }
         if (x >= text_x - 8 && x <= text_x + width + 8 &&
             y >= value_y - 6 && y <= value_y + text_h + 6)
         {

@@ -1779,15 +1779,20 @@ static int autodetect_black_level(int* black_mean, int* black_stdev_x100)
         
     if (raw_info.active_area.x1 > 50) /* use the left black bar for black calibration */
     {
+        int x1 = 16;
+        int x2 = raw_info.active_area.x1 - 16;
+        int y1 = raw_info.active_area.y1 + 20;
+        int y2 = raw_info.active_area.y2 - 20;
+        if (x2 <= x1 || y1 < 0 || y2 <= y1 + 2)
+            return 0;
+
         autodetect_black_level_calc(
-            16, raw_info.active_area.x1 - 16,
-            raw_info.active_area.y1 + 20, raw_info.active_area.y2 - 20, 
+            x1, x2, y1, y2,
             3, 16,
             &mean1, &stdev1
         );
         autodetect_black_level_calc(
-            16, raw_info.active_area.x1 - 16,
-            raw_info.active_area.y1 + 22, raw_info.active_area.y2 - 20, 
+            x1, x2, y1 + 2, y2,
             3, 16,
             &mean2, &stdev2
         );
@@ -1795,27 +1800,32 @@ static int autodetect_black_level(int* black_mean, int* black_stdev_x100)
         /* for dual iso: increase tolerance of the cleaner exposure (there is interference from the noisier one) */
         int ref_stdev = MAX(stdev1, stdev2);
         
-        if (!black_level_check_left(mean1, ref_stdev, raw_info.active_area.y1 + 20, raw_info.active_area.y2 - 20))
+        if (!black_level_check_left(mean1, ref_stdev, y1, y2))
         {
             return 0;
         }
 
-        if (!black_level_check_left(mean2, ref_stdev, raw_info.active_area.y1 + 22, raw_info.active_area.y2 - 20))
+        if (!black_level_check_left(mean2, ref_stdev, y1 + 2, y2))
         {
             return 0;
         }
     }
     else /* use the top black bar for black calibration */
     {
+        int x1 = raw_info.active_area.x1 + 20;
+        int x2 = raw_info.active_area.x2 - 20;
+        int y1 = 4;
+        int y2 = raw_info.active_area.y1 - 4;
+        if (x1 < 0 || x2 <= x1 || y2 <= y1 + 2)
+            return 0;
+
         autodetect_black_level_calc(
-            raw_info.active_area.x1 + 20, raw_info.active_area.x2 - 20, 
-            4, raw_info.active_area.y1 - 4,
+            x1, x2, y1, y2,
             16, 4,
             &mean1, &stdev1
         );
         autodetect_black_level_calc(
-            raw_info.active_area.x1 + 20, raw_info.active_area.x2 - 20, 
-            6, raw_info.active_area.y1 - 4,
+            x1, x2, y1 + 2, y2,
             16, 4,
             &mean2, &stdev2
         );

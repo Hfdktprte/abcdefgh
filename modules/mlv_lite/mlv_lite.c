@@ -2953,6 +2953,28 @@ static void edmac_stop_spy()
     edmac_spy_active = 0;
 }
 
+/* Record only from a fully refreshed LiveView/RAW/EDMAC state. */
+static REQUIRES(RawRecTask)
+int raw_rec_start_ready(void)
+{
+    int fps = fps_get_current_x1000();
+    int raw_ready = raw_params_ready_for_rec();
+    int geometry_ready = res_x > 0 && res_y > 0 && raw_info.buffer;
+    int buffers_ready = max_frame_size > VIDF_HDR_SIZE
+        && frame_size_uncompressed > 0 && valid_slot_count >= 2;
+    int edmac_ready = edmac_get_base(raw_write_chan) != 0xffffffff
+        && edmac_get_base(OUTPUT_COMPRESSION ? 8 : edmac_read_chan) != 0xffffffff;
+
+    if (fps > 0 && raw_ready && geometry_ready && buffers_ready && edmac_ready)
+        return 1;
+
+    trace_write(raw_rec_trace_ctx,
+        "[start-check] fps=%d raw=%d geom=%d buf=%d edmac=%d res=%dx%d slots=%d frame=%d rawbuf=%x",
+        fps, raw_ready, geometry_ready, buffers_ready, edmac_ready,
+        res_x, res_y, valid_slot_count, max_frame_size, (uint32_t) raw_info.buffer);
+    return 0;
+}
+
 
 static void edmac_cbr_r(void *ctx)
 {
@@ -3729,6 +3751,12 @@ void raw_video_rec_task(uint32_t thread)
         setup_bit_depth();
 #endif
         give_semaphore(settings_sem);
+
+        if (!raw_rec_start_ready())
+        {
+            NotifyBox(2000, "LiveView stabilizing");
+            goto cleanup;
+        }
 
         hack_liveview(0);
         liveview_hacked = 1;

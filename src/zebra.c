@@ -4262,6 +4262,9 @@ int should_draw_bottom_graphs()
 
 void draw_histogram_and_waveform(int allow_play)
 {
+#ifdef CONFIG_SLIM_MENUS
+    if (menu_white_card_wb_is_active()) return;
+#endif
 
     if (menu_active_and_not_hidden()) return;
     if (!get_global_draw()) return;
@@ -4427,7 +4430,8 @@ clearscreen_loop:
         
         #ifdef FEATURE_CROPMARKS
         // since this task runs at 10Hz, I prefer cropmark redrawing here
-        cropmark_step();
+        if (!menu_white_card_wb_is_active())
+            cropmark_step();
         #endif
     }
 }
@@ -4594,6 +4598,17 @@ livev_hipriority_task( void* unused )
         {
             msleep(100);
         }
+
+#ifdef CONFIG_SLIM_MENUS
+        /* This is an exclusive calibration screen. Leave its bitmap pixels
+         * untouched while it is active; repainting the RBF text every frame
+         * was itself visible as flicker. Live View continues underneath. */
+        if (menu_white_card_wb_is_active())
+        {
+            msleep(20);
+            continue;
+        }
+#endif
 
         int zd = monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras (should match the one from draw_zebra_and_focus)
         if (!zd) digic_zebra_cleanup();
@@ -4772,13 +4787,6 @@ livev_hipriority_task( void* unused )
             }
         }
 
-#ifdef CONFIG_SLIM_MENUS
-        /* Keep the white-card guide as the final bitmap layer. Focus peaking,
-         * zebras and cropmark refreshes can otherwise erase parts of it while
-         * the camera is moving, which looks like overlay flicker. */
-        if (lv && !gui_menu_shown() && menu_white_card_wb_is_active())
-            BMP_LOCK(menu_white_card_wb_draw();)
-#endif
     }
 }
 

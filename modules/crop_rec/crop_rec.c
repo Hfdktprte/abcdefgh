@@ -4949,6 +4949,7 @@ static int patch_active = 0;
 #define EOSM_LV_GUARD_SETTLE_MS 350
 #define EOSM_LV_GUARD_QUIET_MS 120
 #define EOSM_LV_GUARD_STABLE_FRAMES 3
+#define EOSM_LV_GUARD_MAX_RECOVERIES 2
 static volatile int eosm_lv_guard_pending = 1;
 static volatile int eosm_lv_guard_busy = 0;
 static int eosm_lv_guard_started;
@@ -7279,6 +7280,28 @@ static int eosm_lv_guard_pipeline_ready(void)
     return get_ms_clock() - eosm_lv_guard_quiet_since >= EOSM_LV_GUARD_QUIET_MS;
 }
 
+/* The buffer can be stable while Canon is still exposing the previous movie
+ * layout (for example 2520x1080 at 29.97 fps before a 1x3 preset arrives).
+ * Do not hand that transitional layout to the UI or recorder as a valid crop
+ * frame.  The EOS M RAW buffer includes a small sensor margin around the
+ * selected output, hence the deliberately narrow positive allowance. */
+static int eosm_lv_guard_selected_geometry_ready(void)
+{
+    int expected_w, expected_h;
+
+    /* Full-resolution LV is a separate 3 fps path, not a movie crop layout. */
+    if (slim_mode_ui == 3 ||
+        (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu == 5))
+        return 1;
+
+    slim_crop_expected_res(&expected_w, &expected_h);
+    if (expected_w <= 0 || expected_h <= 0)
+        return 0;
+
+    return raw_info.width  >= expected_w && raw_info.width  <= expected_w + 128 &&
+           raw_info.height >= expected_h && raw_info.height <= expected_h + 64;
+}
+
 static void eosm_lv_guard_clear(void)
 {
     eosm_lv_guard_pending = 0;
@@ -7370,29 +7393,35 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
 
         case EOSM_LV_GUARD_VALIDATE:
             /* Verify x5 remains quiet after Canon has had time to consume the
-             * final zoom request. Do not declare success immediately after a
-             * register or property write. */
+             * final zoom request. A quiet buffer alone is not enough: Canon
+             * may still be serving the old preset's geometry here. */
             if (!eosm_lv_guard_pipeline_ready() ||
                 now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
                 return 1;
-            if (!crop_rec_needs_lv_refresh())
+            if (eosm_lv_guard_selected_geometry_ready() &&
+                !crop_rec_needs_lv_refresh())
             {
                 eosm_lv_guard_clear();
                 return 0;
             }
 
-            /* One automatic x1/x5 recovery is safe. A second failure means
-             * Canon has not supplied a usable pipeline; leave controls free
-             * and retain the normal yellow refresh warning instead of looping
-             * forever or issuing unsafe repeated zoom requests. */
-            if (eosm_lv_guard_retries >= 1)
+            /* Rebuild the selected x5 path again when Canon retained a stable
+             * but wrong geometry. This is the automatic equivalent of the
+             * manual zoom-out/zoom-in recovery, without ever exposing the
+             * temporary resolution as a yellow exclamation mark. */
+            if (eosm_lv_guard_retries >= EOSM_LV_GUARD_MAX_RECOVERIES)
             {
-                NotifyBox(2000, "Live View not ready - retry after Canon settles");
-                eosm_lv_guard_clear();
-                return 0;
+                /* Keep waiting for Canon instead of declaring the wrong preset
+                 * ready. A later LV property update restarts this guard. */
+                eosm_lv_guard_state = EOSM_LV_GUARD_WAIT;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
+                eosm_lv_guard_retries = 0;
+                return 1;
             }
 
-            /* One failed validation gets a controlled x1 -> x5 rebuild.
+            /* A failed validation gets a controlled x1 -> x5 rebuild.
              * Do not use x10: it is a focus-only Canon path. */
             eosm_lv_guard_set_zoom(1);
             eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;

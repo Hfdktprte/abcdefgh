@@ -147,18 +147,10 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
     else
         target_risk = 659;
 
-    /* Ease only across real histogram updates. This removes frame-to-frame
-     * steps without creating a new timer or changing the refresh cadence. */
-    if (hist_shadow_meter_risk < 0)
-        hist_shadow_meter_risk = target_risk;
-    else
-    {
-        int delta = target_risk - hist_shadow_meter_risk;
-        int step = delta / 3;
-        if (!step && delta)
-            step = delta > 0 ? 1 : -1;
-        hist_shadow_meter_risk += step;
-    }
+    /* The histogram is already temporally sampled at the monitoring refresh
+     * rate. Do not add a second exponential smoother here: it made the meter
+     * take many histogram updates (several seconds) to reach the real scene. */
+    hist_shadow_meter_risk = target_risk;
 
     /* Color states are coverage based: <1% green, 1-10% yellow, and red
      * only for widespread crushed shadows at the actual RAW noise floor. */

@@ -30,6 +30,8 @@ int menu_white_card_wb_is_active(void);
 void menu_white_card_wb_open(void);
 void menu_white_card_wb_close(void);
 void menu_white_card_wb_draw(void);
+/** Process pending paint/clear requests from the Live View rendering task. */
+void menu_white_card_wb_render_step(void);
 int menu_white_card_wb_handle_touch(int x, int y);
 int menu_white_card_wb_handle_key(int button_code, int is_fake);
 void menu_white_card_wb_capture_finished(void);

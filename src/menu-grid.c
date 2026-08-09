@@ -35,6 +35,11 @@ static int white_card_wb_active = 0;
 static int white_card_wb_capturing = 0;
 static int white_card_wb_done = 0;
 static int white_card_wb_draw_state = -1;
+/* Bitmap VRAM must only be touched by the Live View rendering task. Input and
+ * timer callbacks merely set these requests; drawing from those callbacks can
+ * race Canon's display task and cause Err70 on EOS M. */
+static volatile int white_card_wb_paint_pending = 0;
+static volatile int white_card_wb_close_pending = 0;
 /* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
 /* Persisted Quick Panel preference: 0 = shutter angle, 1 = shutter speed. */
@@ -248,14 +253,8 @@ void menu_white_card_wb_close(void)
 {
     if (!white_card_wb_active)
         return;
-    white_card_wb_active = 0;
-    white_card_wb_capturing = 0;
-    white_card_wb_done = 0;
-    white_card_wb_draw_state = -1;
-    /* Mark inactive before clearing, so a concurrent status-bar refresh can
-     * no longer repaint the overlay after this cleanup pass. */
-    white_card_wb_clear_overlay();
-    lens_display_set_dirty();
+    white_card_wb_paint_pending = 0;
+    white_card_wb_close_pending = 1;
 }
 
 static void white_card_wb_close_delayed(int timer, void *opaque)
@@ -265,26 +264,17 @@ static void white_card_wb_close_delayed(int timer, void *opaque)
     menu_white_card_wb_close();
 }
 
-static void white_card_wb_draw_delayed(int timer, void *opaque)
-{
-    (void)timer;
-    (void)opaque;
-    if (!white_card_wb_active)
-        return;
-    BMP_LOCK(menu_white_card_wb_draw();)
-}
-
 void menu_white_card_wb_open(void)
 {
     white_card_wb_active = 1;
     white_card_wb_capturing = 0;
     white_card_wb_done = 0;
     white_card_wb_draw_state = -1;
+    white_card_wb_close_pending = 0;
+    white_card_wb_paint_pending = 1;
     quick_screen_active = 0;
     quick_screen_touch_latched = 0;
     lens_display_set_dirty();
-    /* Let the Quick Panel finish closing, then paint this screen once. */
-    delayed_call(80, white_card_wb_draw_delayed, 0);
 }
 
 static void white_card_wb_panel_geometry(int *x, int *y, int *w, int *h,
@@ -372,6 +362,32 @@ void menu_white_card_wb_draw(void)
             "%s", line2);
 }
 
+void menu_white_card_wb_render_step(void)
+{
+    /* Called only from zebra's Live View renderer, while holding BMP_LOCK. */
+    if (white_card_wb_close_pending)
+    {
+        white_card_wb_close_pending = 0;
+        white_card_wb_paint_pending = 0;
+        white_card_wb_active = 0;
+        white_card_wb_capturing = 0;
+        white_card_wb_done = 0;
+        white_card_wb_draw_state = -1;
+        white_card_wb_clear_overlay();
+        lens_display_set_dirty();
+        return;
+    }
+
+    /* Opening first closes the Quick Panel. Wait for that transition, then
+     * paint the overlay exactly once. */
+    if (white_card_wb_active && white_card_wb_paint_pending &&
+        !gui_menu_shown())
+    {
+        menu_white_card_wb_draw();
+        white_card_wb_paint_pending = 0;
+    }
+}
+
 int menu_white_card_wb_handle_touch(int x, int y)
 {
     int text_x, text_y, text_w, text_h;
@@ -428,7 +444,7 @@ int menu_white_card_wb_handle_key(int button_code, int is_fake)
         white_card_wb_capturing = 1;
         white_card_wb_auto_start();
         lens_display_set_dirty();
-        delayed_call(1, white_card_wb_draw_delayed, 0);
+        white_card_wb_paint_pending = 1;
     }
     return 0;
 }
@@ -440,7 +456,7 @@ void menu_white_card_wb_capture_finished(void)
     white_card_wb_capturing = 0;
     white_card_wb_done = 1;
     lens_display_set_dirty();
-    delayed_call(1, white_card_wb_draw_delayed, 0);
+    white_card_wb_paint_pending = 1;
     delayed_call(1000, white_card_wb_close_delayed, 0);
 }
 
@@ -897,6 +913,7 @@ int menu_white_card_wb_is_active(void) { return 0; }
 void menu_white_card_wb_open(void) { }
 void menu_white_card_wb_close(void) { }
 void menu_white_card_wb_draw(void) { }
+void menu_white_card_wb_render_step(void) { }
 int menu_white_card_wb_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
 int menu_white_card_wb_handle_key(int button_code, int is_fake) { (void)button_code; (void)is_fake; return 1; }
 void menu_white_card_wb_capture_finished(void) { }

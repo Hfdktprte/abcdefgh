@@ -3470,6 +3470,10 @@ dyn_menu_add_entry(struct menu * dyn_menu, struct menu_entry * entry, struct men
 {
     // copy most things from old menu structure to this one
     // except for some essential things :P
+    ASSERT(dyn_entry);
+    if (dyn_entry == NULL)
+        return;
+
     void* next = dyn_entry->next;
     void* prev = dyn_entry->prev;
     int selected = dyn_entry->selected;

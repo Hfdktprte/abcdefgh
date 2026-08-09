@@ -1077,7 +1077,8 @@ int raw_update_params_work()
         {
             /* raw dimensions changed in LiveView? return failure and wait for the next call */
             /* next valid call can be after two frames (until then, return failure) */
-            int frame_duration = 1000000 / fps_get_current_x1000();
+            int fps = fps_get_current_x1000();
+            int frame_duration = fps ? 1000000 / fps : 0;
             raw_set_dirty_with_timeout(frame_duration * 2);
             
             raw_info.width = width;
@@ -1655,6 +1656,14 @@ static void autodetect_black_level_calc(int x1, int x2, int y1, int y2, int dx, 
 {
     int black = 0;
     int num = 0;
+
+    if (x1 < 0 || x2 <= x1 || y1 < 0 || y2 <= y1 || dx <= 0 || dy <= 0)
+    {
+        *out_mean = 2048;
+        *out_stdev_x100 = 800;
+        return;
+    }
+
     /* compute average level */
     for (int y = y1; y < y2; y += dy)
     {
@@ -1665,6 +1674,13 @@ static void autodetect_black_level_calc(int x1, int x2, int y1, int y2, int dx, 
             black += p;
             num++;
         }
+    }
+
+    if (num == 0)
+    {
+        *out_mean = 2048;
+        *out_stdev_x100 = 800;
+        return;
     }
 
     int mean = black / num;

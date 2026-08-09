@@ -945,6 +945,9 @@ static int get_estimated_compression_ratio()
 static int predict_frames(int write_speed, int available_slots)
 {
     int fps = fps_get_current_x1000();
+    if (fps == 0)
+        return INT_MAX;
+
     int avg_frame_size = (OUTPUT_COMPRESSION)
          ? frame_size_uncompressed / 100 * get_estimated_compression_ratio()
          : max_frame_size;
@@ -1009,13 +1012,16 @@ static MENU_UPDATE_FUNC(write_speed_update)
             OUTPUT_COMPRESSION ? " (%d%%)" : "",
             get_estimated_compression_ratio(), 0
         );
-        MENU_SET_WARNING(ok ? MENU_WARN_INFO : MENU_WARN_ADVICE, 
-            "%d.%d MB/s, %dx%s, %d.%03dp%s. %s",
-            speed/10, speed%10,
-            valid_slot_count, format_memory_size(max_frame_size),
-            fps/1000, fps%1000,
-            compress, guess_how_many_frames()
-        );
+        if (fps != 0)
+        {
+            MENU_SET_WARNING(ok ? MENU_WARN_INFO : MENU_WARN_ADVICE,
+                "%d.%d MB/s, %dx%s, %d.%03dp%s. %s",
+                speed/10, speed%10,
+                valid_slot_count, format_memory_size(max_frame_size),
+                fps/1000, fps%1000,
+                compress, guess_how_many_frames()
+            );
+        }
     }
 }
 
@@ -1413,15 +1419,18 @@ static MENU_UPDATE_FUNC(pre_recording_update)
         if (pre_frames == max_frames)
         {
             int fps = fps_get_current_x1000();
-            int total_sec = (slot_count * 1000 * 10 + fps/2) / fps;
-            int pre_sec   = (pre_frames * 1000 * 10 + fps/2) / fps;
-            MENU_SET_RINFO("max %d.%d", pre_sec/10, pre_sec%10);
-            MENU_SET_WARNING(
-                MENU_WARN_INFO,
-                "Using %d.%ds (%d frames) out of %d.%ds (%d frames) for pre-recording.",
-                pre_sec/10, pre_sec%10, pre_frames,
-                total_sec/10, total_sec%10, slot_count
-            );
+            if (fps != 0)
+            {
+                int total_sec = (slot_count * 1000 * 10 + fps/2) / fps;
+                int pre_sec   = (pre_frames * 1000 * 10 + fps/2) / fps;
+                MENU_SET_RINFO("max %d.%d", pre_sec/10, pre_sec%10);
+                MENU_SET_WARNING(
+                    MENU_WARN_INFO,
+                    "Using %d.%ds (%d frames) out of %d.%ds (%d frames) for pre-recording.",
+                    pre_sec/10, pre_sec%10, pre_frames,
+                    total_sec/10, total_sec%10, slot_count
+                );
+            }
         }
     }
 }
@@ -1966,6 +1975,9 @@ static int update_status(char * buffer, int buffer_size)
 {
     /* Calculate the stats */
     int fps = fps_get_current_x1000();  /* FPS x1000 */
+    if (fps == 0)
+        return COLOR_DARK_RED;
+
     int p = pre_recorded_frames();      /* pre-recorded frames */
     int r = (frame_count - 1 - p);      /* recorded frames */
     int t = (r * 1000) / fps;           /* recorded time - truncated */
@@ -2924,7 +2936,11 @@ static void edmac_start_spy()
     /* write to raw buffer is always done on raw_write_chan (EDMAC_RAW_SLURP) */
     edmac_read_base = edmac_get_base(OUTPUT_COMPRESSION ? 8 : edmac_read_chan);
     edmac_wraw_base = edmac_get_base(raw_write_chan);
-    edmac_frame_duration = 1e9 / fps_get_current_x1000();
+    int fps = fps_get_current_x1000();
+    if (fps == 0)
+        return;
+
+    edmac_frame_duration = 1e9 / fps;
     if (show_edmac && !edmac_spy_active && !RAW_IS_IDLE)
     {
         edmac_spy_active = 1;
@@ -3327,7 +3343,8 @@ void init_mlv_chunk_headers(struct raw_info * raw_info)
         file_hdr[thread].audioClass = 0;
         file_hdr[thread].videoFrameCount = 0; //autodetect
         file_hdr[thread].audioFrameCount = 0;
-        file_hdr[thread].sourceFpsNom = fps_get_current_x1000();
+        int fps = fps_get_current_x1000();
+        file_hdr[thread].sourceFpsNom = fps ? fps : 1;
         file_hdr[thread].sourceFpsDenom = 1000;
     }
     
@@ -3743,14 +3760,19 @@ void raw_video_rec_task(uint32_t thread)
             beep();
         }
 
+        fps = fps_get_current_x1000();
+        if (fps == 0)
+        {
+            NotifyBox(2000, "LiveView not ready");
+            goto cleanup;
+        }
+
         /* signal start of recording to the compression task */
         msg_queue_post(compress_mq, INT_MAX);
         
         /* fake recording status, to integrate with other ml stuff (e.g. hdr video */
         set_recording_custom(CUSTOM_RECORDING_RAW);
         
-        fps = fps_get_current_x1000();
-
         /* this will enable the vsync CBR and the other task(s) */
         raw_recording_state = pre_record ? RAW_PRE_RECORDING : RAW_RECORDING;
     }

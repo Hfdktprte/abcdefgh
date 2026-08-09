@@ -43,6 +43,7 @@
 #include "focus.h"
 #include "lvinfo.h"
 #include "powersave.h"
+#include "menu-grid.h"
 
 // for movie logging
 static char* mvr_logfile_buffer = 0;
@@ -132,6 +133,8 @@ update_lens_display(int top, int bottom)
 
     if (top) draw_ml_topbar();
     if (bottom) draw_ml_bottombar();
+    if (menu_white_card_wb_is_active())
+        menu_white_card_wb_draw();
     extern void boot_logo_overlay_updated(int top, int bottom) __attribute__((weak));
     if (boot_logo_overlay_updated)
         boot_logo_overlay_updated(top, bottom);

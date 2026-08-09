@@ -7,6 +7,7 @@
 #include "gui-common.h"
 #include "config.h"
 #include "lens.h"
+#include "shoot.h"
 #include "fps.h"
 
 #ifdef CONFIG_SLIM_MENUS
@@ -28,6 +29,9 @@ static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
+static int white_card_wb_active = 0;
+static int white_card_wb_capturing = 0;
+static int white_card_wb_done = 0;
 /* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
 /* Persisted Quick Panel preference: 0 = shutter angle, 1 = shutter speed. */
@@ -223,6 +227,150 @@ void menu_quick_screen_close(void)
     quick_screen_active = 0;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
+}
+
+int menu_white_card_wb_is_active(void)
+{
+    return white_card_wb_active;
+}
+
+static void white_card_wb_clear_overlay(void)
+{
+    /* Only clear pixels owned by this overlay; do not disturb the live image. */
+    bmp_fill(COLOR_EMPTY, 294, 128, 132, 80);
+    bmp_fill(COLOR_EMPTY, 190, 206, 340, 92);
+}
+
+void menu_white_card_wb_close(void)
+{
+    if (!white_card_wb_active)
+        return;
+    white_card_wb_clear_overlay();
+    white_card_wb_active = 0;
+    white_card_wb_capturing = 0;
+    white_card_wb_done = 0;
+    lens_display_set_dirty();
+}
+
+static void white_card_wb_close_delayed(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    menu_white_card_wb_close();
+}
+
+static void white_card_wb_refresh(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    if (!white_card_wb_active)
+        return;
+    lens_display_set_dirty();
+    delayed_call(100, white_card_wb_refresh, 0);
+}
+
+void menu_white_card_wb_open(void)
+{
+    white_card_wb_active = 1;
+    white_card_wb_capturing = 0;
+    white_card_wb_done = 0;
+    quick_screen_active = 0;
+    quick_screen_touch_latched = 0;
+    lens_display_set_dirty();
+    delayed_call(20, white_card_wb_refresh, 0);
+}
+
+void menu_white_card_wb_draw(void)
+{
+    const int border = white_card_wb_done ? COLOR_GREEN1 : COLOR_ORANGE;
+    const int box_x = 326;
+    const int box_y = 132;
+    const int box_w = 68;
+    const int box_h = 68;
+    const int text_x = 212;
+    const int text_y = 206;
+
+    if (!white_card_wb_active)
+        return;
+
+    /* Thick guide border, deliberately centered on the spot sampled by
+     * Magic Lantern's existing automatic Kelvin/green calculation. */
+    for (int i = 0; i < 4; i++)
+        bmp_draw_rect(border, box_x + i, box_y + i, box_w - i * 2, box_h - i * 2);
+
+    bmp_fill(COLOR_BLACK, text_x, text_y, 296, 83);
+    if (white_card_wb_done)
+    {
+        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 278, 233,
+            "White Balance Set");
+    }
+    else if (white_card_wb_capturing)
+    {
+        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 254, 233,
+            "Setting White Balance...");
+    }
+    else
+    {
+        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 226, 226,
+            "Place a White Card In");
+        bmp_printf(FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE), 226, 258,
+            "the box and Press SET");
+    }
+}
+
+int menu_white_card_wb_handle_touch(int x, int y)
+{
+    /* The guide and message are intentionally inert. A tap outside them is
+     * the only touch gesture that dismisses this exclusive capture mode. */
+    if (!white_card_wb_active)
+        return 1;
+    if (x < 190 || x >= 530 || y < 128 || y >= 298)
+        menu_white_card_wb_close();
+    return 0;
+}
+
+int menu_white_card_wb_handle_key(int button_code, int is_fake)
+{
+    if (!white_card_wb_active)
+        return 1;
+
+    /* Touch coordinates are decoded by gui-common's Live View router. */
+    if (button_code == BGMT_TOUCH_1_FINGER ||
+        button_code == BGMT_TOUCH_2_FINGER ||
+        button_code == BGMT_UNTOUCH_1_FINGER ||
+        button_code == BGMT_UNTOUCH_2_FINGER)
+        return 1;
+
+    /* Preserve EOS M's physical DOWN long-press router, which generates the
+     * ML grid-launch event. All other d-pad, INFO and assigned SET actions
+     * remain blocked by this capture mode. */
+    if ((button_code == BGMT_PRESS_DOWN || button_code == BGMT_UNPRESS_DOWN) &&
+        !is_fake)
+        return 1;
+
+    if (button_code == BGMT_TRASH)
+    {
+        menu_white_card_wb_close();
+        return 1;
+    }
+
+    if (button_code == BGMT_PRESS_SET && !white_card_wb_capturing && !white_card_wb_done)
+    {
+        white_card_wb_capturing = 1;
+        white_card_wb_auto_start();
+        lens_display_set_dirty();
+    }
+    return 0;
+}
+
+void menu_white_card_wb_capture_finished(void)
+{
+    if (!white_card_wb_active || !white_card_wb_capturing)
+        return;
+    white_card_wb_capturing = 0;
+    white_card_wb_done = 1;
+    lens_display_set_dirty();
+    delayed_call(1000, white_card_wb_close_delayed, 0);
 }
 
 static void quick_screen_arrow(int cx, int tip_y, int up, int color)
@@ -490,6 +638,15 @@ int menu_quick_screen_handle_touch(int x, int y)
             menu_redraw();
             return 0;
         }
+        if (index == 0 &&
+            x >= text_x && x <= text_x + width &&
+            y >= value_y && y <= value_y + text_h)
+        {
+            quick_screen_touch_latched = 1;
+            menu_white_card_wb_open();
+            gui_stop_menu();
+            return 0;
+        }
         if (x >= text_x - 8 && x <= text_x + width + 8 &&
             y >= value_y - 6 && y <= value_y + text_h + 6)
         {
@@ -665,5 +822,12 @@ void menu_quick_screen_draw(void) { }
 int menu_quick_screen_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
 void menu_quick_screen_touch_release(void) { }
 int menu_quick_screen_handle_key(int button_code) { (void)button_code; return 1; }
+int menu_white_card_wb_is_active(void) { return 0; }
+void menu_white_card_wb_open(void) { }
+void menu_white_card_wb_close(void) { }
+void menu_white_card_wb_draw(void) { }
+int menu_white_card_wb_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
+int menu_white_card_wb_handle_key(int button_code, int is_fake) { (void)button_code; (void)is_fake; return 1; }
+void menu_white_card_wb_capture_finished(void) { }
 
 #endif

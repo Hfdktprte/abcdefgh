@@ -4967,6 +4967,7 @@ static int eosm_lv_guard_retries;
 static int eosm_lv_guard_internal_zoom;
 static int eosm_lv_guard_content_dark_frames;
 static int eosm_lv_guard_content_retries;
+static int eosm_lv_guard_route_retries;
 
 enum eosm_lv_guard_state
 {
@@ -4975,6 +4976,7 @@ enum eosm_lv_guard_state
     EOSM_LV_GUARD_APPLY_X5,
     EOSM_LV_GUARD_VALIDATE,
     EOSM_LV_GUARD_CONTENT,
+    EOSM_LV_GUARD_ROUTE,
     EOSM_LV_GUARD_RECOVER_X1,
     EOSM_LV_GUARD_RECOVER_X5,
 };
@@ -5003,6 +5005,7 @@ static void eosm_lv_guard_request(void)
     eosm_lv_guard_retries = 0;
     eosm_lv_guard_content_dark_frames = 0;
     eosm_lv_guard_content_retries = 0;
+    eosm_lv_guard_route_retries = 0;
 }
 
 static void eosm_lv_guard_set_zoom(int zoom)
@@ -7343,6 +7346,30 @@ static int eosm_lv_guard_display_has_content(void)
     return 0;
 }
 
+/* These are the display-route values already supplied by the Crop Rec ENGIO
+ * hook. Check only the final scaler/buffer-format registers; sensor timing,
+ * RAW geometry and EDMAC routing are deliberately outside this recovery. */
+static int eosm_lv_guard_display_route_ready(void)
+{
+    if (!Preview_Control || !YUV_LV_Buf)
+        return 1;
+
+    return shamem_read(0xC0F11B8C) == YUV_HD_S_H &&
+           shamem_read(0xC0F11BCC) == YUV_HD_S_V &&
+           shamem_read(0xC0F11BC8) == YUV_HD_S_V_E &&
+           shamem_read(0xC0F11ACC) == YUV_LV_S_V &&
+           shamem_read(0xC0F04210) == YUV_LV_Buf;
+}
+
+static void eosm_lv_guard_reapply_display_route(void)
+{
+    EngDrvOutLV(0xC0F11B8C, YUV_HD_S_H);
+    EngDrvOutLV(0xC0F11BCC, YUV_HD_S_V);
+    EngDrvOutLV(0xC0F11BC8, YUV_HD_S_V_E);
+    EngDrvOutLV(0xC0F11ACC, YUV_LV_S_V);
+    EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
+}
+
 static void eosm_lv_guard_clear(void)
 {
     eosm_lv_guard_pending = 0;
@@ -7482,8 +7509,9 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
 
             if (eosm_lv_guard_display_has_content())
             {
-                eosm_lv_guard_clear();
-                return 0;
+                eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
+                eosm_lv_guard_started = now;
+                return 1;
             }
 
             /* A genuine dark scene is possible. Require consecutive samples,
@@ -7500,6 +7528,29 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
                 eosm_lv_guard_stable_frames = 0;
                 eosm_lv_guard_quiet_since = 0;
                 eosm_lv_guard_retries++;
+                return 1;
+            }
+
+            eosm_lv_guard_clear();
+            return 0;
+
+        case EOSM_LV_GUARD_ROUTE:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
+                return 1;
+
+            if (eosm_lv_guard_display_route_ready())
+            {
+                eosm_lv_guard_clear();
+                return 0;
+            }
+
+            /* Canon may overwrite its final display-route values after the
+             * frame itself is ready. Restore only the five existing Crop Rec
+             * route values once, then leave Canon in control if it disagrees. */
+            if (eosm_lv_guard_route_retries++ == 0)
+            {
+                eosm_lv_guard_reapply_display_route();
+                eosm_lv_guard_started = now;
                 return 1;
             }
 

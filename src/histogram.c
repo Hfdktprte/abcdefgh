@@ -161,8 +161,10 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
     else
         color = COLOR_RED;
 
-    width = hist_width / 4 + hist_shadow_meter_risk *
-        (hist_width * 3 / 4) / 1000;
+    /* Keep a small visible safe-state segment without implying that the
+     * meter is empty; red still reaches the full histogram width. */
+    width = hist_width / 8 + hist_shadow_meter_risk *
+        (hist_width * 7 / 8) / 1000;
     width = COERCE(width, 1, hist_width);
 
     /* Clear the old length first, then draw the current centered solid bar. */

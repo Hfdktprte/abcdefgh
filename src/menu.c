@@ -107,6 +107,8 @@ static int menu_lv_transparent_mode; // for ISO, kelvin...
 static int config_dirty = 0;
 
 #ifdef CONFIG_SLIM_MENUS
+extern void anamorphic_preview_set_toggle(void);
+
 /* Last highlighted menu row — recording-screen touch opens this (persists across boot). */
 static char last_sel_menu[40];
 static char last_sel_entry[48];
@@ -4976,6 +4978,13 @@ void menu_entry_select(
         if (entry->name && (streq(entry->name, "Dual ISO")
             || streq(entry->name, "White Balance")))
         {
+            entry_used = 1;
+        }
+        else if (entry->name && streq(entry->name, "Anamorphic"))
+        {
+            /* The center value is intentionally inert to touch. SET is the
+             * single explicit OFF/restore control; arrows remain factors-only. */
+            anamorphic_preview_set_toggle();
             entry_used = 1;
         }
         else if (entry->edit_mode & EM_INLINE_ADJUST)

@@ -4143,10 +4143,6 @@ int liveview_display_idle()
 int zebra_should_run()
 {
     return liveview_display_idle() && get_global_draw() &&
-        /* The Live View crop editor changes sensor geometry. Pause dynamic
-         * overlays (zebras, histogram, waveform and audio meters) until it
-         * closes, so they cannot draw into a changing preview buffer. */
-        !lvinfo_touch_editor_is_open() &&
         !is_zoom_mode_so_no_zebras() &&
         !(clearscreen == 1 && (get_halfshutter_pressed() || dofpreview)) &&
         !WAVEFORM_FULLSCREEN;

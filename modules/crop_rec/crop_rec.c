@@ -6205,6 +6205,35 @@ static MENU_SELECT_FUNC(slim_crop_quick_res_select)
     if (slim_mode_ui == 3)
         return; /* Full-Res LV has one fixed resolution. */
 
+    /* 1x1 presents one actual resolution for most aspect ratios.  In the
+     * direct Live View editor there is no separate Aspect Ratio control, so
+     * cycle the complete supported 1x1 resolution list here. */
+    if (slim_mode_ui == 0)
+    {
+        static const int res_list[] = { 0, 1, 2, 3, 4, 6 };
+        int pos = 0;
+        for (int i = 0; i < COUNT(res_list); i++)
+            if (crop_preset_1x1_res_menu == res_list[i])
+                pos = i;
+        pos = MOD(pos + (delta > 0 ? -1 : 1), COUNT(res_list));
+        crop_preset_1x1_res_menu = res_list[pos];
+        slim_crop_sync_from_backend();
+        slim_crop_clamp_fps();
+        return;
+    }
+
+    /* 3x3 likewise has one supported resolution per aspect ratio.  Cycle
+     * those complete, valid geometry pairs rather than leaving the editor
+     * with a non-functional resolution arrow. */
+    if (slim_mode_ui == 2)
+    {
+        crop_preset_ar_menu = MOD(crop_preset_ar_menu +
+                                  (delta > 0 ? -1 : 1), 5);
+        slim_crop_apply_3x3_from_ar();
+        slim_crop_clamp_fps();
+        return;
+    }
+
     choices = slim_preset_choice_count();
     slim_unified_preset = COERCE(slim_unified_preset, 0, choices - 1);
 
@@ -6213,12 +6242,7 @@ static MENU_SELECT_FUNC(slim_crop_quick_res_select)
     slim_unified_preset = MOD(
         slim_unified_preset + (delta > 0 ? -1 : 1), choices);
 
-    if (slim_mode_ui == 0)
-        slim_crop_apply_mode();
-    else if (slim_mode_ui == 1)
-        slim_crop_apply_unified_preset();
-    else
-        slim_crop_apply_3x3_from_ar();
+    slim_crop_apply_unified_preset();
     slim_crop_clamp_fps();
 }
 
@@ -6228,7 +6252,9 @@ static MENU_UPDATE_FUNC(slim_crop_quick_res_update)
     slim_crop_sync_from_backend();
     slim_crop_expected_res(&w, &h);
     MENU_SET_VALUE("%dx%d", w, h);
-    MENU_SET_ENABLED(slim_mode_ui != 3 && slim_preset_choice_count() > 1);
+    MENU_SET_ENABLED(slim_mode_ui != 3 &&
+                     (slim_mode_ui == 0 || slim_mode_ui == 2 ||
+                      slim_preset_choice_count() > 1));
 }
 
 static MENU_SELECT_FUNC(slim_crop_fps_select)

@@ -311,6 +311,8 @@ extern void menu_numeric_toggle(int* val, int delta, int min, int max);
 extern void run_in_separate_task(void* routine, int argument);
 
 extern void menu_add( const char * name, struct menu_entry * new_entry, int count );
+extern void menu_move_entry_after(const char * menu_name,
+    const char * entry_name, const char * after_name);
 
 /* Tweaks → Slim Settings entry; registered after EOS M button settings. */
 extern void anamorphic_preview_add_slim_menu(void);

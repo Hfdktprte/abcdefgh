@@ -2961,12 +2961,16 @@ static struct menu_entry slim_anamorphic_menu[] = {
 void anamorphic_preview_add_slim_menu(void)
 {
     static int added = 0;
-    if (added)
-        return;
+    if (!added)
+    {
+        slim_anamorphic_migrate_config();
+        menu_add("Settings", slim_anamorphic_menu, COUNT(slim_anamorphic_menu));
+        added = 1;
+    }
 
-    slim_anamorphic_migrate_config();
-    menu_add("Settings", slim_anamorphic_menu, COUNT(slim_anamorphic_menu));
-    added = 1;
+    /* The core adds the row unconditionally. crop_rec calls this again after
+     * adding Shutter zoom, which gives us the exact requested ordering. */
+    menu_move_entry_after("Settings", "Anamorphic", "Shutter zoom");
 }
 #else
 void anamorphic_preview_set_toggle(void) {}
@@ -4060,6 +4064,9 @@ static struct menu_entry play_menus[] = {
 static void tweak_init()
 {
 #ifdef CONFIG_SLIM_MENUS
+    #ifdef FEATURE_ANAMORPHIC_PREVIEW
+    anamorphic_preview_add_slim_menu();
+    #endif
     menu_add("Settings", custom_display_menus, COUNT(custom_display_menus));
     menu_add("Display", display_menus, COUNT(display_menus));
 #else

@@ -1598,6 +1598,39 @@ void menu_add(
     give_semaphore( menu_sem );
 }
 
+EXCLUDES(menu_sem)
+void menu_move_entry_after(const char * menu_name,
+    const char * entry_name, const char * after_name)
+{
+    take_semaphore(menu_sem, 0);
+
+    struct menu_entry *entry = entry_find_by_name(menu_name, entry_name);
+    struct menu_entry *after = entry_find_by_name(menu_name, after_name);
+    if (!entry || !after || entry == after ||
+        entry->parent_menu != after->parent_menu || entry->prev == after)
+        goto done;
+
+    struct menu *menu = entry->parent_menu;
+    if (entry->prev)
+        entry->prev->next = entry->next;
+    else if (menu)
+        menu->children = entry->next;
+    if (entry->next)
+        entry->next->prev = entry->prev;
+
+    entry->prev = after;
+    entry->next = after->next;
+    if (after->next)
+        after->next->prev = entry;
+    after->next = entry;
+
+    menu_damage = 1;
+    mod_menu_dirty = 1;
+
+done:
+    give_semaphore(menu_sem);
+}
+
 static void menu_remove_entry(struct menu * menu, struct menu_entry * entry)
 {
     if (entry == entry_being_updated)

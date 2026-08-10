@@ -239,28 +239,15 @@ static int entry_is_slim_style(struct menu_entry * entry, int in_submenu)
 /* Filled ◄ — tip points left (narrow on left, flat base on right). */
 static void slim_draw_arrow_left(int tip_x, int cy, int height, int color)
 {
-    int half = MAX(height / 2, 1);
     int depth = MAX((height * 6) / 10, 2);
-    int base_x = tip_x + depth;
-    for (int dy = -half; dy <= half; dy++)
-    {
-        /* At row center tip is at tip_x; edges pull inward toward the base. */
-        int x0 = tip_x + depth * ABS(dy) / half;
-        draw_line(x0, cy + dy, base_x, cy + dy, color);
-    }
+    bmp_draw_antialiased_triangle(tip_x, cy, 0, depth, height, color);
 }
 
 /* Filled ► — tip points right (flat base on left, narrow on right). */
 static void slim_draw_arrow_right(int tip_x, int cy, int height, int color)
 {
-    int half = MAX(height / 2, 1);
     int depth = MAX((height * 6) / 10, 2);
-    int base_x = tip_x - depth;
-    for (int dy = -half; dy <= half; dy++)
-    {
-        int x1 = tip_x - depth * ABS(dy) / half;
-        draw_line(base_x, cy + dy, x1, cy + dy, color);
-    }
+    bmp_draw_antialiased_triangle(tip_x, cy, 1, depth, height, color);
 }
 #endif
 
@@ -5715,24 +5702,16 @@ static int slim_touch_handle_menu_arrow(int x, int y)
 
 static void slim_draw_scroll_arrow_up(int cx, int cy, int size, int color)
 {
-    int half = MAX(size / 2, 1);
     int depth = MAX((size * 6) / 10, 2);
-    for (int i = 0; i <= half; i++)
-    {
-        int width = depth * i / half;
-        draw_line(cx - width, cy - half + i, cx + width, cy - half + i, color);
-    }
+    bmp_draw_antialiased_triangle(cx, cy - MAX(size / 2, 1), 2,
+        depth, MAX(size / 2, 1), color);
 }
 
 static void slim_draw_scroll_arrow_down(int cx, int cy, int size, int color)
 {
-    int half = MAX(size / 2, 1);
     int depth = MAX((size * 6) / 10, 2);
-    for (int i = 0; i <= half; i++)
-    {
-        int width = depth * i / half;
-        draw_line(cx - width, cy + half - i, cx + width, cy + half - i, color);
-    }
+    bmp_draw_antialiased_triangle(cx, cy + MAX(size / 2, 1), 3,
+        depth, MAX(size / 2, 1), color);
 }
 #endif
 

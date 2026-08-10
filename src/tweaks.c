@@ -2908,27 +2908,21 @@ static int anamorphic_preview_last_valid(void)
     return anamorphic_preview_last;
 }
 
-/* Left/right and the rendered touch arrows choose active factors only.
- * OFF is deliberately reserved for SET, so a touch near an arrow cannot
- * unexpectedly disable the preview correction. */
+/* Left/right and the rendered touch arrows cycle every displayed choice,
+ * including OFF. SET remains a convenient direct ON/OFF toggle. */
 static MENU_SELECT_FUNC(slim_anamorphic_preview_select)
 {
-    int next = anamorphic_preview;
-    if (next < 1 || next > 5)
-        next = anamorphic_preview_last_valid();
-    else
-    {
-        next += (delta < 0) ? -1 : 1;
-        if (next < 1) next = 5;
-        if (next > 5) next = 1;
-    }
+    int next = MOD(COERCE(anamorphic_preview, 0, 5)
+                   + (delta < 0 ? -1 : 1), 6);
 
     /* These two transformations share the same filtered display output.
      * Prefer the setting the user just selected rather than leaving an
      * active Anamorphic choice with no visible effect. */
-    defish_preview = 0;
+    if (next)
+        defish_preview = 0;
     anamorphic_preview = next;
-    anamorphic_preview_last = next;
+    if (next)
+        anamorphic_preview_last = next;
 }
 
 /* Called only by the Slim menu SET path. */
@@ -2956,7 +2950,7 @@ static struct menu_entry slim_anamorphic_menu[] = {
         .choices   = CHOICES("OFF", "1.33x", "1.66x", "1.5x", "1.8x", "2x"),
         .edit_mode = EM_INLINE_ADJUST,
         .help      = "Correct the LiveView preview for an anamorphic lens.",
-        .help2     = "Left/Right or the arrows choose a squeeze factor. SET turns it OFF or restores the last factor.",
+        .help2     = "Left/Right or the arrows cycle all choices. SET turns it OFF or restores the last factor.",
         /* Keep the row visible in Slim Settings at all times. */
         .depends_on = 0,
     },

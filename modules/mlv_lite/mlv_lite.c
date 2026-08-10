@@ -3015,7 +3015,10 @@ static void lvrecov_log_state(void)
     uint32_t edmac_write = edmac_get_base(raw_write_chan);
     int edmac_ready = edmac_read != 0xffffffff && edmac_write != 0xffffffff;
     int invalid = lv && (fps <= 0 || !raw_ready || !geometry_ready || !buffers_ready || !edmac_ready);
-    char guard[128] = "";
+    /* Keep unresolved explicit in the field log.  An empty suffix used to
+     * make an old mlv_lite/crop_rec combination look like the supervisor had
+     * accepted the frame, when in fact no supervisor callback was loaded. */
+    char guard[280] = "guard=unresolved";
     int guard_signature = crop_rec_lv_transition_diag ?
         crop_rec_lv_transition_diag(guard, sizeof(guard)) : 0;
 
@@ -3037,7 +3040,7 @@ static void lvrecov_log_state(void)
     last_raw_y = raw_info.height;
     last_guard_signature = guard_signature;
 
-    char line[384];
+    char line[640];
     int len = snprintf(line, sizeof(line),
         "%08d %s lv=%d fps=%d zoom=x%d crop=%d ar=%d out=%dx%d raw=%dx%d buf=%08x slots=%d frame=%d ready=%d/%d/%d/%d edmac=%08x/%08x %s\n",
         get_ms_clock(), invalid ? "INVALID" : "STATE",

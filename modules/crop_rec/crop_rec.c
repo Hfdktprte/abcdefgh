@@ -7612,6 +7612,11 @@ static uint32_t eosm_lv_guard_observed_signature(void)
 __attribute__((used, noinline))
 int crop_rec_lv_transition_diag(char *buffer, int size)
 {
+    uint32_t yuv_address = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    uint32_t yuv_signature = eosm_lv_guard_probe_yuv(
+        &eosm_lv_guard_yuv_min, &eosm_lv_guard_yuv_max);
+    uint32_t raw_signature = eosm_lv_guard_probe_raw(&eosm_lv_guard_raw_max);
+    uint32_t writer = shamem_read(REG_EDMAC_WRITE_LV_ADDR);
     int route_ok = eosm_lv_guard_display_route_ready();
     int signature = (int)(eosm_lv_guard_generation ^
         (eosm_lv_guard_state << 24) ^
@@ -7622,12 +7627,18 @@ int crop_rec_lv_transition_diag(char *buffer, int size)
 
     if (buffer && size > 0)
         snprintf(buffer, size,
-            "sup=%d/%d/%d gen=%d reason=%x fail=%x progress=%d yuv=%d..%d rawmax=%d route=%d fixes=%d/%d",
+            "sup=%d/%d/%d gen=%d reason=%x fail=%x frames=%d/%d last=%d "
+            "yuv=%08x/%08x/%d..%d raw=%08x/%d writer=%08x route=%d "
+            "regs=%08x,%08x,%08x,%08x,%08x fixes=%d/%d",
             eosm_lv_guard_pending, eosm_lv_guard_busy, eosm_lv_guard_state,
             (int)eosm_lv_guard_generation, (unsigned)eosm_lv_guard_reason,
             eosm_lv_guard_last_failure, eosm_lv_guard_progress_events,
-            eosm_lv_guard_yuv_min, eosm_lv_guard_yuv_max,
-            eosm_lv_guard_raw_max, route_ok,
+            eosm_lv_guard_valid_frames, eosm_lv_guard_last_progress,
+            yuv_address, yuv_signature, eosm_lv_guard_yuv_min,
+            eosm_lv_guard_yuv_max, raw_signature, eosm_lv_guard_raw_max,
+            writer, route_ok, shamem_read(0xC0F11B8C),
+            shamem_read(0xC0F11BCC), shamem_read(0xC0F11BC8),
+            shamem_read(0xC0F11ACC), shamem_read(0xC0F04210),
             eosm_lv_guard_route_retries, eosm_lv_guard_retries);
 
     return signature;

@@ -108,13 +108,8 @@ static const char * lvinfo_touch_field_value(enum lvinfo_touch_field field)
 static void lvinfo_touch_draw_arrow(int cx, int tip_y, int up, int color)
 {
     const int height = 26;
-    const int half_width = 30;
-    for (int i = 0; i <= height; i++)
-    {
-        int half = (half_width * i) / height;
-        int y = up ? tip_y + i : tip_y - i;
-        draw_line(cx - half, y, cx + half, y, color);
-    }
+    bmp_draw_antialiased_triangle(cx, tip_y, up ? 2 : 3,
+                                  30, height, color);
 }
 
 static void lvinfo_touch_draw_value(int slot, int cx, int value_y,

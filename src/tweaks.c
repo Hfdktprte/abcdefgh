@@ -2923,6 +2923,10 @@ static MENU_SELECT_FUNC(slim_anamorphic_preview_select)
         if (next > 5) next = 1;
     }
 
+    /* These two transformations share the same filtered display output.
+     * Prefer the setting the user just selected rather than leaving an
+     * active Anamorphic choice with no visible effect. */
+    defish_preview = 0;
     anamorphic_preview = next;
     anamorphic_preview_last = next;
 }
@@ -2937,6 +2941,7 @@ void anamorphic_preview_set_toggle(void)
     }
     else
     {
+        defish_preview = 0;
         anamorphic_preview = anamorphic_preview_last_valid();
     }
 }
@@ -2952,8 +2957,7 @@ static struct menu_entry slim_anamorphic_menu[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help      = "Correct the LiveView preview for an anamorphic lens.",
         .help2     = "Left/Right or the arrows choose a squeeze factor. SET turns it OFF or restores the last factor.",
-        /* Keep the row visible in Slim Settings. The display filter itself
-         * remains dormant until LiveView and Global Draw are active. */
+        /* Keep the row visible in Slim Settings at all times. */
         .depends_on = 0,
     },
 };
@@ -2990,8 +2994,15 @@ static MENU_UPDATE_FUNC(anamorphic_preview_display)
         );
     }
     */
-    if (defish_preview)
-        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Too much for this lil' cam... both defishing and anamorphic");
+    /*
+     * Slim Settings must always keep this control available.  In particular,
+     * do not report the old Defishing/Anamorphic conflict as NOT_WORKING:
+     * Slim menus intentionally render that warning as a locked grey row.
+     * The display path below already has the LiveView and buffer guards it
+     * needs, so users may select or turn this preview correction off at any
+     * time.
+     */
+    MENU_SET_ENABLED(1);
 }
 
 
@@ -3035,7 +3046,6 @@ static void yuvcpy_dark(uint32_t* dst, uint32_t* src, size_t n, int parity)
 static void FAST anamorphic_squeeze()
 {
     if (!anamorphic_preview) return;
-    if (!get_global_draw()) return;
     if (!lv) return;
     if (hdmi_code >= 5) return;
     
@@ -3362,7 +3372,10 @@ int display_filter_enabled()
     int fp = focus_peaking_as_display_filter();
     if (!(defish_preview || anamorphic_preview || fp || mdf)) return 0;
     /* Module display filters (dual ISO de-stripe, MLV raw preview, ...) must run in LV. */
-    if (!zebra_should_run() && !mdf) return 0;
+    /* Anamorphic preview is a display correction, not an overlay.  Let it
+     * keep running with Global Draw disabled; all callers still require an
+     * active LiveView and valid display buffers. */
+    if (!zebra_should_run() && !mdf && !anamorphic_preview) return 0;
     if (should_draw_zoom_overlay()) return 0; // not enough CPU power to run MZ and filters at the same time
     
     return fp ? 2 : 1;

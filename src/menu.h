@@ -312,6 +312,9 @@ extern void run_in_separate_task(void* routine, int argument);
 
 extern void menu_add( const char * name, struct menu_entry * new_entry, int count );
 
+/* Tweaks → Slim Settings entry; registered after EOS M button settings. */
+extern void anamorphic_preview_add_slim_menu(void);
+
 extern void menu_remove(const char * name, struct menu_entry * old_entry, int count);
 
 extern void select_menu_by_name(char* name, const char* entry_name);

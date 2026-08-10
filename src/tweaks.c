@@ -2952,7 +2952,9 @@ static struct menu_entry slim_anamorphic_menu[] = {
         .edit_mode = EM_INLINE_ADJUST,
         .help      = "Correct the LiveView preview for an anamorphic lens.",
         .help2     = "Left/Right or the arrows choose a squeeze factor. SET turns it OFF or restores the last factor.",
-        .depends_on = DEP_LIVEVIEW | DEP_GLOBAL_DRAW,
+        /* Keep the row visible in Slim Settings. The display filter itself
+         * remains dormant until LiveView and Global Draw are active. */
+        .depends_on = 0,
     },
 };
 

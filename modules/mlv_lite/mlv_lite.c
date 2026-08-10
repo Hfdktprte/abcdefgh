@@ -2982,8 +2982,21 @@ int raw_rec_start_ready(void)
 
 /* Event-only diagnostics for unstable LiveView transitions. */
 #define LVRECOV_LOG_FILE "ML/LOGS/LVRECOV.LOG"
-static int (*crop_rec_lv_transition_diag)(char *, int) =
-    MODULE_FUNCTION(crop_rec_lv_transition_diag);
+static int (*crop_rec_lv_transition_diag)(char *, int);
+
+/* mlv_lite and crop_rec are both dynamically linked modules.  A
+ * MODULE_FUNCTION declaration inside mlv_lite is not revisited by the core's
+ * module-symbol update pass, so resolve the crop supervisor from the live
+ * combined TCC symbol table when the recorder first polls it. */
+static void lvrecov_resolve_crop_supervisor(void)
+{
+    if (!crop_rec_lv_transition_diag)
+    {
+        crop_rec_lv_transition_diag =
+            (int (*)(char *, int))(uint32_t)module_get_symbol(
+                NULL, "crop_rec_lv_transition_diag");
+    }
+}
 
 static void lvrecov_log_state(void)
 {
@@ -3019,6 +3032,7 @@ static void lvrecov_log_state(void)
      * make an old mlv_lite/crop_rec combination look like the supervisor had
      * accepted the frame, when in fact no supervisor callback was loaded. */
     char guard[280] = "guard=unresolved";
+    lvrecov_resolve_crop_supervisor();
     int guard_signature = crop_rec_lv_transition_diag ?
         crop_rec_lv_transition_diag(guard, sizeof(guard)) : 0;
 

@@ -2859,6 +2859,10 @@ CONFIG_INT("defish.preview", defish_preview, 0);
 #endif
 
 static CONFIG_INT("anamorphic.preview", anamorphic_preview, 0);
+/* Slim UI remembers the last active squeeze separately, so SET can toggle
+ * preview correction off and later restore the exact lens factor. */
+static CONFIG_INT("anamorphic.preview.last", anamorphic_preview_last, 1);
+static CONFIG_INT("anamorphic.preview.slim.version", anamorphic_preview_slim_version, 0);
 //~ CONFIG_INT("anamorphic.ratio.idx", anamorphic_ratio_idx, 0);
 #define anamorphic_ratio_idx (anamorphic_preview-1)
 
@@ -2868,8 +2872,92 @@ static CONFIG_INT("anamorphic.preview", anamorphic_preview, 0);
 
 #ifdef FEATURE_ANAMORPHIC_PREVIEW
 
+#ifdef CONFIG_SLIM_MENUS
+/* Keep only the factors requested for Slim, in the same order as its menu. */
+static int anamorphic_ratio_num[5] = {4, 5, 3, 9, 2};
+static int anamorphic_ratio_den[5] = {3, 3, 2, 5, 1};
+#else
 static int anamorphic_ratio_num[10] = {5, 4, 7, 3, 5, 9, 2};
 static int anamorphic_ratio_den[10] = {4, 3, 5, 2, 3, 5, 1};
+#endif
+
+#ifdef CONFIG_SLIM_MENUS
+static MENU_UPDATE_FUNC(anamorphic_preview_display);
+static int anamorphic_preview_last_valid(void);
+
+static void slim_anamorphic_migrate_config(void)
+{
+    if (anamorphic_preview_slim_version >= 1)
+        return;
+
+    /* Convert the hidden classic-menu numbering to Slim's five choices. */
+    static const uint8_t classic_to_slim[] = {0, 1, 1, 1, 3, 2, 4, 5};
+    int old = COERCE(anamorphic_preview, 0, COUNT(classic_to_slim) - 1);
+    anamorphic_preview = classic_to_slim[old];
+    if (anamorphic_preview)
+        anamorphic_preview_last = anamorphic_preview;
+    else
+        anamorphic_preview_last_valid();
+    anamorphic_preview_slim_version = 1;
+}
+
+static int anamorphic_preview_last_valid(void)
+{
+    if (anamorphic_preview_last < 1 || anamorphic_preview_last > 5)
+        anamorphic_preview_last = 1;
+    return anamorphic_preview_last;
+}
+
+/* Left/right and the rendered touch arrows choose active factors only.
+ * OFF is deliberately reserved for SET, so a touch near an arrow cannot
+ * unexpectedly disable the preview correction. */
+static MENU_SELECT_FUNC(slim_anamorphic_preview_select)
+{
+    int next = anamorphic_preview;
+    if (next < 1 || next > 5)
+        next = anamorphic_preview_last_valid();
+    else
+    {
+        next += (delta < 0) ? -1 : 1;
+        if (next < 1) next = 5;
+        if (next > 5) next = 1;
+    }
+
+    anamorphic_preview = next;
+    anamorphic_preview_last = next;
+}
+
+/* Called only by the Slim menu SET path. */
+void anamorphic_preview_set_toggle(void)
+{
+    if (anamorphic_preview >= 1 && anamorphic_preview <= 5)
+    {
+        anamorphic_preview_last = anamorphic_preview;
+        anamorphic_preview = 0;
+    }
+    else
+    {
+        anamorphic_preview = anamorphic_preview_last_valid();
+    }
+}
+
+static struct menu_entry slim_anamorphic_menu[] = {
+    {
+        .name      = "Anamorphic",
+        .priv      = &anamorphic_preview,
+        .select    = slim_anamorphic_preview_select,
+        .update    = anamorphic_preview_display,
+        .max       = 5,
+        .choices   = CHOICES("OFF", "1.33x", "1.66x", "1.5x", "1.8x", "2x"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .help      = "Correct the LiveView preview for an anamorphic lens.",
+        .help2     = "Left/Right or the arrows choose a squeeze factor. SET turns it OFF or restores the last factor.",
+        .depends_on = DEP_LIVEVIEW | DEP_GLOBAL_DRAW,
+    },
+};
+#else
+void anamorphic_preview_set_toggle(void) {}
+#endif
 
 static MENU_UPDATE_FUNC(anamorphic_preview_display)
 {
@@ -3958,6 +4046,10 @@ static struct menu_entry play_menus[] = {
 static void tweak_init()
 {
 #ifdef CONFIG_SLIM_MENUS
+    #ifdef FEATURE_ANAMORPHIC_PREVIEW
+    slim_anamorphic_migrate_config();
+    menu_add("Settings", slim_anamorphic_menu, COUNT(slim_anamorphic_menu));
+    #endif
     menu_add("Settings", custom_display_menus, COUNT(custom_display_menus));
     menu_add("Display", display_menus, COUNT(display_menus));
 #else

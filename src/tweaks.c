@@ -2955,8 +2955,20 @@ static struct menu_entry slim_anamorphic_menu[] = {
         .depends_on = DEP_LIVEVIEW | DEP_GLOBAL_DRAW,
     },
 };
+
+void anamorphic_preview_add_slim_menu(void)
+{
+    static int added = 0;
+    if (added)
+        return;
+
+    slim_anamorphic_migrate_config();
+    menu_add("Settings", slim_anamorphic_menu, COUNT(slim_anamorphic_menu));
+    added = 1;
+}
 #else
 void anamorphic_preview_set_toggle(void) {}
+void anamorphic_preview_add_slim_menu(void) {}
 #endif
 
 static MENU_UPDATE_FUNC(anamorphic_preview_display)
@@ -4046,10 +4058,6 @@ static struct menu_entry play_menus[] = {
 static void tweak_init()
 {
 #ifdef CONFIG_SLIM_MENUS
-    #ifdef FEATURE_ANAMORPHIC_PREVIEW
-    slim_anamorphic_migrate_config();
-    menu_add("Settings", slim_anamorphic_menu, COUNT(slim_anamorphic_menu));
-    #endif
     menu_add("Settings", custom_display_menus, COUNT(custom_display_menus));
     menu_add("Display", display_menus, COUNT(display_menus));
 #else

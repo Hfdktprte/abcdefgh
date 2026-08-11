@@ -9492,6 +9492,15 @@ static unsigned int crop_rec_init()
         anamorphic_preview_add_slim_menu();
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
+
+        /* The module may finish loading after Canon has already published
+         * its boot PROP_LV_ACTION.  Waiting for the next zoom property would
+         * install our hooks in the middle of that transition, too late for
+         * them to produce the selected crop geometry.  Arm the hooks first;
+         * the preview supervisor can then perform a complete, patched x1/x5
+         * rebuild when startup Live View is already active. */
+        update_patch();
+        eosm_lv_guard_request_reason(EOSM_LV_REASON_BOOT);
         return 0;
     }
 

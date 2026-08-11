@@ -6548,24 +6548,30 @@ int crop_rec_custom_adjust(int control, int delta)
 {
     slim_crop_sync_from_backend();
 
-    if (control == 0) /* Mode: 1x1 / 1x3 / 3x3 only, same AR, Highest. */
+    if (control == 0) /* Mode only: preserve Movie AR and preset tier. */
     {
         int ratio = slim_crop_current_ratio_x1000();
+        int preset = slim_unified_preset;
         int mode = COERCE(slim_mode_ui, 0, 2);
         slim_mode_ui = MOD(mode + delta, 3);
-        slim_unified_preset = 0;
         slim_crop_set_nearest_ratio(slim_mode_ui, ratio);
+        slim_unified_preset = COERCE(
+            preset, 0, slim_preset_choice_count() - 1);
         slim_crop_apply_mode();
         return 1;
     }
 
-    if (control == 1) /* Aspect Ratio: keep Mode, force Highest. */
+    if (control == 1) /* Aspect Ratio only: preserve Movie preset tier. */
     {
         if (slim_mode_ui == 3)
             return 1;
-        slim_unified_preset = 0;
-        slim_crop_ar_select(0, delta);
-        slim_unified_preset = 0;
+        int preset = slim_unified_preset;
+        if (slim_mode_ui == 0)
+            slim_1x1_ar = MOD(slim_1x1_ar + delta, 5);
+        else
+            menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
+        slim_unified_preset = COERCE(
+            preset, 0, slim_preset_choice_count() - 1);
         slim_crop_apply_mode();
         return 1;
     }

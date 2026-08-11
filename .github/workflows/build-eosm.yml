@@ -55,11 +55,17 @@ jobs:
           set -euo pipefail
           ls -lh platform/EOSM.202/autoexec.bin
           ls -lh platform/EOSM.202/magiclantern-*.zip
-          if ! strings modules/crop_rec/crop_rec.mo | grep -q 'sup=%d/%d/%d'; then
+          zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
+          crop_module=$(unzip -l "$zipfile" | awk 'tolower($4) ~ /crop_rec\.mo$/ && !found {print $4; found=1}')
+          if [ -z "$crop_module" ]; then
+            echo "crop_rec.mo is missing from the package"
+            unzip -l "$zipfile"
+            exit 1
+          fi
+          if ! unzip -p "$zipfile" "$crop_module" | strings | grep 'sup=%d/%d/%d' > /dev/null; then
             echo "EOS M preview supervisor was not compiled into crop_rec.mo"
             exit 1
           fi
-          zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
           for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo; do
             if ! unzip -l "$zipfile" | grep -q "$mod"; then
               echo "Missing from zip: $mod"

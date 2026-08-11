@@ -56,7 +56,7 @@ jobs:
           ls -lh platform/EOSM.202/autoexec.bin
           ls -lh platform/EOSM.202/magiclantern-*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
-          crop_module=$(unzip -Z1 "$zipfile" | grep '/crop_rec.mo$' | sed -n '1p')
+          crop_module=$(unzip -Z1 "$zipfile" | awk 'tolower($0) ~ /crop_rec\.mo$/ {print}' | sed -n '1p')
           if [ -z "$crop_module" ]; then
             echo "crop_rec.mo is missing from the package"
             exit 1

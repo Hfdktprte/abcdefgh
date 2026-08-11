@@ -15,6 +15,8 @@
 #include <lens.h>
 #include <focus.h>
 #include <vram.h>
+#include <zebra.h>
+#include <gui-common.h>
 #include "../mlv_lite/mlv_lite.h"
 #include "../dual_iso/dual_iso.h"
 #include "histogram.h"
@@ -7387,6 +7389,17 @@ int check_if_settings_changed()
 #ifdef CONFIG_EOSM
 static int crop_rec_lv_dirty = 1;
 
+/* Platform constants are intentionally not exposed to loadable modules.
+ * Keep the one EOS M EDMAC register used for diagnostics local, and obtain
+ * the displayed YUV buffer through the exported VRAM API. */
+#define EOSM_LV_WRITER_ADDR 0xc0f04208
+
+static uint32_t eosm_lv_guard_yuv_address(void)
+{
+    struct vram_info *vram = get_yuv422_vram();
+    return vram ? (uint32_t)vram->vram : 0;
+}
+
 static uint32_t eosm_lv_guard_probe_yuv(int *luma_min, int *luma_max)
 {
     const uint8_t *vram;
@@ -7397,11 +7410,13 @@ static uint32_t eosm_lv_guard_probe_yuv(int *luma_min, int *luma_max)
     int min_y = 255;
     int max_y = 0;
 
-    if (!YUV422_LV_BUFFER_DISPLAY_ADDR || width < 64 || height < 64 ||
+    uint32_t yuv_address = eosm_lv_guard_yuv_address();
+
+    if (!yuv_address || width < 64 || height < 64 ||
         pitch < width * 2)
         return 0;
 
-    vram = (const uint8_t *)UNCACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+    vram = (const uint8_t *)UNCACHEABLE(yuv_address);
     for (int gy = 2; gy <= 8; gy += 2)
     {
         int y = height * gy / 10;
@@ -7452,7 +7467,7 @@ static uint32_t eosm_lv_guard_probe_raw(int *sample_max)
  * case where polling happens to observe the same writer on every pass. */
 static int eosm_lv_guard_frame_progress(int now)
 {
-    uint32_t writer = shamem_read(REG_EDMAC_WRITE_LV_ADDR);
+    uint32_t writer = shamem_read(EOSM_LV_WRITER_ADDR);
     uint32_t yuv_signature = eosm_lv_guard_probe_yuv(
         &eosm_lv_guard_yuv_min, &eosm_lv_guard_yuv_max);
     uint32_t raw_signature = eosm_lv_guard_probe_raw(&eosm_lv_guard_raw_max);
@@ -7485,7 +7500,7 @@ static int eosm_lv_guard_frame_progress(int now)
 
 static int eosm_lv_guard_pipeline_base_ready(void)
 {
-    uint32_t display_buffer = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    uint32_t display_buffer = eosm_lv_guard_yuv_address();
 
     if (!liveview_display_idle() || !CROP_PRESET_MENU || !patch_active ||
         !is_movie_mode() || lv_dispsize != 5 || PathDriveMode->zoom != 5)
@@ -7574,7 +7589,7 @@ static int eosm_lv_guard_validate(int now)
         failure |= EOSM_LV_FAIL_STATE;
 
     if (raw_info.width <= 0 || raw_info.height <= 0 || raw_info.pitch <= 0 ||
-        !raw_info.buffer || !YUV422_LV_BUFFER_DISPLAY_ADDR)
+        !raw_info.buffer || !eosm_lv_guard_yuv_address())
         failure |= EOSM_LV_FAIL_BUFFER;
 
     if (!(failure & (EOSM_LV_FAIL_STATE | EOSM_LV_FAIL_BUFFER)))
@@ -7612,11 +7627,11 @@ static uint32_t eosm_lv_guard_observed_signature(void)
 __attribute__((used, noinline))
 int crop_rec_lv_transition_diag(char *buffer, int size)
 {
-    uint32_t yuv_address = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    uint32_t yuv_address = eosm_lv_guard_yuv_address();
     uint32_t yuv_signature = eosm_lv_guard_probe_yuv(
         &eosm_lv_guard_yuv_min, &eosm_lv_guard_yuv_max);
     uint32_t raw_signature = eosm_lv_guard_probe_raw(&eosm_lv_guard_raw_max);
-    uint32_t writer = shamem_read(REG_EDMAC_WRITE_LV_ADDR);
+    uint32_t writer = shamem_read(EOSM_LV_WRITER_ADDR);
     int route_ok = eosm_lv_guard_display_route_ready();
     int signature = (int)(eosm_lv_guard_generation ^
         (eosm_lv_guard_state << 24) ^
@@ -8142,7 +8157,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     static int crop_rec_menu_was_shown = 0;
     uint32_t transition_reason = 0;
     uint32_t config_now = eosm_lv_guard_config_signature();
-    int display_now = DISPLAY_IS_ON;
+    int display_now = display_is_on();
     int hdmi_now = hdmi_code != 0;
     int lens_now = lens_info.lens_exists != 0;
 

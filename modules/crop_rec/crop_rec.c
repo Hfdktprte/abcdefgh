@@ -6500,10 +6500,90 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     return 1;
 }
 
+/* Keep the closest supported aspect ratio when Custom changes Mode.  Most
+ * ratios map exactly; nearest-match is only used when the destination mode
+ * does not offer the source ratio (for example 4:3 when leaving 1x1). */
+static int slim_crop_current_ratio_x1000(void)
+{
+    static const int ratios_1x1[] = { 2330, 2350, 1778, 1500, 1333 };
+    static const int ratios_1x3[] = { 1778, 2000, 2200, 2350, 2390 };
+    static const int ratios_3x3[] = { 1778, 2000, 2200, 2350, 1500 };
+
+    if (slim_mode_ui == 0)
+        return ratios_1x1[COERCE(slim_1x1_ar, 0, 4)];
+    if (slim_mode_ui == 2)
+        return ratios_3x3[COERCE(crop_preset_ar_menu, 0, 4)];
+    return ratios_1x3[COERCE(crop_preset_ar_menu, 0, 4)];
+}
+
+static void slim_crop_set_nearest_ratio(int mode, int ratio_x1000)
+{
+    static const int ratios_1x1[] = { 2330, 2350, 1778, 1500, 1333 };
+    static const int ratios_1x3[] = { 1778, 2000, 2200, 2350, 2390 };
+    static const int ratios_3x3[] = { 1778, 2000, 2200, 2350, 1500 };
+    const int *ratios = mode == 0 ? ratios_1x1 :
+                        mode == 2 ? ratios_3x3 : ratios_1x3;
+    int best = 0;
+    int best_error = ABS(ratios[0] - ratio_x1000);
+
+    for (int i = 1; i < 5; i++)
+    {
+        int error = ABS(ratios[i] - ratio_x1000);
+        if (error < best_error)
+        {
+            best = i;
+            best_error = error;
+        }
+    }
+
+    if (mode == 0)
+        slim_1x1_ar = best;
+    else
+        crop_preset_ar_menu = best;
+}
+
+/* Movie entries copied to Custom use these stricter rules rather than
+ * altering the original Movie page behavior. */
+int crop_rec_custom_adjust(int control, int delta)
+{
+    slim_crop_sync_from_backend();
+
+    if (control == 0) /* Mode: 1x1 / 1x3 / 3x3 only, same AR, Highest. */
+    {
+        int ratio = slim_crop_current_ratio_x1000();
+        int mode = COERCE(slim_mode_ui, 0, 2);
+        slim_mode_ui = MOD(mode + delta, 3);
+        slim_unified_preset = 0;
+        slim_crop_set_nearest_ratio(slim_mode_ui, ratio);
+        slim_crop_apply_mode();
+        return 1;
+    }
+
+    if (control == 1) /* Aspect Ratio: keep Mode, force Highest. */
+    {
+        if (slim_mode_ui == 3)
+            return 1;
+        slim_unified_preset = 0;
+        slim_crop_ar_select(0, delta);
+        slim_unified_preset = 0;
+        slim_crop_apply_mode();
+        return 1;
+    }
+
+    if (control == 2) /* Preset: existing rules preserve Mode and AR. */
+    {
+        slim_crop_preset_select(0, delta);
+        return 1;
+    }
+
+    return 0;
+}
+
 /* Force a relocation to both callbacks for linkers that perform section GC. */
 static void *crop_rec_touch_exports[] __attribute__((used)) = {
     (void *)&crop_rec_touch_adjust,
     (void *)&crop_rec_touch_get_value,
+    (void *)&crop_rec_custom_adjust,
     (void *)&crop_rec_lv_transition_busy,
     (void *)&crop_rec_lv_transition_diag,
 };

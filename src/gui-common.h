@@ -25,6 +25,8 @@
 #define MLEV_AV_LONG -17
 #define MLEV_TRIGGER_ZEBRAS_FOR_PLAYBACK -18
 #define MLEV_JOYSTICK_LONG -19
+#define MLEV_CUSTOM_MENU_LONG -20
+#define MLEV_CUSTOM_MARK_LONG -21
 
 /* half-shutter button codes (they are consecutive after BGMT_PRESS_HALFSHUTTER) */
 #define BGMT_UNPRESS_HALFSHUTTER (BGMT_PRESS_HALFSHUTTER+1)

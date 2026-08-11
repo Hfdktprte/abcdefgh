@@ -861,18 +861,6 @@ const struct PathDriveMode
     uint32_t DT;            /* 100D, EOSM: ? */
 } * PathDriveMode = 0;
 
-/* EOS M preview transaction ownership.
- *
- * PATH_SelectPathDriveMode is Canon's boundary before CMOS/ADTG/ENGIO and
- * display-register programming.  Prepare one complete crop profile there
- * and let every later hook consume that immutable profile.  Clearing ready
- * at the next PATH call also prevents delayed x5 writes from being patched
- * with crop values while Canon is entering x1/x10. */
-static volatile uint32_t eosm_preview_epoch = 0;
-static volatile uint32_t eosm_preview_committed_epoch = 0;
-static volatile int eosm_preview_profile_ready = 0;
-static volatile int eosm_preview_profile_zoom = 0;
-
 enum fps_mode {
     FPS_60 = 0,
     FPS_50 = 1,
@@ -950,10 +938,6 @@ static int is_x5_zoom()
 static int is_supported_mode()
 {
     if (!lv) return 0;
-
-    if (is_EOSM && PathDriveMode->zoom == 5 &&
-        (!eosm_preview_profile_ready || eosm_preview_profile_zoom != 5))
-        return 0;
 
     if (0)
     {
@@ -3992,9 +3976,7 @@ static void * get_engio_reg_override_func()
 
 static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    uint32_t eosm_epoch = eosm_preview_epoch;
-    int eosm_route_seen = 0;
-    uint32_t (*reg_override_func)(uint32_t, uint32_t) =
+    uint32_t (*reg_override_func)(uint32_t, uint32_t) = 
         get_engio_reg_override_func();
 
     if (!reg_override_func)
@@ -4115,9 +4097,6 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
         /* it seems more reliable to override them directly from here */
         if (Preview_Control)
         {
-            if (is_EOSM && reg == 0xC0F04210)
-                eosm_route_seen = 1;
-
             switch (reg)
             {
                 case 0xC0F1A00C: *(buf+1) = (Preview_V << 16) + Preview_H - 0x1;  break;
@@ -4131,9 +4110,6 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
             }
         }
     }
-
-    if (is_EOSM && eosm_route_seen && eosm_epoch == eosm_preview_epoch)
-        eosm_preview_committed_epoch = eosm_epoch;
 }
 
 static int change_buffer_now = 0;
@@ -4331,10 +4307,6 @@ static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
             }
         }
     }
-
-    if (is_EOSM && data == 0xC0F04210 &&
-        eosm_preview_profile_ready && eosm_preview_profile_zoom == 5)
-        eosm_preview_committed_epoch = eosm_preview_epoch;
 }
 
 static void FAST EngDrvOuts_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
@@ -4401,10 +4373,12 @@ void CheckPreviewRegsValuesAndForce()
     if (PathDriveMode->zoom != 5) return;
     if (Preview_Control_Basic) return;
 
+#ifdef CONFIG_EOSM
     /* EOS M: engio hooks already patch preview; forcing registers here fights Canon
      * and stalls the whole UI (laggy audio meters, menu won't open). Recovery uses
      * normal x5 zoom path instead. */
-    if (is_EOSM) return;
+    return;
+#endif
 
     if (is_100D)                       REG_C0F38024_Val = ((RAW_V - 5) << 16)  + RAW_H - 0x1A;
     if (is_650D || is_700D || is_EOSM) REG_C0F38024_Val = ((RAW_V - 1) << 16)  + RAW_H - 0x11;
@@ -4747,40 +4721,8 @@ void SetAspectRatioCorrectionValues()
     }
 }
 
-static void eosm_preview_transaction_open(void)
-{
-    if (!is_EOSM)
-        return;
-
-    eosm_preview_epoch++;
-    eosm_preview_profile_ready = 0;
-    eosm_preview_profile_zoom = PathDriveMode->zoom;
-}
-
-static void eosm_preview_transaction_prepare(void)
-{
-    uint32_t (*reg_override_func)(uint32_t, uint32_t);
-
-    if (!is_EOSM || PathDriveMode->zoom != 5 || !CROP_PRESET_MENU)
-        return;
-
-    /* Calculate every sensor/preview value before Canon starts the CMOS,
-     * ADTG, ENGIO and display stages.  Previously this happened lazily in
-     * engio_write_hook, after PATH selection had already consumed several
-     * values left behind by the previous mode. */
-    reg_override_func = get_engio_reg_override_func();
-    if (!reg_override_func)
-        return;
-
-    reg_override_func(0, 0);
-    SetAspectRatioCorrectionValues();
-    eosm_preview_profile_zoom = 5;
-    eosm_preview_profile_ready = 1;
-}
-
 static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    eosm_preview_transaction_open();
     /* we need to enable and set preview shifting and clearing artifacts values here especially for clear artifacts value */
     /* I don't know which function load shifting preview value, but it's being loaded and applied many times in LiveView, not just once. */
     /* clear artifacts value is being loaded very early before CMOS, ADTG, ENGIO, ENG_DRV_OUT, ENG_DRV_OUTS stuff */
@@ -4940,10 +4882,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
     }
 
     NewShiftVal = GetShiftValue();
-    if (is_EOSM)
-        eosm_preview_transaction_prepare();
-    else
-        SetAspectRatioCorrectionValues();
+    SetAspectRatioCorrectionValues();
 
     /* restore defualt EDMAC#9 vertical size */
     if (EDMAC_9_Vertical_Change == 0 || PathDriveMode->zoom != 5)
@@ -5076,14 +5015,7 @@ static void eosm_lv_guard_set_zoom(int zoom)
     set_zoom(zoom);
 }
 #else
-int crop_rec_lv_transition_busy(void)
-{
-    /* This is a transaction gate, not a recovery supervisor: it is true only
-     * between Canon selecting the prepared x5 path and consuming the final
-     * YUV route value from that same register transaction. */
-    return is_EOSM && eosm_preview_profile_ready &&
-           eosm_preview_committed_epoch != eosm_preview_epoch;
-}
+int crop_rec_lv_transition_busy(void) { return 0; }
 int crop_rec_lv_transition_diag(char *buffer, int size)
 {
     if (buffer && size > 0) buffer[0] = '\0';
@@ -5105,13 +5037,6 @@ static void install_patches()
 
 static void uninstall_patches()
 {
-    if (is_EOSM)
-    {
-        eosm_preview_epoch++;
-        eosm_preview_profile_ready = 0;
-        eosm_preview_profile_zoom = 0;
-    }
-
     unpatch_memory(CMOS_WRITE);
     unpatch_memory(ADTG_WRITE);
     if (ENGIO_WRITE) unpatch_memory(ENGIO_WRITE);
@@ -6575,10 +6500,90 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     return 1;
 }
 
+/* Keep the closest supported aspect ratio when Custom changes Mode.  Most
+ * ratios map exactly; nearest-match is only used when the destination mode
+ * does not offer the source ratio (for example 4:3 when leaving 1x1). */
+static int slim_crop_current_ratio_x1000(void)
+{
+    static const int ratios_1x1[] = { 2330, 2350, 1778, 1500, 1333 };
+    static const int ratios_1x3[] = { 1778, 2000, 2200, 2350, 2390 };
+    static const int ratios_3x3[] = { 1778, 2000, 2200, 2350, 1500 };
+
+    if (slim_mode_ui == 0)
+        return ratios_1x1[COERCE(slim_1x1_ar, 0, 4)];
+    if (slim_mode_ui == 2)
+        return ratios_3x3[COERCE(crop_preset_ar_menu, 0, 4)];
+    return ratios_1x3[COERCE(crop_preset_ar_menu, 0, 4)];
+}
+
+static void slim_crop_set_nearest_ratio(int mode, int ratio_x1000)
+{
+    static const int ratios_1x1[] = { 2330, 2350, 1778, 1500, 1333 };
+    static const int ratios_1x3[] = { 1778, 2000, 2200, 2350, 2390 };
+    static const int ratios_3x3[] = { 1778, 2000, 2200, 2350, 1500 };
+    const int *ratios = mode == 0 ? ratios_1x1 :
+                        mode == 2 ? ratios_3x3 : ratios_1x3;
+    int best = 0;
+    int best_error = ABS(ratios[0] - ratio_x1000);
+
+    for (int i = 1; i < 5; i++)
+    {
+        int error = ABS(ratios[i] - ratio_x1000);
+        if (error < best_error)
+        {
+            best = i;
+            best_error = error;
+        }
+    }
+
+    if (mode == 0)
+        slim_1x1_ar = best;
+    else
+        crop_preset_ar_menu = best;
+}
+
+/* Movie entries copied to Custom use these stricter rules rather than
+ * altering the original Movie page behavior. */
+int crop_rec_custom_adjust(int control, int delta)
+{
+    slim_crop_sync_from_backend();
+
+    if (control == 0) /* Mode: 1x1 / 1x3 / 3x3 only, same AR, Highest. */
+    {
+        int ratio = slim_crop_current_ratio_x1000();
+        int mode = COERCE(slim_mode_ui, 0, 2);
+        slim_mode_ui = MOD(mode + delta, 3);
+        slim_unified_preset = 0;
+        slim_crop_set_nearest_ratio(slim_mode_ui, ratio);
+        slim_crop_apply_mode();
+        return 1;
+    }
+
+    if (control == 1) /* Aspect Ratio: keep Mode, force Highest. */
+    {
+        if (slim_mode_ui == 3)
+            return 1;
+        slim_unified_preset = 0;
+        slim_crop_ar_select(0, delta);
+        slim_unified_preset = 0;
+        slim_crop_apply_mode();
+        return 1;
+    }
+
+    if (control == 2) /* Preset: existing rules preserve Mode and AR. */
+    {
+        slim_crop_preset_select(0, delta);
+        return 1;
+    }
+
+    return 0;
+}
+
 /* Force a relocation to both callbacks for linkers that perform section GC. */
 static void *crop_rec_touch_exports[] __attribute__((used)) = {
     (void *)&crop_rec_touch_adjust,
     (void *)&crop_rec_touch_get_value,
+    (void *)&crop_rec_custom_adjust,
     (void *)&crop_rec_lv_transition_busy,
     (void *)&crop_rec_lv_transition_diag,
 };
@@ -7849,21 +7854,8 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                     info_led_on();
                     gui_uilock(UILOCK_EVERYTHING);
                     int old_zoom = lv_dispsize;
-                    if (is_EOSM && old_zoom == 5)
-                    {
-                        /* Complete x1 before requesting x5.  Back-to-back
-                         * property requests let Canon consume both path
-                         * transactions concurrently and are a primary source
-                         * of mixed RAW/YUV configuration. */
-                        set_zoom(1);
-                        msleep(50);
-                        set_zoom(5);
-                    }
-                    else if (!is_EOSM)
-                    {
-                        set_zoom(lv_dispsize == 1 ? 5 : 1);
-                        set_zoom(old_zoom);
-                    }
+                    set_zoom(lv_dispsize == 1 ? 5 : 1);
+                    set_zoom(old_zoom);
                     gui_uilock(UILOCK_NONE);
                     info_led_off();
                 }
@@ -9075,11 +9067,6 @@ static unsigned int crop_rec_init()
         anamorphic_preview_add_slim_menu();
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
-
-        /* Module loading may finish after Canon's initial LV property.  Arm
-         * every in-place register hook here, before the normal startup dirty
-         * path requests its first x1/x5 configuration transaction. */
-        update_patch();
         return 0;
     }
 

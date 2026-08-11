@@ -3081,11 +3081,17 @@ skip_name:
     // far right end
     int x_end = in_submenu ? x + g_submenu_width - SUBMENU_OFFSET : 717;
 #ifdef CONFIG_SLIM_MENUS
-    int custom_marker_x = in_submenu ? x_end - 10 : 696;
+    int settings_custom_marker = entry->parent_menu &&
+        streq(entry->parent_menu->name, "Settings");
+    int custom_marker_x = in_submenu ? x_end - 10 :
+        (settings_custom_marker ? 660 : 696);
     int draw_custom_marker = slim_style && entry->starred &&
-        !customize_mode && !junkie_mode;
+        !customize_mode && !junkie_mode && !menu_custom_is_active();
     if (draw_custom_marker)
-        x_end -= 36; /* keep arrows and values clear of the marker */
+    {
+        /* Keep arrows, values and the Settings scrollbar clear. */
+        x_end = MIN(x_end - 36, custom_marker_x - 18);
+    }
 #endif
     
     int char_width = fontspec_font(fnt)->width;
@@ -6175,7 +6181,8 @@ static int custom_handle_set_hold(struct event *event)
     }
 
     if (event->param == BGMT_PRESS_SET && !IS_FAKE(event) &&
-        !menu_grid_is_active() && !menu_quick_screen_is_active())
+        !menu_grid_is_active() && !menu_quick_screen_is_active() &&
+        !menu_custom_is_active())
     {
         custom_set_hold_pressed = 1;
         custom_set_hold_fired = 0;

@@ -2984,14 +2984,20 @@ int raw_rec_start_ready(void)
 #define LVRECOV_LOG_FILE "ML/LOGS/LVRECOV.LOG"
 static int (*crop_rec_lv_transition_diag)(char *, int);
 
-/* mlv_lite and crop_rec are both dynamically linked modules.  A
- * MODULE_FUNCTION declaration inside mlv_lite is not revisited by the core's
- * module-symbol update pass, so resolve the crop supervisor from the live
- * combined TCC symbol table when the recorder first polls it. */
+/* Resolve through the core bridge. The core's module-symbol pass updates the
+ * bridge after crop_rec is loaded, while this module gets a stable symbol. */
+static int (*crop_rec_lv_transition_diag_proxy)(char *, int) =
+    MODULE_FUNCTION(crop_rec_lv_transition_diag_proxy);
+
 static void lvrecov_resolve_crop_supervisor(void)
 {
     if (!crop_rec_lv_transition_diag)
     {
+        crop_rec_lv_transition_diag = crop_rec_lv_transition_diag_proxy;
+    }
+    if (!crop_rec_lv_transition_diag)
+    {
+        /* Keep a fallback for builds where the core bridge is unavailable. */
         crop_rec_lv_transition_diag =
             (int (*)(char *, int))(uint32_t)module_get_symbol(
                 NULL, "crop_rec_lv_transition_diag");

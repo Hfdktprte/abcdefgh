@@ -2984,24 +2984,14 @@ int raw_rec_start_ready(void)
 #define LVRECOV_LOG_FILE "ML/LOGS/LVRECOV.LOG"
 static int (*crop_rec_lv_transition_diag)(char *, int);
 
-/* Resolve through the core bridge. The core's module-symbol pass updates the
- * bridge after crop_rec is loaded, while this module gets a stable symbol. */
-static int (*crop_rec_lv_transition_diag_proxy)(char *, int) =
-    MODULE_FUNCTION(crop_rec_lv_transition_diag_proxy);
+/* Core bridge exported by gui-common.c. Modules resolve ordinary core
+ * functions directly from magiclantern.sym at link time. */
+extern int crop_rec_lv_transition_diag_proxy(char *buffer, int size);
 
 static void lvrecov_resolve_crop_supervisor(void)
 {
     if (!crop_rec_lv_transition_diag)
-    {
         crop_rec_lv_transition_diag = crop_rec_lv_transition_diag_proxy;
-    }
-    if (!crop_rec_lv_transition_diag)
-    {
-        /* Keep a fallback for builds where the core bridge is unavailable. */
-        crop_rec_lv_transition_diag =
-            (int (*)(char *, int))(uint32_t)module_get_symbol(
-                NULL, "crop_rec_lv_transition_diag");
-    }
 }
 
 static void lvrecov_log_state(void)

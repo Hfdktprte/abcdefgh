@@ -15,22 +15,6 @@
 #include <menu-grid.h>
 #include <module.h>
 
-/* Core-side bridge for the EOS M preview supervisor.  mlv_lite is a module,
- * so it cannot rely on its own MODULE_FUNCTION pointer being refreshed when
- * another module is loaded.  The core symbol pass does refresh this pointer,
- * and the bridge gives mlv_lite a stable core entry point. */
-static int (*crop_rec_lv_transition_diag)(char *, int) =
-    MODULE_FUNCTION(crop_rec_lv_transition_diag);
-
-int crop_rec_lv_transition_diag_proxy(char *buffer, int size)
-{
-    if (crop_rec_lv_transition_diag)
-        return crop_rec_lv_transition_diag(buffer, size);
-    if (buffer && size > 0)
-        buffer[0] = '\0';
-    return 0;
-}
-
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
 #endif

@@ -15,8 +15,6 @@
 #include <lens.h>
 #include <focus.h>
 #include <vram.h>
-#include <zebra.h>
-#include <gui-common.h>
 #include "../mlv_lite/mlv_lite.h"
 #include "../dual_iso/dual_iso.h"
 #include "histogram.h"
@@ -4947,73 +4945,41 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 static int patch_active = 0;
 
 #ifdef CONFIG_EOSM
-/* EOS M preview supervisor.
- *
- * Canon rebuilds Live View asynchronously after boot, menu/display changes,
- * record-stop, AF changes and zoom transitions.  Track the requested
- * generation and release the UI only after camera state, geometry, buffers,
- * frame progress, visible content and display routing agree.  Fixed delays
- * are used only as watchdogs; normal progress is driven by observed frames. */
-#define EOSM_LV_GUARD_VALID_FRAMES 2
-#define EOSM_LV_GUARD_PROGRESS_LIMIT_MS 280
-#define EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS 900
+/* EOS M Live View is rebuilt asynchronously after boot, Canon-menu return,
+ * record-stop and zoom changes.  Keep the crop hooks quiet until the base
+ * x5 pipeline has delivered stable RAW dimensions, then apply once. */
+#define EOSM_LV_GUARD_SETTLE_MS 350
+#define EOSM_LV_GUARD_QUIET_MS 120
+#define EOSM_LV_GUARD_STABLE_FRAMES 3
 #define EOSM_LV_GUARD_MAX_RECOVERIES 2
+#define EOSM_LV_GUARD_CONTENT_SAMPLES 3
 static volatile int eosm_lv_guard_pending = 1;
 static volatile int eosm_lv_guard_busy = 0;
 static int eosm_lv_guard_started;
 static int eosm_lv_guard_state;
-static volatile uint32_t eosm_lv_guard_generation = 1;
-static uint32_t eosm_lv_guard_active_generation;
-static uint32_t eosm_lv_guard_reason;
-static uint32_t eosm_lv_guard_target_signature;
-static int eosm_lv_guard_valid_frames;
+static int eosm_lv_guard_stable_frames;
+static int eosm_lv_guard_width;
+static int eosm_lv_guard_height;
+static int eosm_lv_guard_pitch;
+static uintptr_t eosm_lv_guard_raw_buffer;
+static uint32_t eosm_lv_guard_display_buffer;
+static int eosm_lv_guard_quiet_since;
 static int eosm_lv_guard_retries;
 static int eosm_lv_guard_internal_zoom;
-static int eosm_lv_guard_internal_zoom_until;
+static int eosm_lv_guard_content_dark_frames;
+static int eosm_lv_guard_content_retries;
 static int eosm_lv_guard_route_retries;
-static int eosm_lv_guard_last_failure;
-static uint32_t eosm_lv_guard_last_writer;
-static uint32_t eosm_lv_guard_last_yuv_signature;
-static uint32_t eosm_lv_guard_last_raw_signature;
-static int eosm_lv_guard_last_progress;
-static int eosm_lv_guard_progress_events;
-static int eosm_lv_guard_yuv_min;
-static int eosm_lv_guard_yuv_max;
-static int eosm_lv_guard_raw_max;
-
-enum eosm_lv_guard_reason
-{
-    EOSM_LV_REASON_BOOT       = 1 << 0,
-    EOSM_LV_REASON_LV_ACTION  = 1 << 1,
-    EOSM_LV_REASON_ZOOM       = 1 << 2,
-    EOSM_LV_REASON_MENU       = 1 << 3,
-    EOSM_LV_REASON_RECORD     = 1 << 4,
-    EOSM_LV_REASON_MODE       = 1 << 5,
-    EOSM_LV_REASON_DISPLAY    = 1 << 6,
-    EOSM_LV_REASON_LENS       = 1 << 7,
-    EOSM_LV_REASON_SETTINGS   = 1 << 8,
-    EOSM_LV_REASON_EXTERNAL   = 1 << 9,
-};
-
-enum eosm_lv_guard_failure
-{
-    EOSM_LV_FAIL_STATE    = 1 << 0,
-    EOSM_LV_FAIL_GEOMETRY = 1 << 1,
-    EOSM_LV_FAIL_BUFFER   = 1 << 2,
-    EOSM_LV_FAIL_FROZEN   = 1 << 3,
-    EOSM_LV_FAIL_CONTENT  = 1 << 4,
-    EOSM_LV_FAIL_ROUTE    = 1 << 5,
-    EOSM_LV_FAIL_REFRESH  = 1 << 6,
-};
 
 enum eosm_lv_guard_state
 {
     EOSM_LV_GUARD_WAIT = 0,
-    EOSM_LV_GUARD_OBSERVE,
+    EOSM_LV_GUARD_APPLY_X1,
+    EOSM_LV_GUARD_APPLY_X5,
+    EOSM_LV_GUARD_VALIDATE,
+    EOSM_LV_GUARD_CONTENT,
     EOSM_LV_GUARD_ROUTE,
     EOSM_LV_GUARD_RECOVER_X1,
     EOSM_LV_GUARD_RECOVER_X5,
-    EOSM_LV_GUARD_LATCHED,
 };
 
 /* Exported to the core touch router: do not accept a new control gesture
@@ -5024,76 +4990,29 @@ int crop_rec_lv_transition_busy(void)
     return eosm_lv_guard_busy;
 }
 
-static uint32_t eosm_lv_guard_config_signature(void)
+static void eosm_lv_guard_request(void)
 {
-    uint32_t sig = 2166136261u;
-#define EOSM_LV_SIG_ADD(v) do { sig = (sig ^ (uint32_t)(v)) * 16777619u; } while (0)
-    EOSM_LV_SIG_ADD(crop_preset_index);
-    EOSM_LV_SIG_ADD(crop_preset_ar_menu);
-    EOSM_LV_SIG_ADD(crop_preset_fps_menu);
-    EOSM_LV_SIG_ADD(crop_preset_1x1_res_menu);
-    EOSM_LV_SIG_ADD(crop_preset_1x3_res_menu);
-    EOSM_LV_SIG_ADD(crop_preset_3x3_res_menu);
-    EOSM_LV_SIG_ADD(crop_preset_fps_reduce);
-    EOSM_LV_SIG_ADD(fps_over);
-    EOSM_LV_SIG_ADD(bit_depth_analog);
-    EOSM_LV_SIG_ADD(dual_iso_is_enabled());
-    EOSM_LV_SIG_ADD(hdmi_code);
-#undef EOSM_LV_SIG_ADD
-    return sig;
-}
-
-static void eosm_lv_guard_reset_observation(void)
-{
-    eosm_lv_guard_valid_frames = 0;
-    eosm_lv_guard_last_writer = 0;
-    eosm_lv_guard_last_yuv_signature = 0;
-    eosm_lv_guard_last_raw_signature = 0;
-    eosm_lv_guard_last_progress = 0;
-    eosm_lv_guard_progress_events = 0;
-    eosm_lv_guard_yuv_min = 255;
-    eosm_lv_guard_yuv_max = 0;
-    eosm_lv_guard_raw_max = 0;
-}
-
-static void eosm_lv_guard_request_reason(uint32_t reason)
-{
-    eosm_lv_guard_generation++;
     eosm_lv_guard_pending = 1;
     eosm_lv_guard_busy = 1;
     eosm_lv_guard_started = 0;
     eosm_lv_guard_state = EOSM_LV_GUARD_WAIT;
-    eosm_lv_guard_reason = reason;
-    eosm_lv_guard_target_signature = eosm_lv_guard_config_signature();
+    eosm_lv_guard_stable_frames = 0;
+    eosm_lv_guard_width = 0;
+    eosm_lv_guard_height = 0;
+    eosm_lv_guard_pitch = 0;
+    eosm_lv_guard_raw_buffer = 0;
+    eosm_lv_guard_display_buffer = 0;
+    eosm_lv_guard_quiet_since = 0;
     eosm_lv_guard_retries = 0;
+    eosm_lv_guard_content_dark_frames = 0;
+    eosm_lv_guard_content_retries = 0;
     eosm_lv_guard_route_retries = 0;
-    eosm_lv_guard_last_failure = 0;
-    eosm_lv_guard_reset_observation();
 }
 
-static void eosm_lv_guard_request(void)
+static void eosm_lv_guard_set_zoom(int zoom)
 {
-    eosm_lv_guard_request_reason(EOSM_LV_REASON_EXTERNAL);
-}
-
-static int eosm_lv_guard_set_zoom(int zoom, uint32_t generation)
-{
-    if (generation != eosm_lv_guard_generation || RECORDING || !lv)
-        return 0;
-    /* Canon publishes several properties for one zoom request. Mark this
-     * transaction so our own acknowledgement cannot create a new generation
-     * and cancel the recovery that issued it. */
-    eosm_lv_guard_internal_zoom = zoom;
-    eosm_lv_guard_internal_zoom_until = get_ms_clock() + 350;
+    eosm_lv_guard_internal_zoom = 1;
     set_zoom(zoom);
-    return generation == eosm_lv_guard_generation;
-}
-
-__attribute__((used, noinline))
-int crop_rec_request_preview_recovery(void)
-{
-    eosm_lv_guard_request_reason(EOSM_LV_REASON_EXTERNAL);
-    return 1;
 }
 #else
 int crop_rec_lv_transition_busy(void) { return 0; }
@@ -5103,7 +5022,6 @@ int crop_rec_lv_transition_diag(char *buffer, int size)
     return 0;
 }
 static void eosm_lv_guard_request(void) {}
-int crop_rec_request_preview_recovery(void) { return 0; }
 #endif
 
 static void install_patches()
@@ -5212,13 +5130,7 @@ static void update_patch()
 PROP_HANDLER(PROP_LV_ACTION)
 {
     update_patch();
-#ifdef CONFIG_EOSM
-    if (!eosm_lv_guard_internal_zoom ||
-        get_ms_clock() > eosm_lv_guard_internal_zoom_until)
-        eosm_lv_guard_request_reason(EOSM_LV_REASON_LV_ACTION);
-#else
     eosm_lv_guard_request();
-#endif
 }
 
 /* also try when switching zoom modes */
@@ -5226,17 +5138,11 @@ PROP_HANDLER(PROP_LV_DISPSIZE)
 {
     update_patch();
 #ifdef CONFIG_EOSM
-    if (!eosm_lv_guard_internal_zoom ||
-        lv_dispsize != eosm_lv_guard_internal_zoom ||
-        get_ms_clock() > eosm_lv_guard_internal_zoom_until)
-    {
+    if (eosm_lv_guard_internal_zoom)
         eosm_lv_guard_internal_zoom = 0;
-        eosm_lv_guard_request_reason(EOSM_LV_REASON_ZOOM);
-    }
+    else
 #endif
-#ifndef CONFIG_EOSM
-    eosm_lv_guard_request();
-#endif
+        eosm_lv_guard_request();
 }
 
 /* forward reference */
@@ -6600,7 +6506,6 @@ static void *crop_rec_touch_exports[] __attribute__((used)) = {
     (void *)&crop_rec_touch_get_value,
     (void *)&crop_rec_lv_transition_busy,
     (void *)&crop_rec_lv_transition_diag,
-    (void *)&crop_rec_request_preview_recovery,
 };
 
 static struct menu_entry crop_rec_menu_eosm[] =
@@ -7387,125 +7292,50 @@ int check_if_settings_changed()
 #ifdef CONFIG_EOSM
 static int crop_rec_lv_dirty = 1;
 
-/* Platform constants are intentionally not exposed to loadable modules.
- * Keep the one EOS M EDMAC register used for diagnostics local, and obtain
- * the displayed YUV buffer through the exported VRAM API. */
-#define EOSM_LV_WRITER_ADDR 0xc0f04208
-
-static uint32_t eosm_lv_guard_yuv_address(void)
+static int eosm_lv_guard_pipeline_ready(void)
 {
-    struct vram_info *vram = get_yuv422_vram();
-    return vram ? (uint32_t)vram->vram : 0;
-}
+    uint32_t display_buffer;
 
-static uint32_t eosm_lv_guard_probe_yuv(int *luma_min, int *luma_max)
-{
-    const uint8_t *vram;
-    uint32_t signature = 2166136261u;
-    int width = vram_lv.width;
-    int height = vram_lv.height;
-    int pitch = vram_lv.pitch;
-    int min_y = 255;
-    int max_y = 0;
-
-    uint32_t yuv_address = eosm_lv_guard_yuv_address();
-
-    if (!yuv_address || width < 64 || height < 64 ||
-        pitch < width * 2)
+    if (!liveview_display_idle() || !CROP_PRESET_MENU || !patch_active)
         return 0;
 
-    vram = (const uint8_t *)UNCACHEABLE(yuv_address);
-    for (int gy = 2; gy <= 8; gy += 2)
-    {
-        int y = height * gy / 10;
-        for (int gx = 1; gx <= 9; gx += 2)
-        {
-            int x = width * gx / 10;
-            const uint8_t *pixel = vram + y * pitch + x * 2;
-            int luma = pixel[1];
-            int chroma = pixel[0];
-            min_y = MIN(min_y, luma);
-            max_y = MAX(max_y, luma);
-            signature = (signature ^ (uint32_t)(luma | chroma << 8)) * 16777619u;
-        }
-    }
-
-    if (luma_min) *luma_min = min_y;
-    if (luma_max) *luma_max = max_y;
-    return signature;
-}
-
-static uint32_t eosm_lv_guard_probe_raw(int *sample_max)
-{
-    uint32_t signature = 2166136261u;
-    int max_raw = 0;
-
-    if (!raw_info.buffer || raw_info.width < 64 || raw_info.height < 64 ||
-        raw_info.pitch <= 0)
+    /* All EOS M movie crop presets use x5 for their stable preview path. */
+    if (!is_movie_mode() || lv_dispsize != 5 || PathDriveMode->zoom != 5)
         return 0;
 
-    for (int gy = 2; gy <= 8; gy += 2)
-    {
-        int y = raw_info.height * gy / 10;
-        for (int gx = 1; gx <= 9; gx += 2)
-        {
-            int x = raw_info.width * gx / 10;
-            int raw = raw_get_pixel(x, y);
-            max_raw = MAX(max_raw, raw);
-            signature = (signature ^ (uint32_t)raw) * 16777619u;
-        }
-    }
-
-    if (sample_max) *sample_max = max_raw;
-    return signature;
-}
-
-/* A frame heartbeat is stronger evidence than elapsed time.  The EOS M
- * rotates its YUV writer between buffers; RAW/YUV signatures cover the rare
- * case where polling happens to observe the same writer on every pass. */
-static int eosm_lv_guard_frame_progress(int now)
-{
-    uint32_t writer = shamem_read(EOSM_LV_WRITER_ADDR);
-    uint32_t yuv_signature = eosm_lv_guard_probe_yuv(
-        &eosm_lv_guard_yuv_min, &eosm_lv_guard_yuv_max);
-    uint32_t raw_signature = eosm_lv_guard_probe_raw(&eosm_lv_guard_raw_max);
-    /* RAW may not be available during the temporary x1 recovery leg.  The
-     * display writer plus changing YUV pixels are sufficient as a heartbeat;
-     * use RAW opportunistically for the black-frame cross-check below. */
-    int valid = writer && writer != 0xffffffff && yuv_signature;
-    int changed = valid && eosm_lv_guard_last_writer &&
-        (writer != eosm_lv_guard_last_writer ||
-         yuv_signature != eosm_lv_guard_last_yuv_signature ||
-         raw_signature != eosm_lv_guard_last_raw_signature);
-
-    if (changed)
-    {
-        eosm_lv_guard_last_progress = now;
-        eosm_lv_guard_progress_events++;
-    }
-    else if (valid && !eosm_lv_guard_last_progress)
-    {
-        eosm_lv_guard_last_progress = now;
-    }
-
-    eosm_lv_guard_last_writer = writer;
-    eosm_lv_guard_last_yuv_signature = yuv_signature;
-    eosm_lv_guard_last_raw_signature = raw_signature;
-
-    return valid && eosm_lv_guard_progress_events > 0 &&
-           now - eosm_lv_guard_last_progress <= EOSM_LV_GUARD_PROGRESS_LIMIT_MS;
-}
-
-static int eosm_lv_guard_pipeline_base_ready(void)
-{
-    uint32_t display_buffer = eosm_lv_guard_yuv_address();
-
-    if (!liveview_display_idle() || !CROP_PRESET_MENU || !patch_active ||
-        !is_movie_mode() || lv_dispsize != 5 || PathDriveMode->zoom != 5)
+    /* Dimensions alone are not enough: early boot may still expose the
+     * previous RAW geometry while Canon is replacing the actual buffers. */
+    display_buffer = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    if (raw_info.width <= 0 || raw_info.height <= 0 || raw_info.pitch <= 0 ||
+        !raw_info.buffer || !display_buffer)
         return 0;
 
-    return raw_info.width > 0 && raw_info.height > 0 && raw_info.pitch > 0 &&
-           raw_info.buffer && display_buffer;
+    if (raw_info.width == eosm_lv_guard_width &&
+        raw_info.height == eosm_lv_guard_height &&
+        raw_info.pitch == eosm_lv_guard_pitch &&
+        (uintptr_t)raw_info.buffer == eosm_lv_guard_raw_buffer &&
+        display_buffer == eosm_lv_guard_display_buffer)
+        eosm_lv_guard_stable_frames++;
+    else
+    {
+        eosm_lv_guard_width = raw_info.width;
+        eosm_lv_guard_height = raw_info.height;
+        eosm_lv_guard_pitch = raw_info.pitch;
+        eosm_lv_guard_raw_buffer = (uintptr_t)raw_info.buffer;
+        eosm_lv_guard_display_buffer = display_buffer;
+        eosm_lv_guard_stable_frames = 1;
+        eosm_lv_guard_quiet_since = 0;
+    }
+
+    if (eosm_lv_guard_stable_frames < EOSM_LV_GUARD_STABLE_FRAMES)
+        return 0;
+
+    /* Canon often performs one final asynchronous write after raw geometry
+     * becomes valid. Require a quiet buffer window before Crop Rec owns x5. */
+    if (!eosm_lv_guard_quiet_since)
+        eosm_lv_guard_quiet_since = get_ms_clock();
+
+    return get_ms_clock() - eosm_lv_guard_quiet_since >= EOSM_LV_GUARD_QUIET_MS;
 }
 
 /* The buffer can be stable while Canon is still exposing the previous movie
@@ -7530,29 +7360,43 @@ static int eosm_lv_guard_selected_geometry_ready(void)
            raw_info.height >= expected_h && raw_info.height <= expected_h + 64;
 }
 
-/* Treat video-black as broken only when the simultaneously sampled RAW frame
- * contains real exposure. This avoids false recovery loops with a lens cap,
- * a dark room or a deliberately underexposed shot. */
-static int eosm_lv_guard_display_content_ready(void)
+/* A valid RAW geometry does not guarantee that Canon restored the visible
+ * YUV path. Sample a sparse center grid from the displayed UYVY buffer: this
+ * is intentionally tiny and read-only, so it cannot disturb EDMAC or RAW
+ * recording. Return false only for a uniformly video-black screen. */
+static int eosm_lv_guard_display_luma_max(void)
 {
-    int black = raw_info.black_level;
-    int white = raw_info.white_level;
-    int raw_margin = MAX(16, (white - black) / 512);
+    const uint8_t *vram;
+    int x, y;
+    int luma_max = 0;
+    int width = vram_lv.width;
+    int height = vram_lv.height;
+    int pitch = vram_lv.pitch;
+    static const uint8_t x_pos[] = { 2, 4, 6, 8 };
+    static const uint8_t y_pos[] = { 3, 5, 7 };
 
-    if (!eosm_lv_guard_last_yuv_signature || !eosm_lv_guard_last_raw_signature)
-        return 0;
-    if (eosm_lv_guard_yuv_max > 20 ||
-        eosm_lv_guard_yuv_max - eosm_lv_guard_yuv_min > 3)
-        return 1;
+    if (!YUV422_LV_BUFFER_DISPLAY_ADDR || width < 64 || height < 64 ||
+        pitch < width * 2)
+        return 255; /* unavailable data is handled by the geometry guard */
 
-    /* Without calibrated RAW levels, black content is ambiguous.  Geometry,
-     * frame progress and routing still protect this transition; do not create
-     * a recovery loop merely because the scene itself may be black. */
-    if (black <= 0 || white <= black)
-        return 1;
+    vram = (const uint8_t *)UNCACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+    for (y = 0; y < COUNT(y_pos); y++)
+    {
+        int py = height * y_pos[y] / 10;
+        for (x = 0; x < COUNT(x_pos); x++)
+        {
+            int px = width * x_pos[x] / 10;
+            /* UYVY: luma is the second byte of each two-byte pixel. */
+            luma_max = MAX(luma_max, vram[py * pitch + px * 2 + 1]);
+        }
+    }
 
-    /* RAW agrees that the scene is dark: the YUV black frame is legitimate. */
-    return eosm_lv_guard_raw_max <= black + raw_margin;
+    return luma_max;
+}
+
+static int eosm_lv_guard_display_has_content(void)
+{
+    return eosm_lv_guard_display_luma_max() > 20;
 }
 
 /* These are the display-route values already supplied by the Crop Rec ENGIO
@@ -7579,69 +7423,27 @@ static void eosm_lv_guard_reapply_display_route(void)
     EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
 }
 
-static int eosm_lv_guard_validate(int now)
-{
-    int failure = 0;
-
-    if (!eosm_lv_guard_pipeline_base_ready())
-        failure |= EOSM_LV_FAIL_STATE;
-
-    if (raw_info.width <= 0 || raw_info.height <= 0 || raw_info.pitch <= 0 ||
-        !raw_info.buffer || !eosm_lv_guard_yuv_address())
-        failure |= EOSM_LV_FAIL_BUFFER;
-
-    if (!(failure & (EOSM_LV_FAIL_STATE | EOSM_LV_FAIL_BUFFER)))
-    {
-        if (!eosm_lv_guard_selected_geometry_ready())
-            failure |= EOSM_LV_FAIL_GEOMETRY;
-        if (crop_rec_needs_lv_refresh() ||
-            eosm_lv_guard_config_signature() != eosm_lv_guard_target_signature)
-            failure |= EOSM_LV_FAIL_REFRESH;
-        if (!eosm_lv_guard_frame_progress(now))
-            failure |= EOSM_LV_FAIL_FROZEN;
-        if (!eosm_lv_guard_display_content_ready())
-            failure |= EOSM_LV_FAIL_CONTENT;
-        if (!eosm_lv_guard_display_route_ready())
-            failure |= EOSM_LV_FAIL_ROUTE;
-    }
-
-    eosm_lv_guard_last_failure = failure;
-    return failure;
-}
-
 /* Exported for LVRECOV.LOG. The signature changes only when the transition
  * controller changes state, so the recorder log stays event-only. */
 __attribute__((used, noinline))
 int crop_rec_lv_transition_diag(char *buffer, int size)
 {
-    uint32_t yuv_address = eosm_lv_guard_yuv_address();
-    uint32_t yuv_signature = eosm_lv_guard_probe_yuv(
-        &eosm_lv_guard_yuv_min, &eosm_lv_guard_yuv_max);
-    uint32_t raw_signature = eosm_lv_guard_probe_raw(&eosm_lv_guard_raw_max);
-    uint32_t writer = shamem_read(EOSM_LV_WRITER_ADDR);
+    int luma = eosm_lv_guard_display_luma_max();
     int route_ok = eosm_lv_guard_display_route_ready();
-    int signature = (int)(eosm_lv_guard_generation ^
-        (eosm_lv_guard_state << 24) ^
-        (eosm_lv_guard_last_failure << 16) ^
-        (eosm_lv_guard_retries << 12) ^
-        (eosm_lv_guard_route_retries << 10) ^
-        (route_ok ? 1 << 9 : 0));
+    int signature = (eosm_lv_guard_pending ? 1 : 0) |
+        (eosm_lv_guard_busy ? 2 : 0) |
+        (eosm_lv_guard_state << 2) |
+        (eosm_lv_guard_content_dark_frames << 6) |
+        (eosm_lv_guard_content_retries << 10) |
+        (eosm_lv_guard_route_retries << 12) |
+        (route_ok ? 1 << 14 : 0);
 
     if (buffer && size > 0)
         snprintf(buffer, size,
-            "sup=%d/%d/%d gen=%d reason=%x fail=%x frames=%d/%d last=%d "
-            "yuv=%08x/%08x/%d..%d raw=%08x/%d writer=%08x route=%d "
-            "regs=%08x,%08x,%08x,%08x,%08x fixes=%d/%d",
+            "guard=%d/%d/%d luma=%d dark=%d contentfix=%d route=%d routefix=%d",
             eosm_lv_guard_pending, eosm_lv_guard_busy, eosm_lv_guard_state,
-            (int)eosm_lv_guard_generation, (unsigned)eosm_lv_guard_reason,
-            eosm_lv_guard_last_failure, eosm_lv_guard_progress_events,
-            eosm_lv_guard_valid_frames, eosm_lv_guard_last_progress,
-            yuv_address, yuv_signature, eosm_lv_guard_yuv_min,
-            eosm_lv_guard_yuv_max, raw_signature, eosm_lv_guard_raw_max,
-            writer, route_ok, shamem_read(0xC0F11B8C),
-            shamem_read(0xC0F11BCC), shamem_read(0xC0F11BC8),
-            shamem_read(0xC0F11ACC), shamem_read(0xC0F04210),
-            eosm_lv_guard_route_retries, eosm_lv_guard_retries);
+            luma, eosm_lv_guard_content_dark_frames,
+            eosm_lv_guard_content_retries, route_ok, eosm_lv_guard_route_retries);
 
     return signature;
 }
@@ -7654,8 +7456,7 @@ static void eosm_lv_guard_clear(void)
     settings_changed = 0;
 }
 
-#if 0 /* superseded by the generation-based preview supervisor below */
-static int eosm_lv_guard_step_legacy(int menu_shown, int mlv_busy)
+static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
 {
     int now;
 
@@ -7864,269 +7665,6 @@ static int eosm_lv_guard_step_legacy(int menu_shown, int mlv_busy)
 }
 #endif
 
-static void eosm_lv_guard_latch_failure(void)
-{
-    eosm_lv_guard_state = EOSM_LV_GUARD_LATCHED;
-    eosm_lv_guard_busy = 0;
-}
-
-static int eosm_lv_guard_begin_rebuild(int now, uint32_t generation)
-{
-    if (eosm_lv_guard_retries >= EOSM_LV_GUARD_MAX_RECOVERIES)
-    {
-        eosm_lv_guard_latch_failure();
-        return 0;
-    }
-
-    raw_set_dirty();
-    crop_rec_lv_dirty = 1;
-    settings_changed = 1;
-    eosm_lv_guard_retries++;
-    eosm_lv_guard_started = now;
-    eosm_lv_guard_reset_observation();
-
-    if (!eosm_lv_guard_set_zoom(1, generation))
-        return 1;
-
-    eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;
-    return 1;
-}
-
-static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
-{
-    uint32_t generation;
-    int failure;
-    int now;
-
-    if (!eosm_lv_guard_pending)
-        return 0;
-
-    if (!CROP_PRESET_MENU || !is_movie_mode())
-    {
-        eosm_lv_guard_pending = 0;
-        eosm_lv_guard_busy = 0;
-        return 0;
-    }
-
-    /* Never touch sensor, zoom or display routing while any recording is
-     * active or while the RAW recorder is allocating/releasing buffers. */
-    if (!lv || menu_shown || RECORDING || mlv_busy)
-        return eosm_lv_guard_busy;
-
-    /* x10 is an intentional Canon focus view. Exiting it produces a new
-     * property generation, which starts validation for the restored x5 path. */
-    if (lv_dispsize == 10)
-    {
-        eosm_lv_guard_pending = 0;
-        eosm_lv_guard_busy = 0;
-        return 0;
-    }
-
-    now = get_ms_clock();
-    generation = eosm_lv_guard_generation;
-
-    if (!eosm_lv_guard_started ||
-        eosm_lv_guard_active_generation != generation)
-    {
-        eosm_lv_guard_active_generation = generation;
-        eosm_lv_guard_started = now;
-        eosm_lv_guard_state = EOSM_LV_GUARD_WAIT;
-        eosm_lv_guard_busy = 1;
-        eosm_lv_guard_reset_observation();
-    }
-
-    switch (eosm_lv_guard_state)
-    {
-        case EOSM_LV_GUARD_WAIT:
-            /* Crop modes have one known-good base preview: x5. If Canon is
-             * already there, validate it directly and avoid any reset. */
-            if (lv_dispsize == 5 && PathDriveMode->zoom == 5)
-            {
-                eosm_lv_guard_state = EOSM_LV_GUARD_OBSERVE;
-                eosm_lv_guard_started = now;
-                eosm_lv_guard_reset_observation();
-                return 1;
-            }
-
-            if (lv_dispsize == 1)
-            {
-                if (eosm_lv_guard_set_zoom(5, generation))
-                {
-                    eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X5;
-                    eosm_lv_guard_started = now;
-                    eosm_lv_guard_reset_observation();
-                }
-                return 1;
-            }
-
-            /* A nonstandard intermediate zoom normally resolves through its
-             * property sequence. The watchdog is only a deadlock escape. */
-            if (now - eosm_lv_guard_started > EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
-                eosm_lv_guard_begin_rebuild(now, generation);
-            return 1;
-
-        case EOSM_LV_GUARD_OBSERVE:
-            failure = eosm_lv_guard_validate(now);
-            if (generation != eosm_lv_guard_generation)
-                return 1;
-
-            if (!failure)
-            {
-                if (++eosm_lv_guard_valid_frames >= EOSM_LV_GUARD_VALID_FRAMES)
-                {
-                    eosm_lv_guard_clear();
-                    return 0;
-                }
-                return 1;
-            }
-
-            eosm_lv_guard_valid_frames = 0;
-
-            /* Do not diagnose a transition before observing enough frame
-             * activity to distinguish an in-flight change from a failure. */
-            if ((failure & (EOSM_LV_FAIL_STATE | EOSM_LV_FAIL_BUFFER |
-                            EOSM_LV_FAIL_FROZEN)) &&
-                now - eosm_lv_guard_started <= EOSM_LV_GUARD_PROGRESS_LIMIT_MS)
-                return 1;
-            if ((failure & (EOSM_LV_FAIL_GEOMETRY | EOSM_LV_FAIL_REFRESH)) &&
-                eosm_lv_guard_progress_events < EOSM_LV_GUARD_VALID_FRAMES)
-                return 1;
-
-            /* Healthy geometry and heartbeat with a bad visible result point
-             * to the final scaler/display route. Repair only those five
-             * established Crop Rec registers before rebuilding Live View. */
-            if (!(failure & (EOSM_LV_FAIL_STATE | EOSM_LV_FAIL_BUFFER |
-                             EOSM_LV_FAIL_FROZEN | EOSM_LV_FAIL_GEOMETRY |
-                             EOSM_LV_FAIL_REFRESH)) &&
-                (failure & (EOSM_LV_FAIL_ROUTE | EOSM_LV_FAIL_CONTENT)) &&
-                eosm_lv_guard_route_retries == 0)
-            {
-                eosm_lv_guard_reapply_display_route();
-                eosm_lv_guard_route_retries++;
-                eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
-                eosm_lv_guard_started = now;
-                eosm_lv_guard_reset_observation();
-                return 1;
-            }
-
-            return eosm_lv_guard_begin_rebuild(now, generation);
-
-        case EOSM_LV_GUARD_ROUTE:
-            failure = eosm_lv_guard_validate(now);
-            if (generation != eosm_lv_guard_generation)
-                return 1;
-
-            if (!failure)
-            {
-                if (++eosm_lv_guard_valid_frames >= EOSM_LV_GUARD_VALID_FRAMES)
-                {
-                    eosm_lv_guard_clear();
-                    return 0;
-                }
-                return 1;
-            }
-
-            if (eosm_lv_guard_progress_events < EOSM_LV_GUARD_VALID_FRAMES &&
-                now - eosm_lv_guard_started <= EOSM_LV_GUARD_PROGRESS_LIMIT_MS)
-                return 1;
-
-            return eosm_lv_guard_begin_rebuild(now, generation);
-
-        case EOSM_LV_GUARD_RECOVER_X1:
-            if (generation != eosm_lv_guard_generation)
-                return 1;
-
-            if (lv_dispsize == 1)
-            {
-                /* Prefer a confirmed x1 frame. The watchdog handles a Canon
-                 * path that acknowledges x1 but never delivers its frame. */
-                int progressed = eosm_lv_guard_frame_progress(now);
-                if (progressed ||
-                    now - eosm_lv_guard_started > EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
-                {
-                    if (eosm_lv_guard_set_zoom(5, generation))
-                    {
-                        eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X5;
-                        eosm_lv_guard_started = now;
-                        eosm_lv_guard_reset_observation();
-                    }
-                }
-                return 1;
-            }
-
-            if (now - eosm_lv_guard_started > EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
-                eosm_lv_guard_latch_failure();
-            return eosm_lv_guard_busy;
-
-        case EOSM_LV_GUARD_RECOVER_X5:
-            if (generation != eosm_lv_guard_generation)
-                return 1;
-
-            if (lv_dispsize == 5 && PathDriveMode->zoom == 5)
-            {
-                int base_ready = eosm_lv_guard_pipeline_base_ready();
-                int geometry_ready = base_ready &&
-                    eosm_lv_guard_selected_geometry_ready() &&
-                    !crop_rec_needs_lv_refresh() &&
-                    eosm_lv_guard_config_signature() ==
-                        eosm_lv_guard_target_signature;
-                int progressing = base_ready &&
-                    eosm_lv_guard_frame_progress(now);
-
-                /* Canon acknowledges x5 before it finishes rebuilding the
-                 * selected crop geometry.  Applying the route at that point
-                 * is ineffective: the remaining Canon property sequence
-                 * overwrites it and leaves a live RAW stream behind a black
-                 * YUV display.  Wait for both geometry and a real frame, then
-                 * make the final route write the last operation. */
-                if (geometry_ready && progressing)
-                {
-                    eosm_lv_guard_reapply_display_route();
-                    eosm_lv_guard_route_retries++;
-                    eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
-                    eosm_lv_guard_started = now;
-                    eosm_lv_guard_reset_observation();
-                }
-                else if (now - eosm_lv_guard_started >
-                         EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
-                {
-                    eosm_lv_guard_latch_failure();
-                }
-                return 1;
-            }
-
-            if (now - eosm_lv_guard_started > EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
-                eosm_lv_guard_latch_failure();
-            return eosm_lv_guard_busy;
-
-        case EOSM_LV_GUARD_LATCHED:
-            /* Circuit breaker: failure flags naturally fluctuate while the
-             * same broken route produces black frames.  Do not treat those
-             * equivalent observations as permission for more x1/x5 cycles.
-             * A genuinely healthy preview may still clear the latch by
-             * delivering two complete valid frames; otherwise only a new
-             * external transition generation starts another recovery. */
-            eosm_lv_guard_busy = 0;
-            failure = eosm_lv_guard_validate(now);
-            if (!failure)
-            {
-                if (++eosm_lv_guard_valid_frames >=
-                    EOSM_LV_GUARD_VALID_FRAMES)
-                {
-                    eosm_lv_guard_clear();
-                    return 0;
-                }
-            }
-            else
-                eosm_lv_guard_valid_frames = 0;
-            return 0;
-    }
-
-    eosm_lv_guard_request_reason(EOSM_LV_REASON_EXTERNAL);
-    return 1;
-}
-#endif
-
 /* when closing ML menu, check whether we need to refresh the LiveView */
 static unsigned int crop_rec_polling_cbr(unsigned int unused)
 {
@@ -8155,73 +7693,30 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     static int eosm_lv_was_active = 0;
     static int eosm_recording_was_active = 0;
     static int eosm_display_mode = -1;
-    static int eosm_display_was_on = -1;
-    static int eosm_hdmi_was_connected = -1;
-    static int eosm_lens_was_attached = -1;
-    static int eosm_af_mode_was = -1;
-    static uint32_t eosm_config_was = 0;
-    static int eosm_transition_tracker_ready = 0;
 #else
     int mlv_busy = 0;
 #endif
 
     int menu_shown = gui_menu_shown();
 #ifdef CONFIG_EOSM
+    /* Cover every path back into Movie Live View, including Canon menus
+     * (which may not set gui_menu_shown), recording stop and boot. */
+    if ((lv && !eosm_lv_was_active) ||
+        (eosm_recording_was_active && !RECORDING) ||
+        (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode))
+        eosm_lv_guard_request();
+    eosm_lv_was_active = lv;
+    eosm_recording_was_active = RECORDING;
+    eosm_display_mode = lv_disp_mode;
+
     static int crop_rec_menu_was_shown = 0;
-    uint32_t transition_reason = 0;
-    uint32_t config_now = eosm_lv_guard_config_signature();
-    int display_now = display_is_on();
-    int hdmi_now = hdmi_code != 0;
-    int lens_now = lens_info.lens_exists != 0;
-
-    if (eosm_lv_guard_internal_zoom &&
-        get_ms_clock() > eosm_lv_guard_internal_zoom_until)
-        eosm_lv_guard_internal_zoom = 0;
-
-    /* Build one generation from every event observed in this polling pass.
-     * Coalescing related property changes prevents competing recoveries. */
-    if (lv && !eosm_lv_was_active)
-        transition_reason |= eosm_transition_tracker_ready ?
-            EOSM_LV_REASON_LV_ACTION : EOSM_LV_REASON_BOOT;
-    if (eosm_recording_was_active && !RECORDING)
-        transition_reason |= EOSM_LV_REASON_RECORD;
-    if (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode)
-        transition_reason |= EOSM_LV_REASON_MODE;
-    if (eosm_display_was_on == 0 && display_now)
-        transition_reason |= EOSM_LV_REASON_DISPLAY;
-    if (eosm_hdmi_was_connected != -1 && eosm_hdmi_was_connected != hdmi_now)
-        transition_reason |= EOSM_LV_REASON_DISPLAY;
-    if ((eosm_lens_was_attached != -1 && eosm_lens_was_attached != lens_now) ||
-        (eosm_af_mode_was != -1 && eosm_af_mode_was != lv_af_mode))
-        transition_reason |= EOSM_LV_REASON_LENS;
-    if (eosm_config_was && eosm_config_was != config_now)
-    {
-        transition_reason |= EOSM_LV_REASON_SETTINGS;
-        crop_rec_lv_dirty = 1;
-        settings_changed = 1;
-    }
-
     if (lv && menu_shown)
         crop_rec_menu_was_shown = 1;
     else if (crop_rec_menu_was_shown && lv && !menu_shown)
     {
-        transition_reason |= EOSM_LV_REASON_MENU;
         crop_rec_lv_dirty = 1;
         crop_rec_menu_was_shown = 0;
     }
-
-    if (transition_reason)
-        eosm_lv_guard_request_reason(transition_reason);
-
-    eosm_lv_was_active = lv;
-    eosm_recording_was_active = RECORDING;
-    eosm_display_mode = lv_disp_mode;
-    eosm_display_was_on = display_now;
-    eosm_hdmi_was_connected = hdmi_now;
-    eosm_lens_was_attached = lens_now;
-    eosm_af_mode_was = lv_af_mode;
-    eosm_config_was = config_now;
-    eosm_transition_tracker_ready = 1;
 #else
     if (lv && menu_shown)
     {
@@ -8229,7 +7724,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
     }
 #endif
     
-    if (!lv || menu_shown || RECORDING || mlv_busy)
+    if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
     {
         /* outside LV: no need to do anything */
         /* don't change while browsing the menu, but shortly after closing it */
@@ -9492,15 +8987,6 @@ static unsigned int crop_rec_init()
         anamorphic_preview_add_slim_menu();
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
-
-        /* The module may finish loading after Canon has already published
-         * its boot PROP_LV_ACTION.  Waiting for the next zoom property would
-         * install our hooks in the middle of that transition, too late for
-         * them to produce the selected crop geometry.  Arm the hooks first;
-         * the preview supervisor can then perform a complete, patched x1/x5
-         * rebuild when startup Live View is already active. */
-        update_patch();
-        eosm_lv_guard_request_reason(EOSM_LV_REASON_BOOT);
         return 0;
     }
 

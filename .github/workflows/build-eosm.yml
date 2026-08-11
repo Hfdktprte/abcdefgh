@@ -56,7 +56,12 @@ jobs:
           ls -lh platform/EOSM.202/autoexec.bin
           ls -lh platform/EOSM.202/magiclantern-*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
-          if ! unzip -p "$zipfile" ML/modules/crop_rec.mo | strings | grep 'sup=%d/%d/%d' > /dev/null; then
+          crop_module=$(unzip -Z1 "$zipfile" | grep '/crop_rec.mo$' | sed -n '1p')
+          if [ -z "$crop_module" ]; then
+            echo "crop_rec.mo is missing from the package"
+            exit 1
+          fi
+          if ! unzip -p "$zipfile" "$crop_module" | strings | grep 'sup=%d/%d/%d' > /dev/null; then
             echo "EOS M preview supervisor was not compiled into crop_rec.mo"
             exit 1
           fi

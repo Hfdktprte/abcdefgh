@@ -4975,7 +4975,6 @@ static int eosm_lv_guard_last_failure;
 static uint32_t eosm_lv_guard_last_writer;
 static uint32_t eosm_lv_guard_last_yuv_signature;
 static uint32_t eosm_lv_guard_last_raw_signature;
-static uint32_t eosm_lv_guard_latched_signature;
 static int eosm_lv_guard_last_progress;
 static int eosm_lv_guard_progress_events;
 static int eosm_lv_guard_yuv_min;
@@ -5069,7 +5068,6 @@ static void eosm_lv_guard_request_reason(uint32_t reason)
     eosm_lv_guard_retries = 0;
     eosm_lv_guard_route_retries = 0;
     eosm_lv_guard_last_failure = 0;
-    eosm_lv_guard_latched_signature = 0;
     eosm_lv_guard_reset_observation();
 }
 
@@ -7611,17 +7609,6 @@ static int eosm_lv_guard_validate(int now)
     return failure;
 }
 
-static uint32_t eosm_lv_guard_observed_signature(void)
-{
-    uint32_t sig = (uint32_t)eosm_lv_guard_last_failure;
-    sig = sig * 16777619u ^ (uint32_t)lv_dispsize;
-    sig = sig * 16777619u ^ (uint32_t)raw_info.width;
-    sig = sig * 16777619u ^ (uint32_t)raw_info.height;
-    sig = sig * 16777619u ^ (uint32_t)eosm_lv_guard_display_route_ready();
-    sig = sig * 16777619u ^ eosm_lv_guard_config_signature();
-    return sig;
-}
-
 /* Exported for LVRECOV.LOG. The signature changes only when the transition
  * controller changes state, so the recorder log stays event-only. */
 __attribute__((used, noinline))
@@ -7880,7 +7867,6 @@ static int eosm_lv_guard_step_legacy(int menu_shown, int mlv_busy)
 static void eosm_lv_guard_latch_failure(void)
 {
     eosm_lv_guard_state = EOSM_LV_GUARD_LATCHED;
-    eosm_lv_guard_latched_signature = eosm_lv_guard_observed_signature();
     eosm_lv_guard_busy = 0;
 }
 
@@ -8078,9 +8064,34 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
 
             if (lv_dispsize == 5 && PathDriveMode->zoom == 5)
             {
-                eosm_lv_guard_state = EOSM_LV_GUARD_OBSERVE;
-                eosm_lv_guard_started = now;
-                eosm_lv_guard_reset_observation();
+                int base_ready = eosm_lv_guard_pipeline_base_ready();
+                int geometry_ready = base_ready &&
+                    eosm_lv_guard_selected_geometry_ready() &&
+                    !crop_rec_needs_lv_refresh() &&
+                    eosm_lv_guard_config_signature() ==
+                        eosm_lv_guard_target_signature;
+                int progressing = base_ready &&
+                    eosm_lv_guard_frame_progress(now);
+
+                /* Canon acknowledges x5 before it finishes rebuilding the
+                 * selected crop geometry.  Applying the route at that point
+                 * is ineffective: the remaining Canon property sequence
+                 * overwrites it and leaves a live RAW stream behind a black
+                 * YUV display.  Wait for both geometry and a real frame, then
+                 * make the final route write the last operation. */
+                if (geometry_ready && progressing)
+                {
+                    eosm_lv_guard_reapply_display_route();
+                    eosm_lv_guard_route_retries++;
+                    eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
+                    eosm_lv_guard_started = now;
+                    eosm_lv_guard_reset_observation();
+                }
+                else if (now - eosm_lv_guard_started >
+                         EOSM_LV_GUARD_TRANSITION_WATCHDOG_MS)
+                {
+                    eosm_lv_guard_latch_failure();
+                }
                 return 1;
             }
 
@@ -8089,23 +8100,25 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             return eosm_lv_guard_busy;
 
         case EOSM_LV_GUARD_LATCHED:
-            /* Circuit breaker: no repeated property writes and no battery
-             * drain. Resume automatically only when an observed invariant
-             * changes, or immediately when a new transition generation is
-             * requested by an event hook. */
+            /* Circuit breaker: failure flags naturally fluctuate while the
+             * same broken route produces black frames.  Do not treat those
+             * equivalent observations as permission for more x1/x5 cycles.
+             * A genuinely healthy preview may still clear the latch by
+             * delivering two complete valid frames; otherwise only a new
+             * external transition generation starts another recovery. */
             eosm_lv_guard_busy = 0;
-            eosm_lv_guard_validate(now);
-            if (eosm_lv_guard_observed_signature() !=
-                eosm_lv_guard_latched_signature)
+            failure = eosm_lv_guard_validate(now);
+            if (!failure)
             {
-                eosm_lv_guard_retries = 0;
-                eosm_lv_guard_route_retries = 0;
-                eosm_lv_guard_state = EOSM_LV_GUARD_OBSERVE;
-                eosm_lv_guard_started = now;
-                eosm_lv_guard_busy = 1;
-                eosm_lv_guard_reset_observation();
-                return 1;
+                if (++eosm_lv_guard_valid_frames >=
+                    EOSM_LV_GUARD_VALID_FRAMES)
+                {
+                    eosm_lv_guard_clear();
+                    return 0;
+                }
             }
+            else
+                eosm_lv_guard_valid_frames = 0;
             return 0;
     }
 

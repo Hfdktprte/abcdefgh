@@ -1597,8 +1597,8 @@ static int focus_precise_floor(void)
 {
     int iso = lens_info.iso ? lens_info.iso :
               lens_info.iso_auto ? lens_info.iso_auto : 100;
-    int floor = 12;
-    while (iso > 400 && floor < 28)
+    int floor = 18;
+    while (iso > 200 && floor < 38)
     {
         floor += 2;
         iso >>= 1;
@@ -1964,7 +1964,7 @@ static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
      * the two-radius test already reject noise/blur, so a lighter penalty
      * preserves low-contrast fabric and skin texture. */
     const int broad_edge = MAX(ABS(right1 - left1), ABS(down1 - up1));
-    return MAX(detail - broad_edge / 6, 0);
+    return MAX(detail - broad_edge / 4, 0);
 }
 #endif
 
@@ -2312,15 +2312,20 @@ draw_zebra_and_focus( int Z, int F )
         int off = get_y_skip_offset_for_overlays();
 #ifdef CONFIG_SLIM_MENUS
         /* Keep the two-radius detector clear of artificial high-contrast
-         * boundaries between Canon's image and black letterbox/status bars. */
-        const int focus_edge_guard = 18;
+         * boundaries between Canon's image and black letterbox/status bars.
+         * EOS M's top status boundary needs a larger asymmetric guard. */
+        const int focus_top_guard = 34;
+        const int focus_bottom_guard = 18;
+        const int focus_side_guard = 18;
 #else
-        const int focus_edge_guard = 8;
+        const int focus_top_guard = 8;
+        const int focus_bottom_guard = 8;
+        const int focus_side_guard = 8;
 #endif
-        int yStart = os.y0 + off + focus_edge_guard;
-        int yEnd = os.y_max - off - focus_edge_guard;
-        int xStart = os.x0 + focus_edge_guard;
-        int xEnd = os.x_max - focus_edge_guard;
+        int yStart = os.y0 + off + focus_top_guard;
+        int yEnd = os.y_max - off - focus_bottom_guard;
+        int xStart = os.x0 + focus_side_guard;
+        int xEnd = os.x_max - focus_side_guard;
         int n_over = 0;
 #ifdef CONFIG_SLIM_MENUS
         int now = get_ms_clock();
@@ -2436,9 +2441,8 @@ draw_zebra_and_focus( int Z, int F )
         //~ bmp_printf(FONT_LARGE, 10, 50, "%d ", thr);
         
 #ifdef CONFIG_SLIM_MENUS
-        /* Balanced density: temporal and multi-scale checks control false
-         * positives, while 0.5% retains low-contrast focused texture. */
-        int target_pthr = 5;
+        /* Midpoint between sparse precision and texture-sensitive tuning. */
+        int target_pthr = 3; /* 0.3% */
 #else
         int target_pthr = (int)focus_peaking_pthr;
 #endif

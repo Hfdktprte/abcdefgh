@@ -1597,10 +1597,10 @@ static int focus_precise_floor(void)
 {
     int iso = lens_info.iso ? lens_info.iso :
               lens_info.iso_auto ? lens_info.iso_auto : 100;
-    int floor = 24;
-    while (iso > 200 && floor < 48)
+    int floor = 12;
+    while (iso > 400 && floor < 28)
     {
-        floor += 3;
+        floor += 2;
         iso >>= 1;
     }
     return floor;
@@ -1936,16 +1936,35 @@ static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
     const int up2 = (int)(*(p8 - pitch * 2));
     const int down2 = (int)(*(p8 + pitch * 2));
 
+    /* Canon's internal letterbox edges are not part of the photographed
+     * scene and are not always described by os/off geometry. Reject a
+     * transition with two solid-black samples on one side and image content
+     * on the other. This follows the actual YUV content in every crop mode. */
+    const int black = 24;
+    const int image = 36;
+    if (((left1 <= black && left2 <= black) &&
+         (center >= image || right1 >= image || right2 >= image)) ||
+        ((right1 <= black && right2 <= black) &&
+         (center >= image || left1 >= image || left2 >= image)) ||
+        ((up1 <= black && up2 <= black) &&
+         (center >= image || down1 >= image || down2 >= image)) ||
+        ((down1 <= black && down2 <= black) &&
+         (center >= image || up1 >= image || up2 >= image)))
+    {
+        return 0;
+    }
+
     const int fine1 = ABS(center * 2 - left1 - right1)
                     + ABS(center * 2 - up1 - down1);
     const int fine2 = ABS(center * 2 - left2 - right2)
                     + ABS(center * 2 - up2 - down2);
     int detail = MAX(fine1 * 4 - fine2, 0) / 3;
 
-    /* Penalize broad contrast boundaries, which can remain strong even when
-     * visibly soft, while retaining fine texture. */
+    /* Penalize broad contrast boundaries gently. Temporal confirmation and
+     * the two-radius test already reject noise/blur, so a lighter penalty
+     * preserves low-contrast fabric and skin texture. */
     const int broad_edge = MAX(ABS(right1 - left1), ABS(down1 - up1));
-    return MAX(detail - broad_edge / 3, 0);
+    return MAX(detail - broad_edge / 6, 0);
 }
 #endif
 
@@ -2417,10 +2436,9 @@ draw_zebra_and_focus( int Z, int F )
         //~ bmp_printf(FONT_LARGE, 10, 50, "%d ", thr);
         
 #ifdef CONFIG_SLIM_MENUS
-        /* Slim's precise mode intentionally displays fewer candidates than
-         * legacy ML peaking, so subtly soft background texture is less likely
-         * to be promoted merely to fill a percentage quota. */
-        int target_pthr = MIN((int)focus_peaking_pthr, 2); /* <= 0.2% */
+        /* Balanced density: temporal and multi-scale checks control false
+         * positives, while 0.5% retains low-contrast focused texture. */
+        int target_pthr = 5;
 #else
         int target_pthr = (int)focus_peaking_pthr;
 #endif

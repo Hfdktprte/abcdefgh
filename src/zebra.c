@@ -1550,6 +1550,54 @@ static inline int zebra_color_word_row(int c, int y)
 static int* dirty_pixels = 0;
 static uint32_t* dirty_pixel_values = 0;
 static int dirty_pixels_num = 0;
+#ifdef CONFIG_SLIM_MENUS
+/* Two bits per sampled Live View position. A highlight must be detected on
+ * consecutive scans before it appears; one missed scan is tolerated before
+ * a strong, established highlight disappears. */
+#define FOCUS_CONF_COLS 360
+#define FOCUS_CONF_ROWS 160
+#define FOCUS_CONF_BYTES (FOCUS_CONF_COLS * FOCUS_CONF_ROWS / 4)
+static uint32_t focus_confidence[FOCUS_CONF_BYTES / sizeof(uint32_t)];
+static int focus_confidence_last_scan;
+static int focus_confidence_zoom = -1;
+
+static void focus_confidence_reset(void)
+{
+    bzero32(focus_confidence, sizeof(focus_confidence));
+    focus_confidence_last_scan = 0;
+    focus_confidence_zoom = lv_dispsize;
+}
+
+static inline int FAST focus_confidence_update(int x, int y, int detected)
+{
+    int index = COERCE(y / 3, 0, FOCUS_CONF_ROWS - 1) * FOCUS_CONF_COLS
+              + COERCE(x / 2, 0, FOCUS_CONF_COLS - 1);
+    int shift = (index & 3) * 2;
+    uint8_t *cell = &((uint8_t *)focus_confidence)[index >> 2];
+    int confidence = (*cell >> shift) & 3;
+
+    if (detected)
+        confidence = MIN(confidence + 1, 3);
+    else
+        confidence = MAX(confidence - 1, 0);
+
+    *cell = (*cell & ~(3 << shift)) | (confidence << shift);
+    return confidence >= 2;
+}
+
+static int focus_precise_floor(void)
+{
+    int iso = lens_info.iso ? lens_info.iso :
+              lens_info.iso_auto ? lens_info.iso_auto : 100;
+    int floor = 24;
+    while (iso > 200 && floor < 48)
+    {
+        floor += 3;
+        iso >>= 1;
+    }
+    return floor;
+}
+#endif
 //~ static unsigned int* bm_hd_r_cache = 0;
 static uint16_t bm_lv_x_cache[BMP_W_PLUS - BMP_W_MINUS];
 
@@ -1863,6 +1911,36 @@ static inline int peak_d2xy_sharpen(uint8_t* p8)
     return COERCE(v, 0, 255);
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
+{
+    /* Compare the Laplacian at one- and two-pixel radii. Smooth or slightly
+     * defocused structure grows roughly fourfold at the larger radius and is
+     * cancelled; genuinely fine detail remains. Keeping the axes separate
+     * also avoids cancellation at diagonal features. */
+    const int center = (int)(*p8);
+    const int left1 = (int)(*(p8 - 2));
+    const int right1 = (int)(*(p8 + 2));
+    const int up1 = (int)(*(p8 - pitch));
+    const int down1 = (int)(*(p8 + pitch));
+    const int left2 = (int)(*(p8 - 4));
+    const int right2 = (int)(*(p8 + 4));
+    const int up2 = (int)(*(p8 - pitch * 2));
+    const int down2 = (int)(*(p8 + pitch * 2));
+
+    const int fine1 = ABS(center * 2 - left1 - right1)
+                    + ABS(center * 2 - up1 - down1);
+    const int fine2 = ABS(center * 2 - left2 - right2)
+                    + ABS(center * 2 - up2 - down2);
+    int detail = MAX(fine1 * 4 - fine2, 0) / 3;
+
+    /* Penalize broad contrast boundaries, which can remain strong even when
+     * visibly soft, while retaining fine texture. */
+    const int broad_edge = MAX(ABS(right1 - left1), ABS(down1 - up1));
+    return MAX(detail - broad_edge / 3, 0);
+}
+#endif
+
 static inline int FAST calc_peak(const uint8_t* p8, const int pitch)
 {
     // approximate second derivative with a Laplacian kernel:
@@ -1895,6 +1973,13 @@ static inline int FAST peak_d2xy(const uint8_t* p8)
 {
     return calc_peak(p8, vram_lv.pitch);
 }
+
+#ifdef CONFIG_SLIM_MENUS
+static inline int FAST peak_d2xy_precise(const uint8_t* p8)
+{
+    return calc_peak_precise(p8, vram_lv.pitch);
+}
+#endif
 
 #ifdef FEATURE_FOCUS_PEAK_DISP_FILTER
 
@@ -2162,6 +2247,11 @@ draw_zebra_and_focus( int Z, int F )
     static int prev_thr = 50;
     static int thr_delta = 0;
 
+#ifdef CONFIG_SLIM_MENUS
+    if (!focus_peaking && focus_confidence_last_scan)
+        focus_confidence_reset();
+#endif
+
     if (F && focus_peaking)
     {
         // clear previously written pixels
@@ -2198,6 +2288,20 @@ draw_zebra_and_focus( int Z, int F )
         int xStart = os.x0 + 8;
         int xEnd = os.x_max - 8;
         int n_over = 0;
+#ifdef CONFIG_SLIM_MENUS
+        int now = get_ms_clock();
+        int precise_floor = focus_precise_floor();
+        int detection_thr = MAX(thr, precise_floor);
+        /* A transition or a long redraw gap invalidates temporal evidence. */
+        if (!focus_confidence_last_scan ||
+            now < focus_confidence_last_scan ||
+            now - focus_confidence_last_scan > 500 ||
+            focus_confidence_zoom != lv_dispsize)
+        {
+            focus_confidence_reset();
+        }
+        focus_confidence_last_scan = now;
+#endif
 
         #ifdef FEATURE_ANAMORPHIC_PREVIEW
         yStart = anamorphic_squeeze_bmp_y(yStart);
@@ -2231,8 +2335,29 @@ draw_zebra_and_focus( int Z, int F )
                 {
                     p8 = (uint8_t *)(row + bm_lv_x_cache[x - BMP_W_MINUS]);
                      
+#ifdef CONFIG_SLIM_MENUS
+                    int e = peak_d2xy_precise(p8);
+#else
                     int e = peak_d2xy(p8);
+#endif
                     
+                    /* The adaptive threshold controls density, while the
+                     * absolute floor allows a genuinely soft frame to show no
+                     * peaking at all. */
+#ifdef CONFIG_SLIM_MENUS
+                    int detected = e >= detection_thr;
+                    int confirmed = F == 1 ?
+                        focus_confidence_update(x, y, detected) : 0;
+                    if (unlikely(detected))
+                    {
+                        n_over++;
+                    }
+                    if (unlikely(confirmed))
+                    {
+                        if (unlikely(dirty_pixels_num >= MAX_DIRTY_PIXELS)) break; // threshold too low, abort
+                        focus_found_pixel(x, y, e, detection_thr, bvram);
+                    }
+#else
                     /* executed for 1% of pixels */
                     if (unlikely(e >= thr))
                     {
@@ -2240,6 +2365,7 @@ draw_zebra_and_focus( int Z, int F )
                         if (unlikely(dirty_pixels_num >= MAX_DIRTY_PIXELS)) break; // threshold too low, abort
                         focus_found_pixel(x, y, e, thr, bvram);
                     }
+#endif
                 }
             }
         }
@@ -2253,7 +2379,11 @@ draw_zebra_and_focus( int Z, int F )
                 for (int x = xStart; x < xEnd; x ++)
                 {
                     p8 = (uint8_t *)(row + bm_lv_x_cache[x - BMP_W_MINUS]);
+#ifdef CONFIG_SLIM_MENUS
+                    int e = peak_d2xy_precise(p8);
+#else
                     int e = peak_d2xy(p8);
+#endif
                     
                     /* executed for 1% of pixels */
                     if (unlikely(e >= thr))
@@ -2271,7 +2401,15 @@ draw_zebra_and_focus( int Z, int F )
 
         //~ bmp_printf(FONT_LARGE, 10, 50, "%d ", thr);
         
-        if (1000 * n_over / n_total > (int)focus_peaking_pthr)
+#ifdef CONFIG_SLIM_MENUS
+        /* Slim's precise mode intentionally displays fewer candidates than
+         * legacy ML peaking, so subtly soft background texture is less likely
+         * to be promoted merely to fill a percentage quota. */
+        int target_pthr = MIN((int)focus_peaking_pthr, 2); /* <= 0.2% */
+#else
+        int target_pthr = (int)focus_peaking_pthr;
+#endif
+        if (1000 * n_over / n_total > target_pthr)
         {
             if (thr_delta > 0) thr_increment++; else thr_increment = 1;
             thr += thr_increment;
@@ -2284,6 +2422,9 @@ draw_zebra_and_focus( int Z, int F )
 
         thr_increment = COERCE(thr_increment, -5, 5);
         int thr_min = 15;
+#ifdef CONFIG_SLIM_MENUS
+        thr_min = focus_precise_floor();
+#endif
         thr = COERCE(thr, thr_min, 255);
 
 

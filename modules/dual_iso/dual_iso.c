@@ -441,8 +441,7 @@ int dual_iso_set_recovery_iso(int iso)
 
 /* Detect alternating dual-ISO scan lines in a YUV422 buffer and remove banding
  * by copying one exposure onto the other. Returns 1 if destriped. */
-static int isoless_yuv_destripe(uint32_t* src, uint32_t* dst, int show_bright,
-                                int auto_pick_exposure)
+static int isoless_yuv_destripe(uint32_t* lv, int show_bright)
 {
     int avg[5];
     int best_score = 0;
@@ -462,7 +461,7 @@ static int isoless_yuv_destripe(uint32_t* src, uint32_t* dst, int show_bright,
         {
             for (int x = os.x0; x < os.x_max; x += 32)
             {
-                uint32_t uyvy = src[BM2LV(x, y) / 4];
+                uint32_t uyvy = lv[BM2LV(x, y) / 4];
                 int luma = (((((uyvy) >> 24) & 0xFF) + (((uyvy) >> 8) & 0xFF)) >> 1);
                 avg[y % rep] += luma;
                 num++;
@@ -513,8 +512,8 @@ static int isoless_yuv_destripe(uint32_t* src, uint32_t* dst, int show_bright,
             {
                 for (int x = os.x0; x < os.x_max; x += 32)
                 {
-                    uint32_t uyvy0 = src[BM2LV(x, y) / 4];
-                    uint32_t uyvy1 = src[BM2LV(x, y + 1) / 4];
+                    uint32_t uyvy0 = lv[BM2LV(x, y) / 4];
+                    uint32_t uyvy1 = lv[BM2LV(x, y + 1) / 4];
                     avg0 += (((((uyvy0) >> 24) & 0xFF) + (((uyvy0) >> 8) & 0xFF)) >> 1);
                     avg1 += (((((uyvy1) >> 24) & 0xFF) + (((uyvy1) >> 8) & 0xFF)) >> 1);
                     n++;
@@ -531,26 +530,19 @@ static int isoless_yuv_destripe(uint32_t* src, uint32_t* dst, int show_bright,
             return 0;
     }
 
-    /* Playback may choose whichever field is visible. Live recording must
-     * remain on the darker, base-ISO field even when it is underexposed. */
-    if (auto_pick_exposure)
-    {
-        if (min_b < 10)
-            show_bright = 1;
-        if (max_b > 245)
-            show_bright = 0;
-    }
-
-    if (dst != src)
-        memcpy(dst, src, 720 * 480 * 2);
+    /* one exposure too bright or too dark? pick the usable one */
+    if (min_b < 10)
+        show_bright = 1;
+    if (max_b > 245)
+        show_bright = 0;
 
     for (int y = os.y0; y < os.y_max; y++)
     {
-        uint32_t* line = &(dst[BM2LV_R(y) / 4]);
+        uint32_t* line = &(lv[BM2LV_R(y) / 4]);
         int ref_y = y / period * period + (show_bright ? max_i : min_i);
         if (ref_y < 0) continue;
         if (y == ref_y) continue;
-        uint32_t* ref = &(src[BM2LV_R(ref_y) / 4]);
+        uint32_t* ref = &(lv[BM2LV_R(ref_y) / 4]);
         memcpy(line, ref, vram_lv.pitch);
     }
     return 1;
@@ -574,7 +566,7 @@ static unsigned int isoless_playback_fix(unsigned int ctx)
     static int show_bright = 0;
     show_bright = !show_bright;
 
-    if (!isoless_yuv_destripe(lv, lv, show_bright, 1))
+    if (!isoless_yuv_destripe(lv, show_bright))
         return 0;
 
     bmp_printf(FONT_MED, 0, 0, "%s", show_bright ? "Bright" : "Dark");
@@ -789,31 +781,6 @@ int dual_iso_slim_step_pair(int delta)
     isoless_refresh(CTX_SET_RECOVERY_ISO);
     lens_display_set_dirty();
     return 1;
-}
-
-/* EOS M enables the alternating ISO rows only while recording RAW. Preserve
- * the low-ISO YUV field and repeat it vertically into the recovery-ISO field.
- * This remains full-colour and is much cheaper than live RAW demosaicing. */
-static unsigned int isoless_live_base_preview(unsigned int ctx)
-{
-    if (ctx == 0)
-    {
-        return is_eosm && is_movie_mode() && isoless_hdr &&
-               dual_iso_is_active() && RECORDING_RAW && lv_dispsize != 10;
-    }
-
-    struct display_filter_buffers* buffers =
-        (struct display_filter_buffers*) ctx;
-
-    if (!buffers->src_buf || !buffers->dst_buf)
-        return CBR_RET_CONTINUE;
-
-    /* show_bright=0 is the darker base ISO. Never substitute the recovery
-     * field simply because the selected base exposure is near black. */
-    if (!isoless_yuv_destripe(buffers->src_buf, buffers->dst_buf, 0, 0))
-        memcpy(buffers->dst_buf, buffers->src_buf, 720 * 480 * 2);
-
-    return CBR_RET_CONTINUE;
 }
 
 /* Live View's ISO editor controls recovery ISO while Dual ISO is enabled.
@@ -1368,7 +1335,6 @@ MODULE_INFO_END()
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, isoless_refresh, CTX_SHOOT_TASK)
     MODULE_CBR(CBR_SHOOT_TASK, isoless_playback_fix, CTX_SHOOT_TASK)
-    MODULE_CBR(CBR_DISPLAY_FILTER, isoless_live_base_preview, 0)
 MODULE_CBRS_END()
 
 MODULE_CONFIGS_START()

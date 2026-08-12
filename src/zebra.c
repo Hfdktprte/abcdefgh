@@ -1953,32 +1953,12 @@ static inline int FAST calc_focus_confidence(const uint8_t* p8, const int pitch)
                        MAX(grad2_y - grad1_y, 0);
     const int edge = MAX(grad1_x, grad1_y);
 
-    /* A broad transition is not a focus hit, even if its contrast is high.
-     * This hard test is deliberately before adaptive density selection. */
-    if (spread > fine + 6)
-        return 0;
-
     /* The legacy bias remains meaningful: Balanced lightly suppresses a
      * broad high-contrast edge, while Fine details is stricter. */
     const int edge_penalty = focus_peaking_filter_edges ?
         ((edge << focus_peaking_filter_edges) >> 3) : 0;
     const int score = fine * 4 - edge_penalty - spread * 3;
     return COERCE(score, 0, 255);
-}
-
-/* The adaptive percentage threshold controls dot density, but must never be
- * allowed to fall into the blur/noise range merely to satisfy that target. */
-static int focus_confidence_floor(void)
-{
-    int iso = lens_info.iso ? lens_info.iso :
-              (lens_info.iso_auto ? lens_info.iso_auto : 100);
-    int floor = 48;
-    while (iso > 400 && floor < 72)
-    {
-        floor += 6;
-        iso >>= 1;
-    }
-    return floor;
 }
 #endif
 
@@ -2386,11 +2366,6 @@ draw_zebra_and_focus( int Z, int F )
 
         thr_increment = COERCE(thr_increment, -5, 5);
         int thr_min = 15;
-#ifdef CONFIG_SLIM_MENUS
-        /* Permit zero dots in an unfocused frame; never lower the adaptive
-         * threshold below the measured sharpness confidence floor. */
-        thr_min = focus_confidence_floor();
-#endif
         thr = COERCE(thr, thr_min, 255);
 
 

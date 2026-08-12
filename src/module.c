@@ -43,19 +43,7 @@ CONFIG_INT("module.console", module_console_enabled, 0);
 CONFIG_INT("module.ignore_crashes", module_ignore_crashes, 0);
 char *module_lockfile = MODULE_PATH"LOADING.LCK";
 
-/* Keep this synchronized with modules/Makefile.modules.user. Modules absent
- * from the Slim package must not be treated as implicit boot dependencies. */
-#ifdef CONFIG_SLIM_MENUS
-static const char * const core_modules[] = {
-    "mlv_lite", "crop_rec", "dual_iso", "hdmi_out", "mlv_play",
-    "mlv_snd", "sd_uhs", "file_man", "bench"
-};
-#else
-static const char * const core_modules[] = {
-    "mlv_lite", "crop_rec", "mlv_play", "mlv_snd", "sd_uhs", "lua",
-    "file_man", "dual_iso", "silent", "bench", "hdmi_out"
-};
-#endif
+char *core_modules[] = {"mlv_lite", "crop_rec", "mlv_play", "mlv_snd", "sd_uhs", "lua", "file_man", "dual_iso", "silent", "bench", "hdmi_out"};
 
 static struct msg_queue * module_mq = 0;
 // #define MSG_MODULE_LOAD_ALL 1

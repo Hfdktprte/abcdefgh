@@ -31,8 +31,6 @@ static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
-static unsigned quick_screen_feedback_serial = 0;
-static unsigned quick_screen_refresh_serial = 0;
 static int white_card_wb_active = 0;
 static int white_card_wb_capturing = 0;
 static int white_card_wb_done = 0;
@@ -81,8 +79,7 @@ static const quick_screen_item_t quick_screen_items[QUICK_SCREEN_COUNT] =
 static void quick_screen_feedback_clear(int timer, void *opaque)
 {
     (void)timer;
-    if ((unsigned)(uintptr_t)opaque != quick_screen_feedback_serial)
-        return;
+    (void)opaque;
     quick_screen_feedback = -1;
     if (quick_screen_active)
         menu_redraw();
@@ -91,8 +88,7 @@ static void quick_screen_feedback_clear(int timer, void *opaque)
 static void quick_screen_refresh(int timer, void *opaque)
 {
     (void)timer;
-    if ((unsigned)(uintptr_t)opaque != quick_screen_refresh_serial)
-        return;
+    (void)opaque;
     if (quick_screen_active)
         menu_redraw();
 }
@@ -228,8 +224,6 @@ void menu_quick_screen_open(void)
     quick_screen_active = 1;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
-    quick_screen_feedback_serial++;
-    quick_screen_refresh_serial++;
     /* Do not query menu entries here: this runs before menu_open owns the
      * screen and doing so can race Canon's GUI task (Err70). */
     quick_screen_sel = COERCE(
@@ -241,8 +235,6 @@ void menu_quick_screen_close(void)
     quick_screen_active = 0;
     quick_screen_feedback = -1;
     quick_screen_touch_latched = 0;
-    quick_screen_feedback_serial++;
-    quick_screen_refresh_serial++;
 }
 
 int menu_white_card_wb_is_active(void)
@@ -594,61 +586,42 @@ static int quick_screen_adjust(int index, int delta)
     menu_adjust_value_by_name(
         item->adjust_menu, item->adjust_entry, delta);
     menu_redraw();
-    quick_screen_feedback_serial++;
-    quick_screen_refresh_serial++;
-    delayed_call(220, quick_screen_feedback_clear,
-                 (void *)(uintptr_t)quick_screen_feedback_serial);
-    delayed_call(500, quick_screen_refresh,
-                 (void *)(uintptr_t)quick_screen_refresh_serial);
+    delayed_call(220, quick_screen_feedback_clear, 0);
+    delayed_call(500, quick_screen_refresh, 0);
     return 1;
 }
 
 void menu_quick_screen_draw(void)
 {
     int index;
-    int enabled[QUICK_SCREEN_COUNT];
-    int draw_degree[QUICK_SCREEN_COUNT];
-    char values[QUICK_SCREEN_COUNT][MENU_MAX_VALUE_LEN];
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
-    /* Resolve each dynamic entry exactly once per frame. Besides avoiding
-     * duplicate menu update callbacks, this gives selection and rendering
-     * one coherent availability snapshot. */
-    for (index = 0; index < QUICK_SCREEN_COUNT; index++)
-    {
-        enabled[index] = quick_screen_value(
-            index, values[index], sizeof(values[index]), &draw_degree[index]);
-    }
-
-    /* Never leave the yellow selector on a disabled control. */
-    if (!enabled[quick_screen_sel])
-    {
-        for (index = 1; index <= QUICK_SCREEN_COUNT; index++)
-        {
-            int candidate = MOD(quick_screen_sel + index, QUICK_SCREEN_COUNT);
-            if (enabled[candidate])
-            {
-                quick_screen_sel = candidate;
-                break;
-            }
-        }
-    }
+    /* Menu task owns the screen here, so dynamic availability is safe to
+     * evaluate. Never leave the yellow selector on a disabled control. */
+    if (!quick_screen_option_enabled(quick_screen_sel))
+        quick_screen_sel = quick_screen_next_enabled(
+            quick_screen_sel + 1, 1);
 
     for (index = 0; index < QUICK_SCREEN_COUNT; index++)
     {
         int cx, value_y, up_tip_y, down_tip_y;
+        char value[MENU_MAX_VALUE_LEN];
         int width;
+        int enabled;
+        int draw_degree;
         int color;
         int value_x;
         quick_screen_geometry(
             index, &cx, &value_y, &up_tip_y, &down_tip_y);
-        color = enabled[index] ? COLOR_WHITE : COLOR_GRAY(50);
-        width = bmp_string_width(FONT_CANON, values[index]);
-        value_x = cx - (width + (draw_degree[index] ? 12 : 0)) / 2;
+        enabled = quick_screen_value(
+            index, value, sizeof(value), &draw_degree);
+        color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
+        width = bmp_string_width(FONT_CANON, value);
+        value_x = cx - (width + (draw_degree ? 12 : 0)) / 2;
         bmp_printf(
             FONT(FONT_CANON, color, NO_BG_ERASE),
-            value_x, value_y, "%s", values[index]);
-        if (draw_degree[index])
+            value_x, value_y, "%s", value);
+        if (draw_degree)
         {
             int degree_x = value_x + width + 6;
             int degree_y = value_y + 7;
@@ -656,13 +629,13 @@ void menu_quick_screen_draw(void)
             draw_circle(degree_x, degree_y, 3, color);
         }
         quick_screen_arrow(cx, up_tip_y, 1,
-            !enabled[index] ? COLOR_GRAY(50) :
+            !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 ? COLOR_WHITE : COLOR_ORANGE);
         quick_screen_arrow(cx, down_tip_y, 0,
-            !enabled[index] ? COLOR_GRAY(50) :
+            !enabled ? COLOR_GRAY(50) :
             quick_screen_feedback == index * 2 + 1 ? COLOR_WHITE : COLOR_ORANGE);
 
-        if (index == quick_screen_sel && enabled[index])
+        if (index == quick_screen_sel && enabled)
         {
             /* Slightly narrower than the 60px arrow for a lighter highlight. */
             bmp_fill(COLOR_YELLOW, cx - 24, up_tip_y - 17, 48, 4);

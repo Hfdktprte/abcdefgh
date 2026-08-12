@@ -1906,69 +1906,9 @@ static inline int FAST calc_peak(const uint8_t* p8, const int pitch)
     return e;
 }
 
-#ifdef CONFIG_SLIM_MENUS
-/*
- * Edge-spread focus confidence.
- *
- * A normal Laplacian only says that an edge has contrast. A defocused black /
- * white edge may therefore look more "in focus" than a sharp low-contrast
- * fabric. Here we compare gradients over one and two pixel radii. A sharp
- * edge has already completed its transition at the close radius; a defocused
- * edge continues to grow at the wider radius and receives a spread penalty.
- * The fine curvature term keeps real texture, while the luma and range gates
- * reject black-level noise, clipped regions and flat areas.
- */
-static inline int FAST calc_focus_confidence(const uint8_t* p8, const int pitch)
-{
-    const int c  = (int)*p8;
-    const int l1 = (int)*(p8 - 2);
-    const int r1 = (int)*(p8 + 2);
-    const int u1 = (int)*(p8 - pitch);
-    const int d1 = (int)*(p8 + pitch);
-    const int l2 = (int)*(p8 - 4);
-    const int r2 = (int)*(p8 + 4);
-    const int u2 = (int)*(p8 - pitch * 2);
-    const int d2 = (int)*(p8 + pitch * 2);
-
-    const int min_luma = MIN(c, MIN(MIN(l1, r1), MIN(u1, d1)));
-    const int max_luma = MAX(c, MAX(MAX(l1, r1), MAX(u1, d1)));
-
-    /* No trustworthy focus information exists in clipped or near-black YUV. */
-    if (min_luma < 12 || max_luma > 250 || max_luma - min_luma < 12)
-        return 0;
-
-    const int fine_x = ABS(c * 2 - l1 - r1);
-    const int fine_y = ABS(c * 2 - u1 - d1);
-    const int fine = fine_x + fine_y;
-    if (fine < 4)
-        return 0;
-
-    const int grad1_x = ABS(r1 - l1);
-    const int grad1_y = ABS(d1 - u1);
-    const int grad2_x = ABS(r2 - l2);
-    const int grad2_y = ABS(d2 - u2);
-
-    /* Positive growth at the wider radius is an estimate of edge spread. */
-    const int spread = MAX(grad2_x - grad1_x, 0) +
-                       MAX(grad2_y - grad1_y, 0);
-    const int edge = MAX(grad1_x, grad1_y);
-
-    /* The legacy bias remains meaningful: Balanced lightly suppresses a
-     * broad high-contrast edge, while Fine details is stricter. */
-    const int edge_penalty = focus_peaking_filter_edges ?
-        ((edge << focus_peaking_filter_edges) >> 3) : 0;
-    const int score = fine * 4 - edge_penalty - spread * 3;
-    return COERCE(score, 0, 255);
-}
-#endif
-
 static inline int FAST peak_d2xy(const uint8_t* p8)
 {
-#ifdef CONFIG_SLIM_MENUS
-    return calc_focus_confidence(p8, vram_lv.pitch);
-#else
     return calc_peak(p8, vram_lv.pitch);
-#endif
 }
 
 #ifdef FEATURE_FOCUS_PEAK_DISP_FILTER

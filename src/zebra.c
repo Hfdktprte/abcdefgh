@@ -4148,16 +4148,6 @@ int zebra_should_run()
         !WAVEFORM_FULLSCREEN;
 }
 
-static int zebra_display_filter_should_run(void)
-{
-#ifdef CONFIG_DISPLAY_FILTERS
-    extern int display_filter_enabled(void);
-    return display_filter_enabled();
-#else
-    return 0;
-#endif
-}
-
 int zebra_draw_enabled(void)
 {
     return monitoring_enabled(zebra_draw);
@@ -4630,16 +4620,11 @@ livev_hipriority_task( void* unused )
         static int raw_flag = 0;
 #endif
         
-        /* Module display filters may be required while Global Draw is off
-         * (for example the EOS M Dual-ISO base-field recording preview).
-         * Do not put their worker to sleep with the overlay renderer. */
-        int module_filter_should_run = zebra_display_filter_should_run();
-
-        if (!zebra_should_run() && !module_filter_should_run)
+        if (!zebra_should_run())
         {
             while (clearscreen == 1 && (get_halfshutter_pressed() || dofpreview)) msleep(100);
             while (RECORDING_H264_STARTING) msleep(100);
-            if (!zebra_should_run() && !zebra_display_filter_should_run())
+            if (!zebra_should_run())
             {
                 digic_zebra_cleanup();
                 if (lv && !gui_menu_shown()) redraw();
@@ -4649,19 +4634,16 @@ livev_hipriority_task( void* unused )
                 #ifdef CONFIG_RAW_LIVEVIEW
                 if (raw_flag) { raw_lv_release(); raw_flag = 0; }
                 #endif
-                while (!zebra_should_run() && !zebra_display_filter_should_run())
+                while (!zebra_should_run()) 
                 {
                     msleep(100);
                 }
                 vram_params_set_dirty();
                 zoom_overlay_triggered_by_focus_ring_countdown = 0;
                 crop_set_dirty(10);
-                /* Overlay startup benefits from settling time; a recording
-                 * display filter must begin immediately. */
-                if (zebra_should_run())
-                    msleep(500);
+                msleep(500);
             }
-            if (!zebra_should_run() && !zebra_display_filter_should_run())
+            if (!zebra_should_run())
             {
                 /* false alarm */
                 continue;

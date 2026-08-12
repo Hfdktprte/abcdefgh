@@ -6789,8 +6789,8 @@ void gui_open_custom_menu(void)
 {
     const char *entry_name = "No Custom Items";
 
-    custom_menu_dirty = 1;
-    custom_menu_rebuild();
+    if (custom_menu_dirty)
+        custom_menu_rebuild();
     for (int i = 0; i < CUSTOM_MENU_MAX_ITEMS; i++)
     {
         if (custom_menu_placeholders[i].selected &&

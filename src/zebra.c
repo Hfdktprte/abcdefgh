@@ -1458,6 +1458,8 @@ static void waveform_init()
 #ifdef FEATURE_WAVEFORM
     if (!waveform)
         waveform = malloc(WAVEFORM_WIDTH * WAVEFORM_HEIGHT);
+    if (!waveform)
+        return;
     bzero32(waveform, WAVEFORM_WIDTH * WAVEFORM_HEIGHT);
     waveform_clip_r = waveform_clip_g = waveform_clip_b = 0;
     waveform_clip_total = 0;

@@ -85,8 +85,11 @@ int raw_overlay_calibration_ready(void)
 
 int raw_params_ready_for_rec(void)
 {
-    if (raw_info.width <= 0
+    if (!raw_info.buffer
+        || raw_info.width <= 0
         || raw_info.height <= 0
+        || raw_info.pitch <= 0
+        || raw_info.frame_size <= 0
         || raw_info.bits_per_pixel != 14
         || dirty
         || get_ms_clock() < next_retry_lv)

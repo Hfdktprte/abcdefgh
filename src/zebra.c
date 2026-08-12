@@ -1568,6 +1568,11 @@ static int dirty_pixels_num = 0;
 static uint32_t focus_confidence[FOCUS_CONF_BYTES / sizeof(uint32_t)];
 static int focus_confidence_last_scan;
 static int focus_confidence_zoom = -1;
+static int focus_raw_aux = INT_MIN;
+static int focus_raw_scan_aux = INT_MIN;
+static int focus_raw_ready;
+static int focus_raw_thr = 900;
+static int focus_raw_thr_increment = 24;
 
 static void focus_confidence_reset(void)
 {
@@ -1604,6 +1609,92 @@ static int focus_precise_floor(void)
         iso >>= 1;
     }
     return floor;
+}
+
+/* Use the sensor's two green samples as a luminance plane. This never reads
+ * or changes the recording buffers; it only samples the already-published LV
+ * RAW frame after raw_update_params has confirmed its geometry. */
+static int focus_raw_update_ready(void)
+{
+    if (should_run_polling_action(250, &focus_raw_aux) || !focus_raw_ready)
+    {
+        focus_raw_ready = can_use_raw_overlays()
+            && raw_update_params()
+            && raw_overlay_calibration_ready()
+            && raw_info.buffer
+            && raw_info.active_area.x2 > raw_info.active_area.x1 + 32
+            && raw_info.active_area.y2 > raw_info.active_area.y1 + 32;
+    }
+    return focus_raw_ready;
+}
+
+static inline int focus_raw_green(int x, int y)
+{
+    return raw_green_pixel_dark(x, y) - raw_info.black_level;
+}
+
+/* Multi-scale RAW focus confidence. Fine SML detail, Tenengrad-like local
+ * gradient and local contrast all need to agree. Broad/blurred edges fail the
+ * fine-to-medium comparison; shadows and clipped highlights are excluded. */
+static int FAST focus_raw_confidence(int bm_x, int bm_y)
+{
+    const int x = BM2RAW_X(bm_x);
+    const int y = BM2RAW_Y(bm_y);
+    const int d1 = 4;
+    const int d2 = 8;
+    const int margin = 16;
+
+    if (x < raw_info.active_area.x1 + margin ||
+        x > raw_info.active_area.x2 - margin ||
+        y < raw_info.active_area.y1 + margin ||
+        y > raw_info.active_area.y2 - margin)
+        return 0;
+
+    const int c = focus_raw_green(x, y);
+    const int l1 = focus_raw_green(x - d1, y);
+    const int r1 = focus_raw_green(x + d1, y);
+    const int u1 = focus_raw_green(x, y - d1);
+    const int d1v = focus_raw_green(x, y + d1);
+    const int l2 = focus_raw_green(x - d2, y);
+    const int r2 = focus_raw_green(x + d2, y);
+    const int u2 = focus_raw_green(x, y - d2);
+    const int d2v = focus_raw_green(x, y + d2);
+    const int raw_max = raw_info.white_level - raw_info.black_level;
+    const int min_sample = MIN(c, MIN(MIN(l1, r1), MIN(u1, d1v)));
+    const int max_sample = MAX(c, MAX(MAX(l1, r1), MAX(u1, d1v)));
+    int fine = ABS(c * 2 - l1 - r1) + ABS(c * 2 - u1 - d1v);
+    int medium = ABS(c * 2 - l2 - r2) + ABS(c * 2 - u2 - d2v);
+    int gradient = ABS(r1 - l1) + ABS(d1v - u1);
+    int contrast = max_sample - min_sample;
+    int noise = 48;
+
+    if (lens_info.iso > 200)
+        noise += (lens_info.iso - 200) / 32;
+
+    if (min_sample < noise || max_sample > raw_max - noise * 4)
+        return 0;
+    if (contrast < noise * 2)
+        return 0;
+    if (medium > fine * 2 + noise * 2)
+        return 0;
+
+    /* Clamp broad gradient contribution: it may support texture confidence,
+     * but can never by itself turn a blurred edge into a focus hit. */
+    return fine * 2 + MIN(gradient, fine * 2) + MIN(contrast, fine * 2);
+}
+
+/* A real focus feature covers a small area. Reject one-cell RAW noise or a
+ * single Bayer artifact before it enters the temporal confidence map. */
+static int FAST focus_raw_region_supported(int bm_x, int bm_y, int score,
+                                            int threshold)
+{
+    const int support_threshold = threshold * 2 / 3;
+    int support = score >= threshold;
+    support += focus_raw_confidence(bm_x - 4, bm_y) >= support_threshold;
+    support += focus_raw_confidence(bm_x + 4, bm_y) >= support_threshold;
+    support += focus_raw_confidence(bm_x, bm_y - 6) >= support_threshold;
+    support += focus_raw_confidence(bm_x, bm_y + 6) >= support_threshold;
+    return support >= 2;
 }
 #endif
 //~ static unsigned int* bm_hd_r_cache = 0;
@@ -2301,6 +2392,15 @@ draw_zebra_and_focus( int Z, int F )
 
     if (F && focus_peaking)
     {
+#ifdef CONFIG_SLIM_MENUS
+        /* The RAW map is intentionally limited to 10 Hz. It is sufficiently
+         * responsive for manual focus, while leaving CPU and memory bandwidth
+         * for Live View and the RAW recorder. Keep the last confirmed dots
+         * between scans instead of clearing and redrawing them needlessly. */
+        int use_raw_focus = lv && F == 1 && focus_raw_update_ready();
+        if (use_raw_focus && !should_run_polling_action(100, &focus_raw_scan_aux))
+            return 0;
+#endif
         // clear previously written pixels
         if (unlikely(!dirty_pixels)) dirty_pixels = malloc(MAX_DIRTY_PIXELS * sizeof(int));
         if (unlikely(!dirty_pixels)) return -1;
@@ -2384,17 +2484,29 @@ draw_zebra_and_focus( int Z, int F )
         int n_total = 0;
         if (lv) // fast, realtime
         {
-            n_total = ((yEnd - yStart) * (xEnd - xStart)) / 6;
-            for(int y = yStart; y < yEnd; y += 3)
+            int focus_y_step =
+#ifdef CONFIG_SLIM_MENUS
+                use_raw_focus ? 6 :
+#endif
+                3;
+            int focus_x_step =
+#ifdef CONFIG_SLIM_MENUS
+                use_raw_focus ? 4 :
+#endif
+                2;
+            n_total = ((yEnd - yStart) / focus_y_step) *
+                      ((xEnd - xStart) / focus_x_step);
+            for(int y = yStart; y < yEnd; y += focus_y_step)
             {
                 uint32_t row = vram + BM2LV_R(y);
                 
-                for (int x = xStart; x < xEnd; x += 2)
+                for (int x = xStart; x < xEnd; x += focus_x_step)
                 {
                     p8 = (uint8_t *)(row + bm_lv_x_cache[x - BMP_W_MINUS]);
                      
 #ifdef CONFIG_SLIM_MENUS
-                    int e = peak_d2xy_precise(p8);
+                    int e = use_raw_focus ? focus_raw_confidence(x, y) :
+                        peak_d2xy_precise(p8);
 #else
                     int e = peak_d2xy(p8);
 #endif
@@ -2403,7 +2515,9 @@ draw_zebra_and_focus( int Z, int F )
                      * absolute floor allows a genuinely soft frame to show no
                      * peaking at all. */
 #ifdef CONFIG_SLIM_MENUS
-                    int detected = e >= detection_thr;
+                    int detected = e >= (use_raw_focus ? focus_raw_thr : detection_thr);
+                    if (detected && use_raw_focus)
+                        detected = focus_raw_region_supported(x, y, e, focus_raw_thr);
                     int confirmed = F == 1 ?
                         focus_confidence_update(x, y, detected) : 0;
                     if (unlikely(detected))
@@ -2413,7 +2527,8 @@ draw_zebra_and_focus( int Z, int F )
                     if (unlikely(confirmed))
                     {
                         if (unlikely(dirty_pixels_num >= MAX_DIRTY_PIXELS)) break; // threshold too low, abort
-                        focus_found_pixel(x, y, e, detection_thr, bvram);
+                        focus_found_pixel(x, y, e,
+                            use_raw_focus ? focus_raw_thr : detection_thr, bvram);
                     }
 #else
                     /* executed for 1% of pixels */
@@ -2460,12 +2575,19 @@ draw_zebra_and_focus( int Z, int F )
         //~ bmp_printf(FONT_LARGE, 10, 50, "%d ", thr);
         
 #ifdef CONFIG_SLIM_MENUS
-        /* Midpoint between sparse precision and texture-sensitive tuning. */
+        /* RAW confidence does not need the old edge detector's forced-dot
+         * behavior. It adapts only within a safe range, so a soft frame is
+         * still allowed to show no focus regions. */
         int target_pthr = 3; /* 0.3% */
 #else
         int target_pthr = (int)focus_peaking_pthr;
 #endif
-        if (1000 * n_over / n_total > target_pthr)
+        int over_target = n_total > 0 &&
+            1000 * n_over / n_total > target_pthr;
+#ifdef CONFIG_SLIM_MENUS
+        if (!use_raw_focus)
+#endif
+        if (over_target)
         {
             if (thr_delta > 0) thr_increment++; else thr_increment = 1;
             thr += thr_increment;
@@ -2482,6 +2604,23 @@ draw_zebra_and_focus( int Z, int F )
         thr_min = focus_precise_floor();
 #endif
         thr = COERCE(thr, thr_min, 255);
+
+#ifdef CONFIG_SLIM_MENUS
+        if (use_raw_focus)
+        {
+            if (over_target)
+            {
+                focus_raw_thr_increment = MIN(focus_raw_thr_increment + 8, 96);
+                focus_raw_thr += focus_raw_thr_increment;
+            }
+            else
+            {
+                focus_raw_thr_increment = MAX(focus_raw_thr_increment - 4, 12);
+                focus_raw_thr -= focus_raw_thr_increment;
+            }
+            focus_raw_thr = COERCE(focus_raw_thr, 240, 12000);
+        }
+#endif
 
 
         thr_delta = thr - prev_thr;

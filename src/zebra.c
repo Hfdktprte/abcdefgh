@@ -1980,6 +1980,109 @@ static int focus_confidence_floor(void)
     }
     return floor;
 }
+
+/* Focus-sweep state is deliberately low resolution: it tracks the local
+ * sharpness curve while the lens is moved, not the overlay's pixel grid. */
+#define FOCUS_SWEEP_COLS 120
+#define FOCUS_SWEEP_ROWS 80
+#define FOCUS_SWEEP_CELLS (FOCUS_SWEEP_COLS * FOCUS_SWEEP_ROWS)
+static uint8_t focus_sweep_peak[FOCUS_SWEEP_CELLS];
+static uint8_t focus_sweep_last_score[FOCUS_SWEEP_CELLS];
+static uint8_t focus_sweep_last_luma[FOCUS_SWEEP_CELLS];
+static int focus_sweep_initialized;
+static int focus_sweep_active_frames;
+static int focus_sweep_motion_last;
+static int focus_sweep_motion_sum;
+static int focus_sweep_motion_samples;
+static int focus_sweep_changed_cells;
+static uint32_t focus_sweep_focus_dist;
+static int focus_sweep_zoom = -1;
+
+static void focus_sweep_reset(void)
+{
+    bzero32(focus_sweep_peak, sizeof(focus_sweep_peak));
+    bzero32(focus_sweep_last_score, sizeof(focus_sweep_last_score));
+    bzero32(focus_sweep_last_luma, sizeof(focus_sweep_last_luma));
+    focus_sweep_initialized = 0;
+    focus_sweep_active_frames = 0;
+    focus_sweep_motion_last = 0;
+    focus_sweep_focus_dist = 0;
+    focus_sweep_zoom = lv_dispsize;
+}
+
+/* Start a comparison frame. Electronic lenses provide a direct focus-move
+ * signal; manual lenses are detected from coherent local sharpness changes. */
+static int focus_sweep_begin_frame(void)
+{
+    if (focus_sweep_zoom != lv_dispsize || focus_sweep_motion_last > 22)
+        focus_sweep_reset();
+
+    uint32_t focus_dist = lens_info.focus_dist;
+    if (focus_sweep_initialized && focus_dist && focus_sweep_focus_dist &&
+        focus_dist != focus_sweep_focus_dist)
+    {
+        /* Begin a fresh local curve when a reporting lens starts moving. */
+        if (!focus_sweep_active_frames)
+            bzero32(focus_sweep_peak, sizeof(focus_sweep_peak));
+        focus_sweep_active_frames = 10;
+    }
+    if (focus_dist)
+        focus_sweep_focus_dist = focus_dist;
+
+    if (focus_sweep_active_frames > 0)
+        focus_sweep_active_frames--;
+
+    focus_sweep_motion_sum = 0;
+    focus_sweep_motion_samples = 0;
+    focus_sweep_changed_cells = 0;
+    return focus_sweep_initialized && focus_sweep_active_frames > 0;
+}
+
+static int FAST focus_sweep_confirm(int x, int y, int score, int luma,
+                                    int sweep_is_active)
+{
+    const int index = COERCE(y / 6, 0, FOCUS_SWEEP_ROWS - 1) *
+                      FOCUS_SWEEP_COLS + COERCE(x / 6, 0, FOCUS_SWEEP_COLS - 1);
+    const int previous_score = focus_sweep_last_score[index];
+    const int previous_luma = focus_sweep_last_luma[index];
+    int peak = focus_sweep_peak[index];
+
+    if (focus_sweep_initialized)
+    {
+        focus_sweep_motion_sum += ABS(luma - previous_luma);
+        focus_sweep_motion_samples++;
+        if (ABS(score - previous_score) >= 14)
+            focus_sweep_changed_cells++;
+    }
+
+    if (score >= peak)
+        peak = score;
+    else if (score + 10 < peak)
+        peak = MAX(score, (peak * 7 + score) >> 3);
+
+    focus_sweep_peak[index] = peak;
+    focus_sweep_last_score[index] = score;
+    focus_sweep_last_luma[index] = luma;
+
+    /* A tile is confirmed only while it is near its observed focus maximum.
+     * The absolute floor makes a merely blurred maximum ineligible. */
+    return sweep_is_active && score >= focus_confidence_floor() &&
+           score + 6 >= peak;
+}
+
+static void focus_sweep_finish_frame(void)
+{
+    if (focus_sweep_motion_samples)
+        focus_sweep_motion_last = focus_sweep_motion_sum /
+                                  focus_sweep_motion_samples;
+
+    /* Manual lenses do not report focus distance. A stable frame with many
+     * changing sharpness tiles is therefore treated as a manual focus sweep. */
+    if (focus_sweep_motion_last <= 22 && focus_sweep_changed_cells >= 18)
+        focus_sweep_active_frames = 8;
+
+    focus_sweep_initialized = 1;
+}
 #endif
 
 static inline int FAST peak_d2xy(const uint8_t* p8)
@@ -2257,8 +2360,20 @@ draw_zebra_and_focus( int Z, int F )
     static int prev_thr = 50;
     static int thr_delta = 0;
 
+#ifdef CONFIG_SLIM_MENUS
+    if (!focus_peaking && focus_sweep_initialized)
+        focus_sweep_reset();
+#endif
+
     if (F && focus_peaking)
     {
+#ifdef CONFIG_SLIM_MENUS
+        /* The legacy threshold-probing pass has no meaning for a temporal
+         * focus sweep; only actual display frames may update its history. */
+        if (lv && F != 1)
+            return 0;
+        int focus_sweep_active = lv ? focus_sweep_begin_frame() : 0;
+#endif
         // clear previously written pixels
         if (unlikely(!dirty_pixels)) dirty_pixels = malloc(MAX_DIRTY_PIXELS * sizeof(int));
         if (unlikely(!dirty_pixels)) return -1;
@@ -2324,17 +2439,39 @@ draw_zebra_and_focus( int Z, int F )
         int n_total = 0;
         if (lv) // fast, realtime
         {
+#ifdef CONFIG_SLIM_MENUS
+            const int sweep_x_start = ((xStart + 5) / 6) * 6;
+            const int sweep_y_start = ((yStart + 5) / 6) * 6;
+            n_total = ((yEnd - sweep_y_start) / 6) *
+                      ((xEnd - sweep_x_start) / 6);
+            for (int y = sweep_y_start; y < yEnd; y += 6)
+#else
             n_total = ((yEnd - yStart) * (xEnd - xStart)) / 6;
             for(int y = yStart; y < yEnd; y += 3)
+#endif
             {
                 uint32_t row = vram + BM2LV_R(y);
                 
+#ifdef CONFIG_SLIM_MENUS
+                for (int x = sweep_x_start; x < xEnd; x += 6)
+#else
                 for (int x = xStart; x < xEnd; x += 2)
+#endif
                 {
                     p8 = (uint8_t *)(row + bm_lv_x_cache[x - BMP_W_MINUS]);
                      
                     int e = peak_d2xy(p8);
                     
+#ifdef CONFIG_SLIM_MENUS
+                    int confirmed = focus_sweep_confirm(x, y, e, *p8,
+                                                        focus_sweep_active);
+                    if (unlikely(confirmed))
+                    {
+                        n_over++;
+                        if (unlikely(dirty_pixels_num >= MAX_DIRTY_PIXELS)) break;
+                        focus_found_pixel(x, y, e, focus_confidence_floor(), bvram);
+                    }
+#else
                     /* executed for 1% of pixels */
                     if (unlikely(e >= thr))
                     {
@@ -2342,8 +2479,12 @@ draw_zebra_and_focus( int Z, int F )
                         if (unlikely(dirty_pixels_num >= MAX_DIRTY_PIXELS)) break; // threshold too low, abort
                         focus_found_pixel(x, y, e, thr, bvram);
                     }
+#endif
                 }
             }
+#ifdef CONFIG_SLIM_MENUS
+            focus_sweep_finish_frame();
+#endif
         }
         else // playback - can be slower and more accurate
         {

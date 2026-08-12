@@ -1497,6 +1497,13 @@ void bvram_mirror_init()
 #ifdef FEATURE_FOCUS_PEAK
 static int get_focus_color(int thr, int d)
 {
+#ifdef CONFIG_SLIM_MENUS
+    /* Slim exposes peaking as a simple OFF/ON control, so do not inherit the
+     * hidden legacy "Local Focus" strength palette from old configuration. */
+    (void)thr;
+    (void)d;
+    return COLOR_RED;
+#else
     return
         focus_peaking_color == 0 ? COLOR_RED :
         focus_peaking_color == 1 ? 7 :
@@ -1514,6 +1521,7 @@ static int get_focus_color(int thr, int d)
                                      d > 30 ? 15 /*yellow*/ :
                                      d > 20 ? 5 /*cyan*/ : 
                                      9 /*light blue*/) : 1;
+#endif
 }
 #endif
 
@@ -2283,10 +2291,17 @@ draw_zebra_and_focus( int Z, int F )
         if (!vram) return 0;
         
         int off = get_y_skip_offset_for_overlays();
-        int yStart = os.y0 + off + 8;
-        int yEnd = os.y_max - off - 8;
-        int xStart = os.x0 + 8;
-        int xEnd = os.x_max - 8;
+#ifdef CONFIG_SLIM_MENUS
+        /* Keep the two-radius detector clear of artificial high-contrast
+         * boundaries between Canon's image and black letterbox/status bars. */
+        const int focus_edge_guard = 18;
+#else
+        const int focus_edge_guard = 8;
+#endif
+        int yStart = os.y0 + off + focus_edge_guard;
+        int yEnd = os.y_max - off - focus_edge_guard;
+        int xStart = os.x0 + focus_edge_guard;
+        int xEnd = os.x_max - focus_edge_guard;
         int n_over = 0;
 #ifdef CONFIG_SLIM_MENUS
         int now = get_ms_clock();

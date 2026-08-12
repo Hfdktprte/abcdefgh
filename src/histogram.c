@@ -47,20 +47,6 @@ static void histobar_refresh();
 static int r2ev_white_level = -1;
 static int r2ev_black_level = -1;
 static char r2ev[16384];
-#ifdef CONFIG_SLIM_MENUS
-/* RAW values mapping across several EV bins need redistribution to keep the
- * displayed curve continuous. The mapping changes only with black/white
- * levels, so cache those rare gaps instead of searching 5,000 RAW values on
- * every histogram refresh. */
-struct hist_ev_gap
-{
-    uint8_t ev0;
-    uint8_t evminus;
-    uint8_t evplus;
-};
-static struct hist_ev_gap hist_ev_gaps[HIST_WIDTH];
-static int hist_ev_gap_count;
-#endif
 static int hist_shadow_meter_risk = -1; /* 0=safe, 1000=noise-floor loss */
 static int hist_touch_expanded;
 static int hist_touch_x, hist_touch_y, hist_touch_w, hist_touch_h;
@@ -96,15 +82,10 @@ static uint32_t hist_raw_bin_samples(int i)
 /* Return the RAW EV-histogram bin at a low-image percentile (x10).
  * The RAW scanner already builds these bins at the histogram refresh rate,
  * so the shadow meter adds no second image scan or recording-time workload. */
-static void hist_raw_shadow_state(int percentile_x10, int noise_bin,
-                                  int *percentile_bin, int *floor_ratio)
+static int hist_raw_shadow_percentile_bin(int percentile_x10)
 {
     uint32_t target = MAX((uint64_t)histogram.total_px * percentile_x10 / 1000, 1);
     uint32_t accumulated = 0;
-    uint32_t below = 0;
-    uint32_t total = 0;
-    int found_bin = HIST_WIDTH - 1;
-    int found = 0;
 
     for (int i = 0; i < HIST_WIDTH; i++)
     {
@@ -112,18 +93,30 @@ static void hist_raw_shadow_state(int percentile_x10, int noise_bin,
          * One channel's maximum represents a pixel once in either case. */
         uint32_t samples = hist_raw_bin_samples(i);
         accumulated += samples;
+        if (accumulated >= target)
+            return i;
+    }
+
+    return HIST_WIDTH - 1;
+}
+
+/* Ratio of the sampled RAW frame at/below the calculated noise floor.
+ * Unlike a single percentile this changes smoothly as a dark subject fills
+ * more of the frame, while retaining the same histogram sample data. */
+static int hist_raw_noise_floor_ratio(int noise_bin)
+{
+    uint32_t below = 0;
+    uint32_t total = 0;
+
+    for (int i = 0; i < HIST_WIDTH; i++)
+    {
+        uint32_t samples = hist_raw_bin_samples(i);
         total += samples;
         if (i <= noise_bin)
             below += samples;
-        if (!found && accumulated >= target)
-        {
-            found_bin = i;
-            found = 1;
-        }
     }
 
-    *percentile_bin = found_bin;
-    *floor_ratio = total ? (int)((uint64_t)below * 1000 / total) : 0;
+    return total ? (int)((uint64_t)below * 1000 / total) : 0;
 }
 
 static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
@@ -134,9 +127,8 @@ static void hist_draw_shadow_meter(uint8_t *bvram, unsigned x_origin,
      * the sensor noise floor; evaluate how much meaningful image reaches it. */
     int noise_bin = COERCE((1200 - raw_info.dynamic_range) *
         (HIST_WIDTH - 1) / 1200, 0, HIST_WIDTH - 1);
-    int shadow_10_bin;
-    int floor_ratio;
-    hist_raw_shadow_state(100, noise_bin, &shadow_10_bin, &floor_ratio);
+    int shadow_10_bin = hist_raw_shadow_percentile_bin(100);
+    int floor_ratio = hist_raw_noise_floor_ratio(noise_bin);
     int target_risk;
     int color;
     int width;
@@ -194,31 +186,6 @@ static void hist_build_r2ev_cache()
     r2ev_black_level = raw_info.black_level;
     for (int i = 0; i < 16384; i++)
         r2ev[i] = COERCE((raw_to_ev(i) + 12) * (HIST_WIDTH-1) / 12, 0, HIST_WIDTH-1);
-
-#ifdef CONFIG_SLIM_MENUS
-    hist_ev_gap_count = 0;
-    for (int i = 1; i < 5000; i++)
-    {
-        int evminus = r2ev[i-1];
-        int evplus = r2ev[i+1];
-        if (evplus - evminus <= 2)
-            continue;
-
-        if (hist_ev_gap_count >= COUNT(hist_ev_gaps))
-        {
-            /* Defensive fallback; a valid monotonic 128-bin mapping should
-             * never have more than HIST_WIDTH discontinuities. */
-            hist_ev_gap_count = -1;
-            break;
-        }
-
-        hist_ev_gaps[hist_ev_gap_count++] = (struct hist_ev_gap) {
-            .ev0 = r2ev[i],
-            .evminus = evminus,
-            .evplus = evplus,
-        };
-    }
-#endif
 }
 
 #ifdef CONFIG_SLIM_MENUS
@@ -277,14 +244,7 @@ static void hist_prepare_smooth_display(void)
 
 static int hist_slim_scan_raw_pixels(int accumulate_hist)
 {
-    /* EOS M transitions mark RAW geometry dirty. Between transitions the
-     * geometry is already validated, so avoid rediscovering it for every
-     * histogram/waveform refresh. */
-#ifdef CONFIG_EOSM
-    if (!raw_params_ready_for_rec() && !raw_update_params()) return 0;
-#else
     if (!raw_update_params()) return 0;
-#endif
 
     int precision_scan = monitoring_slim_precision_scan();
     int step = lv ? (precision_scan ? 2 : 4) : 2;
@@ -381,13 +341,11 @@ void FAST hist_build_raw()
     
     /* in dark areas, spread the histogram count to show solid histogram instead of isolated bars */
 #ifdef CONFIG_SLIM_MENUS
-    int gap_count = hist_ev_gap_count;
-    for (int gap = 0; gap < (gap_count >= 0 ? gap_count : 4999); gap++)
+    for (int i = 0; i < 5000; i++)
     {
-        int i = gap + 1;
-        int ev0 = gap_count >= 0 ? hist_ev_gaps[gap].ev0 : r2ev[i];
-        int evplus = gap_count >= 0 ? hist_ev_gaps[gap].evplus : r2ev[i+1];
-        int evminus = gap_count >= 0 ? hist_ev_gaps[gap].evminus : r2ev[i-1];
+        int ev0 = r2ev[i];
+        int evplus = r2ev[i+1];
+        int evminus = r2ev[i-1];
         if (evplus - evminus > 2)
         {
             int num_bins = evplus - evminus - 1;

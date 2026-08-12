@@ -1597,7 +1597,7 @@ static int focus_precise_floor(void)
 {
     int iso = lens_info.iso ? lens_info.iso :
               lens_info.iso_auto ? lens_info.iso_auto : 100;
-    int floor = 18;
+    int floor = 14;
     while (iso > 200 && floor < 38)
     {
         floor += 2;
@@ -1940,8 +1940,8 @@ static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
      * scene and are not always described by os/off geometry. Reject a
      * transition with two solid-black samples on one side and image content
      * on the other. This follows the actual YUV content in every crop mode. */
-    const int black = 24;
-    const int image = 36;
+    const int black = 40;
+    const int image = 56;
     if (((left1 <= black && left2 <= black) &&
          (center >= image || right1 >= image || right2 >= image)) ||
         ((right1 <= black && right2 <= black) &&
@@ -1958,13 +1958,22 @@ static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
                     + ABS(center * 2 - up1 - down1);
     const int fine2 = ABS(center * 2 - left2 - right2)
                     + ABS(center * 2 - up2 - down2);
-    int detail = MAX(fine1 * 4 - fine2, 0) / 3;
 
-    /* Penalize broad contrast boundaries gently. Temporal confirmation and
-     * the two-radius test already reject noise/blur, so a lighter penalty
-     * preserves low-contrast fabric and skin texture. */
+    /* A blurred edge grows strongly when measured at twice the radius; fine,
+     * genuinely focused texture does not. This ratio test is independent of
+     * texture contrast, so fabric can pass without promoting a soft highlight. */
+    if (fine2 > fine1 * 2 + 8)
+        return 0;
+
+    /* Clipped YUV highlights create hard artificial boundaries even when the
+     * underlying subject is defocused. They carry no usable focus detail. */
+    if (center >= 248 || left1 >= 248 || right1 >= 248 ||
+        up1 >= 248 || down1 >= 248)
+        return 0;
+
+    /* Retain a light broad-edge penalty; temporal confirmation handles noise. */
     const int broad_edge = MAX(ABS(right1 - left1), ABS(down1 - up1));
-    return MAX(detail - broad_edge / 4, 0);
+    return MAX(fine1 - broad_edge / 8, 0);
 }
 #endif
 
@@ -2311,10 +2320,9 @@ draw_zebra_and_focus( int Z, int F )
         
         int off = get_y_skip_offset_for_overlays();
 #ifdef CONFIG_SLIM_MENUS
-        /* Keep the two-radius detector clear of artificial high-contrast
-         * boundaries between Canon's image and black letterbox/status bars.
-         * EOS M's top status boundary needs a larger asymmetric guard. */
-        const int focus_top_guard = 34;
+        /* Pixel-content checks handle internal Canon bars; retain only the
+         * safe two-radius sampling margin here. */
+        const int focus_top_guard = 18;
         const int focus_bottom_guard = 18;
         const int focus_side_guard = 18;
 #else

@@ -7753,8 +7753,20 @@ int handle_longpress_events(struct event * event)
     {
         if (!gui_menu_shown() && !IS_FAKE(event))
         {
+            /* EOS M may repeat BGMT_PRESS_UP while the pad is still held.
+             * Treat repeats as part of the current gesture. Resetting here
+             * used to create multiple timer chains: one could open Custom
+             * while another emitted the short UP action (e.g. ISO +1). */
+            if (custom_up_longpress.pressed)
+                return 0;
+
             custom_up_longpress.pressed = 1;
-            custom_up_longpress.count = 0;
+            custom_up_longpress.count = 2;
+            custom_up_longpress.action_disabled = 0;
+
+            /* Give immediate feedback instead of waiting for the first GUI
+             * timer callback. count=2 paints the first progress dot. */
+            draw_longpress_indicator(&custom_up_longpress);
             delayed_call(20, longpress_check, &custom_up_longpress);
             return 0;
         }

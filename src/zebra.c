@@ -1571,14 +1571,18 @@ static int focus_confidence_zoom = -1;
 static int focus_raw_aux = INT_MIN;
 static int focus_raw_scan_aux = INT_MIN;
 static int focus_raw_ready;
-static int focus_raw_thr = 900;
-static int focus_raw_thr_increment = 24;
+/* Tuned for normal texture (fabric, foliage and skin detail), not just
+ * contrast-chart edges. The temporal/region checks below still reject noise. */
+static int focus_raw_thr = 520;
+static int focus_raw_thr_increment = 14;
 
 static void focus_confidence_reset(void)
 {
     bzero32(focus_confidence, sizeof(focus_confidence));
     focus_confidence_last_scan = 0;
     focus_confidence_zoom = lv_dispsize;
+    focus_raw_thr = 520;
+    focus_raw_thr_increment = 14;
 }
 
 static inline int FAST focus_confidence_update(int x, int y, int detected)
@@ -1666,21 +1670,21 @@ static int FAST focus_raw_confidence(int bm_x, int bm_y)
     int medium = ABS(c * 2 - l2 - r2) + ABS(c * 2 - u2 - d2v);
     int gradient = ABS(r1 - l1) + ABS(d1v - u1);
     int contrast = max_sample - min_sample;
-    int noise = 48;
+    int noise = 20;
 
     if (lens_info.iso > 200)
-        noise += (lens_info.iso - 200) / 32;
+        noise += (lens_info.iso - 200) / 64;
 
-    if (min_sample < noise || max_sample > raw_max - noise * 4)
+    if (min_sample < noise || max_sample > raw_max - noise * 2)
         return 0;
-    if (contrast < noise * 2)
+    if (contrast < noise)
         return 0;
-    if (medium > fine * 2 + noise * 2)
+    if (medium > fine * 3 + noise * 3)
         return 0;
 
     /* Clamp broad gradient contribution: it may support texture confidence,
      * but can never by itself turn a blurred edge into a focus hit. */
-    return fine * 2 + MIN(gradient, fine * 2) + MIN(contrast, fine * 2);
+    return fine * 2 + MIN(gradient, fine * 4) + MIN(contrast, fine * 3);
 }
 
 /* A real focus feature covers a small area. Reject one-cell RAW noise or a
@@ -1688,7 +1692,7 @@ static int FAST focus_raw_confidence(int bm_x, int bm_y)
 static int FAST focus_raw_region_supported(int bm_x, int bm_y, int score,
                                             int threshold)
 {
-    const int support_threshold = threshold * 2 / 3;
+    const int support_threshold = threshold / 2;
     int support = score >= threshold;
     support += focus_raw_confidence(bm_x - 4, bm_y) >= support_threshold;
     support += focus_raw_confidence(bm_x + 4, bm_y) >= support_threshold;
@@ -2578,7 +2582,7 @@ draw_zebra_and_focus( int Z, int F )
         /* RAW confidence does not need the old edge detector's forced-dot
          * behavior. It adapts only within a safe range, so a soft frame is
          * still allowed to show no focus regions. */
-        int target_pthr = 3; /* 0.3% */
+        int target_pthr = 8; /* 0.8% */
 #else
         int target_pthr = (int)focus_peaking_pthr;
 #endif
@@ -2610,15 +2614,15 @@ draw_zebra_and_focus( int Z, int F )
         {
             if (over_target)
             {
-                focus_raw_thr_increment = MIN(focus_raw_thr_increment + 8, 96);
+                focus_raw_thr_increment = MIN(focus_raw_thr_increment + 6, 64);
                 focus_raw_thr += focus_raw_thr_increment;
             }
             else
             {
-                focus_raw_thr_increment = MAX(focus_raw_thr_increment - 4, 12);
+                focus_raw_thr_increment = MAX(focus_raw_thr_increment - 3, 8);
                 focus_raw_thr -= focus_raw_thr_increment;
             }
-            focus_raw_thr = COERCE(focus_raw_thr, 240, 12000);
+            focus_raw_thr = COERCE(focus_raw_thr, 160, 6000);
         }
 #endif
 

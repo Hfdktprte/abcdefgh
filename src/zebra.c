@@ -1942,6 +1942,17 @@ static inline int FAST calc_peak_precise(const uint8_t* p8, const int pitch)
      * on the other. This follows the actual YUV content in every crop mode. */
     const int black = 40;
     const int image = 56;
+    const int local_max = MAX(center,
+        MAX(MAX(left1, right1),
+        MAX(MAX(up1, down1),
+        MAX(MAX(left2, right2), MAX(up2, down2)))));
+
+    /* Below this luma level, Canon's two nominal black levels and YUV noise
+     * are stronger than trustworthy focus detail. In particular, do not turn
+     * the bar-to-dark-frame black-level step into a red peaking line. */
+    if (local_max <= image)
+        return 0;
+
     if (((left1 <= black && left2 <= black) &&
          (center >= image || right1 >= image || right2 >= image)) ||
         ((right1 <= black && right2 <= black) &&

@@ -332,14 +332,15 @@ static void set_zoom(int zoom)
 }
 
 #ifdef CONFIG_EOSM
-/* AF, zoom and menu returns rebuild Canon's Live View pipeline.  Keep every
- * request inside one transition gate; it owns the return from x10 as well. */
+/* AF changes rebuild Canon's Live View pipeline just like a zoom or menu
+ * return.  Keep that rebuild inside the same transition controller. */
 static void eosm_lv_guard_request(void);
 static void eosm_lv_guard_begin_zoom_enter(void);
 static void eosm_lv_guard_begin_zoom_return(void);
 static void eosm_lv_guard_request_config(void);
+static int eosm_lv_hook_passthrough(void);
 #else
-static void eosm_lv_guard_request_config(void) {}
+static void eosm_lv_guard_request_config(void);
 #endif
 int crop_rec_lv_transition_diag(char *buffer, int size);
 
@@ -349,10 +350,10 @@ static void set_lv_af_mode(int lv_af_mode)
     if (!lv) return;
     if (RECORDING) return;
     if (lv_af_mode > 3 && lv_af_mode != 0) lv_af_mode = 1;
-    prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
 #ifdef CONFIG_EOSM
     eosm_lv_guard_request();
 #endif
+    prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
 }
 
 //Photo mode
@@ -397,6 +398,7 @@ static void slim_zoom_to_x10(void)
     kill_canon_gui_mode = 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
+    wait_lv_frames(1);
     redraw();
 }
 
@@ -406,17 +408,20 @@ static void slim_zoom_from_x10(void)
 
     if (!lv || RECORDING || lv_dispsize != 10) return;
 
-    /* Do not race two property writes with a fixed delay.  The EOS M gate
-     * waits for Canon to acknowledge x1, then requests its normal x5 path. */
 #ifdef CONFIG_EOSM
     eosm_lv_guard_begin_zoom_return();
 #else
     set_zoom(1);
-    if (is_movie_mode()) set_zoom(5);
+    if (is_movie_mode())
+    {
+        msleep(50);
+        set_zoom(5);
+    }
 #endif
     kill_canon_gui_mode = is_movie_mode() ? 1 : 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
+    wait_lv_frames(1);
     redraw();
 }
 
@@ -1247,6 +1252,9 @@ int CMOS_7_Debug = 0;
 
 static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
     /* make sure we are in 1080p/720p mode */
     if (!is_supported_mode())
     {
@@ -1717,6 +1725,9 @@ static int shutter_blanking_idle;
 
 static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -3991,7 +4002,10 @@ static void * get_engio_reg_override_func()
 
 static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    uint32_t (*reg_override_func)(uint32_t, uint32_t) = 
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
+    uint32_t (*reg_override_func)(uint32_t, uint32_t) =
         get_engio_reg_override_func();
 
     if (!reg_override_func)
@@ -4131,6 +4145,9 @@ static int change_buffer_now = 0;
 
 static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4326,6 +4343,9 @@ static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 
 static void FAST EngDrvOuts_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4738,6 +4758,9 @@ void SetAspectRatioCorrectionValues()
 
 static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+#ifdef CONFIG_EOSM
+    if (eosm_lv_hook_passthrough()) return;
+#endif
     /* we need to enable and set preview shifting and clearing artifacts values here especially for clear artifacts value */
     /* I don't know which function load shifting preview value, but it's being loaded and applied many times in LiveView, not just once. */
     /* clear artifacts value is being loaded very early before CMOS, ADTG, ENGIO, ENG_DRV_OUT, ENG_DRV_OUTS stuff */
@@ -4961,11 +4984,10 @@ static int patch_active = 0;
 
 #ifdef CONFIG_EOSM
 /* EOS M Live View is rebuilt asynchronously after boot, Canon-menu return,
- * record-stop and zoom changes.  This is a preventive gate: it lets Canon
- * finish one coherent pipeline transaction before Crop Rec checks or touches
- * the final preview route.  A healthy x5 path is never rebuilt just because
- * a transition occurred. */
-#define EOSM_LV_GUARD_SETTLE_MS 80
+ * record-stop and zoom changes. Until Canon has produced one stable native
+ * x5 configuration, every Crop Rec hook is a pass-through. This prevents
+ * interleaved Canon/Crop register lists from constructing a half-preview. */
+#define EOSM_LV_GUARD_SETTLE_MS 100
 #define EOSM_LV_GUARD_QUIET_MS 120
 #define EOSM_LV_GUARD_STABLE_FRAMES 4
 #define EOSM_LV_GUARD_X1_STABLE_FRAMES 2
@@ -4990,7 +5012,7 @@ enum eosm_lv_guard_state
     EOSM_LV_GUARD_WAIT = 0,
     EOSM_LV_GUARD_APPLY_X1,
     EOSM_LV_GUARD_APPLY_X5,
-    EOSM_LV_GUARD_VALIDATE,
+    EOSM_LV_GUARD_COMMIT,
     EOSM_LV_GUARD_ROUTE,
 };
 
@@ -5004,9 +5026,9 @@ int crop_rec_lv_transition_busy(void)
 
 static void eosm_lv_guard_request(void)
 {
-    /* Repeated Canon properties during one transition are expected.  They
-     * deliberately coalesce into the latest generation instead of queuing
-     * additional x1/x5 writes behind a pipeline that is still settling. */
+    /* All configuration fields are already stored in the menu backend. A new
+     * request replaces the previous generation, so the final clean pass sees
+     * only the user's latest Mode/AR/Preset/FPS selection. */
     eosm_lv_guard_generation++;
     eosm_lv_guard_pending = 1;
     eosm_lv_guard_busy = 1;
@@ -5030,9 +5052,6 @@ static void eosm_lv_guard_set_zoom(int zoom)
 
 static void eosm_lv_guard_begin_zoom_enter(void)
 {
-    /* Mark the beginning before Canon receives the x10 request, so touch and
-     * Crop Rec refreshes cannot interleave with the route switch.  x10 itself
-     * remains Canon-owned and the gate is rearmed when it returns to x5. */
     eosm_lv_guard_request();
     eosm_lv_guard_set_zoom(10);
 }
@@ -5046,10 +5065,16 @@ static void eosm_lv_guard_begin_zoom_return(void)
 
 static void eosm_lv_guard_request_config(void)
 {
-    /* Menu navigation is intentionally left alone.  Its close event arms the
-     * same gate; direct Live View controls need it immediately. */
     if (lv && is_movie_mode() && !RECORDING && !gui_menu_shown())
         eosm_lv_guard_request();
+}
+
+/* Hook-level barrier: while Canon owns a transition, every patched register
+ * list is left exactly as Canon supplied it.  COMMIT is opened only after the
+ * native x5 pipeline has passed the minimum quiet window and stability test. */
+static int eosm_lv_hook_passthrough(void)
+{
+    return eosm_lv_guard_busy && eosm_lv_guard_state != EOSM_LV_GUARD_COMMIT;
 }
 #else
 int crop_rec_lv_transition_busy(void) { return 0; }
@@ -5059,6 +5084,10 @@ int crop_rec_lv_transition_diag(char *buffer, int size)
     return 0;
 }
 static void eosm_lv_guard_request(void) {}
+static void eosm_lv_guard_begin_zoom_enter(void) {}
+static void eosm_lv_guard_begin_zoom_return(void) {}
+static void eosm_lv_guard_request_config(void) {}
+static int eosm_lv_hook_passthrough(void) { return 0; }
 #endif
 
 static void install_patches()
@@ -5167,7 +5196,14 @@ static void update_patch()
 PROP_HANDLER(PROP_LV_ACTION)
 {
     update_patch();
+#ifdef CONFIG_EOSM
+    /* A property generated by the gate is part of its one transaction. Do
+     * not reset the generation halfway through the final clean x5 pass. */
+    if (!eosm_lv_guard_internal_zoom)
+        eosm_lv_guard_request();
+#else
     eosm_lv_guard_request();
+#endif
 }
 
 /* also try when switching zoom modes */
@@ -6325,8 +6361,6 @@ static MENU_SELECT_FUNC(slim_crop_fps_select)
     if (bits <= 1)
         return;
 
-    eosm_lv_guard_request_config();
-
     int pos = crop_preset_fps_menu;
     for (int step = 0; step < 3; step++)
     {
@@ -6334,6 +6368,7 @@ static MENU_SELECT_FUNC(slim_crop_fps_select)
         if (mask & (1 << pos))
         {
             crop_preset_fps_menu = pos;
+            eosm_lv_guard_request_config();
             return;
         }
     }
@@ -7474,24 +7509,6 @@ static int eosm_lv_guard_pipeline_ready(void)
     return get_ms_clock() - eosm_lv_guard_quiet_since >= EOSM_LV_GUARD_QUIET_MS;
 }
 
-/* x1 is only an intermediate Canon acknowledgement point.  It needs a short
- * consistency check of its own; a fixed sleep here was the source of rapid
- * x10-out races. */
-static int eosm_lv_guard_x1_ready(void)
-{
-    if (!liveview_display_idle() || !lv || lv_dispsize != 1 ||
-        PathDriveMode->zoom != 1)
-    {
-        eosm_lv_guard_x1_frames = 0;
-        return 0;
-    }
-
-    if (++eosm_lv_guard_x1_frames < EOSM_LV_GUARD_X1_STABLE_FRAMES)
-        return 0;
-
-    return 1;
-}
-
 /* The buffer can be stable while Canon is still exposing the previous movie
  * layout (for example 2520x1080 at 29.97 fps before a 1x3 preset arrives).
  * Do not hand that transitional layout to the UI or recorder as a valid crop
@@ -7514,9 +7531,19 @@ static int eosm_lv_guard_selected_geometry_ready(void)
            raw_info.height >= expected_h && raw_info.height <= expected_h + 64;
 }
 
-/* These are the display-route values already supplied by the Crop Rec ENGIO
- * hook.  This is validation only: the transition gate never rewrites them
- * after a bad frame, avoiding a second competing owner of Canon's LCD path. */
+static int eosm_lv_guard_x1_ready(void)
+{
+    if (!liveview_display_idle() || !lv || lv_dispsize != 1 ||
+        PathDriveMode->zoom != 1)
+    {
+        eosm_lv_guard_x1_frames = 0;
+        return 0;
+    }
+    return ++eosm_lv_guard_x1_frames >= EOSM_LV_GUARD_X1_STABLE_FRAMES;
+}
+
+/* Validation only.  The gate never rewrites the route after a bad preview;
+ * Canon remains the single owner until the final clean Crop Rec pass. */
 static int eosm_lv_guard_display_route_ready(void)
 {
     if (!Preview_Control || !YUV_LV_Buf)
@@ -7593,14 +7620,10 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
     switch (eosm_lv_guard_state)
     {
         case EOSM_LV_GUARD_WAIT:
-            /* Start from observed state, not a timeout.  This prevents the
-             * gate itself from creating a second x1/x5 transition after an
-             * otherwise healthy menu, boot or recording return. */
+            /* Minimum hold-off only; it prevents premature ML writes while
+             * Canon's early asynchronous path callbacks are still arriving. */
             if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS)
                 return 1;
-
-            /* Canon can legitimately return at x1.  In that one case request
-             * x5 only after x1 is observable; do not stack both requests. */
             if (lv_dispsize == 1)
             {
                 eosm_lv_guard_set_zoom(5);
@@ -7613,10 +7636,13 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             if (!eosm_lv_guard_pipeline_ready())
                 return 1;
 
-            /* Healthy x5: geometry and final display routing are checked
-             * below before controls/overlays are released. */
-            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            /* Native x5 is stable. Request one clean x5 configuration pass;
+             * only this pass is allowed to receive all Crop Rec overrides. */
+            eosm_lv_guard_state = EOSM_LV_GUARD_COMMIT;
             eosm_lv_guard_started = now;
+            eosm_lv_guard_set_zoom(5);
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
             return 1;
 
         case EOSM_LV_GUARD_APPLY_X1:
@@ -7633,27 +7659,19 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
             if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS ||
                 !eosm_lv_guard_pipeline_ready())
                 return 1;
-            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            eosm_lv_guard_state = EOSM_LV_GUARD_COMMIT;
             eosm_lv_guard_started = now;
+            eosm_lv_guard_set_zoom(5);
             return 1;
 
-        case EOSM_LV_GUARD_VALIDATE:
-            /* A complete commit requires the requested RAW geometry, a quiet
-             * YUV buffer and final display routing.  This separates a real
-             * final frame from the stale dimensions Canon exposes mid-switch. */
+        case EOSM_LV_GUARD_COMMIT:
+            /* Hook barrier is open only in this state. Wait for the final
+             * Crop Rec geometry to emerge from the one clean Canon pass. */
             if (!eosm_lv_guard_pipeline_ready() ||
                 now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
                 return 1;
             if (!eosm_lv_guard_selected_geometry_ready())
-            {
-                /* Do not turn a temporary geometry mismatch into a new
-                 * property transaction.  Canon will publish the selected
-                 * pipeline when it is ready; keep inputs/overlays gated. */
-                eosm_lv_guard_stable_frames = 0;
-                eosm_lv_guard_quiet_since = 0;
                 return 1;
-            }
-
             eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
             eosm_lv_guard_started = now;
             return 1;
@@ -7668,8 +7686,8 @@ static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
                 return 0;
             }
 
-            /* Canon still owns this route.  Waiting here is safe; rewriting
-             * it from a delayed task was the old after-black recovery path. */
+            /* No delayed route rewrite and no black-frame retry: a route
+             * which has not settled stays gated until Canon completes it. */
             return 1;
     }
 
@@ -7776,9 +7794,8 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 /* let's check this once again, just in case */
                 /* (possible race condition that would result in unnecessary refresh) */
 #ifdef CONFIG_EOSM
-                /* The EOS M transition gate owns Live View reconfiguration.
-                 * CheckPreviewRegsValuesAndForce is intentionally a no-op on
-                 * EOS M, so do not add a redundant wait or delayed rewrite. */
+                /* CheckPreviewRegsValuesAndForce is intentionally a no-op
+                 * on EOS M, so avoid an unnecessary delayed polling wait. */
 #else
                 wait_lv_frames(2);
                 if (crop_rec_needs_lv_refresh())
@@ -7986,7 +8003,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
     /* The transition controller owns Live View until its post-x5 validation
      * passes. Swallow only controls that can alter preview state; REC and
      * MENU remain available for normal camera safety and escape behavior. */
-    if (eosm_lv_guard_busy && lv && !RECORDING && !gui_menu_shown() &&
+    if (eosm_lv_guard_busy && lv && !RECORDING &&
         (key == MODULE_KEY_TOUCH_1_FINGER ||
          key == MODULE_KEY_PRESS_SET ||
          key == MODULE_KEY_PRESS_UP || key == MODULE_KEY_PRESS_DOWN ||
@@ -8012,17 +8029,16 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 
     //Reset zoom when stopping recording
     
-    /* Recording stop is another Canon pipeline transition.  On EOS M do not
-     * inject a zoom write while its recorder is still tearing down buffers;
-     * the transition gate starts after REC has actually stopped. */
+    /* REC stop is already a Canon-owned pipeline change.  Mark it before the
+     * recorder teardown, but do not inject another zoom property into it. */
     if (key == MODULE_KEY_REC && RECORDING)
     {
-        if (!is_EOSM)
-            set_zoom(1);
-        #ifdef CONFIG_EOSM
-        else
+#ifdef CONFIG_EOSM
+        if (is_EOSM)
             eosm_lv_guard_request();
-        #endif
+        else
+#endif
+            set_zoom(1);
     }
     
     //Focus aid function

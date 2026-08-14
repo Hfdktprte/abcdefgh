@@ -195,6 +195,9 @@ static CONFIG_INT( "zebra.thr.lo",    zebra_level_lo, 0 );
 static CONFIG_INT( "zebra.rec", zebra_rec,  1 );
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  0 );
+#define ZEBRA_MODE_OVER       MONITOR_PERFORMANCE
+#define ZEBRA_MODE_OVER_UNDER 2
+#define ZEBRA_MODE_MAX        ZEBRA_MODE_OVER_UNDER
 #else
 static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
 #endif
@@ -794,7 +797,9 @@ static void zebra_init_slim_palette(void)
     zebra_slim_palette_entry(ZEBRA_PAL_YELLOW,   COLOR_RED, 210, 300, 120);
     zebra_slim_palette_entry(ZEBRA_PAL_MAGENTA,  COLOR_RED, 210, 300, 120);
     zebra_slim_palette_entry(ZEBRA_PAL_RED,      COLOR_RED, 210, 300, 120);
-    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_RED, 210, 300, 120);
+    /* Shadow warning retains the same opacity and sampling as highlight
+     * zebras, but has a dedicated dark-blue palette entry. */
+    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_BLUE, 150, 300, 120);
 }
 
 static void zebra_init_slim_palette_precision(void)
@@ -820,6 +825,21 @@ static void zebra_init_slim_palette_for_mode(void)
 
 static int raw_zebra_color_at(int x, int y, int white, int underexposed);
 
+/* Slim has one deliberate shadow-warning point: 0 EV above the measured
+ * RAW noise floor.  The three Zebra menu modes select it directly, rather
+ * than exposing a second threshold that could disagree with the label. */
+static int raw_zebra_underexposure_threshold(void)
+{
+#ifdef CONFIG_SLIM_MENUS
+    if (zebra_draw != ZEBRA_MODE_OVER_UNDER)
+        return 0;
+    return ev_to_raw(-raw_info.dynamic_range / 100.0);
+#else
+    return zebra_raw_underexposure ?
+        ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+#endif
+}
+
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT("raw.zebra", raw_zebra_enable, 1);
 #else
@@ -838,7 +858,7 @@ static void FAST draw_zebras_raw()
     if (!bvram) return;
 
     int white = raw_info.white_level;
-    int underexposed = zebra_raw_underexposure ? ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+    int underexposed = raw_zebra_underexposure_threshold();
     
     int zoom0 = (int32_t)MEM(IMGPLAY_ZOOM_LEVEL_ADDR); /* stop when zooming in playback */
 
@@ -1077,7 +1097,7 @@ static void FAST draw_zebras_raw_lv()
 
     int white = raw_info.white_level;
     if (white > 16383) white = 15000;
-    int underexposed = zebra_raw_underexposure ? ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+    int underexposed = raw_zebra_underexposure_threshold();
 
     int off = get_y_skip_offset_for_overlays();
 #ifdef CONFIG_SLIM_MENUS
@@ -1271,7 +1291,14 @@ static int zebra_rgb_color(int underexposed, int clipR, int clipG, int clipB, in
 
 static int zebra_rgb_solid_color(int underexposed, int clipR, int clipG, int clipB)
 {
-    if (underexposed) return ZEBRA_COLOR_WORD_SOLID(79);
+    if (underexposed)
+    {
+#ifdef CONFIG_SLIM_MENUS
+        return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_BLUE);
+#else
+        return ZEBRA_COLOR_WORD_SOLID(79);
+#endif
+    }
     
     switch ((clipR ? 4 : 0) |
             (clipG ? 2 : 0) |
@@ -3162,13 +3189,13 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Zebras",
         .priv       = &zebra_draw,
-        .max = MONITOR_PERFORMANCE,
+        .max = ZEBRA_MODE_MAX,
         .icon_type = IT_DICE,
-        .choices = CHOICES("OFF", "ON"),
+        .choices = CHOICES("OFF", "Over", "Over+Under"),
         .update     = monitoring_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "RAW RGB zebras: per-channel clip colors from sensor data.",
-        .help2 = "Off: disabled. On: performance overlay.",
+        .help = "RAW sensor zebras for clipped highlights and dark shadows.",
+        .help2 = "Over+Under adds dark-blue pixels at the 0 EV noise floor.",
     },
 #else
     {
@@ -5103,7 +5130,7 @@ static void zebra_init()
     hist_log = 0;
     hist_meter = 0;
     hist_warn = 1; /* slim has no Clip warning menu; dots always follow histogram */
-    if (zebra_draw > MONITOR_PERFORMANCE) zebra_draw = MONITOR_PERFORMANCE;
+    if (zebra_draw > ZEBRA_MODE_MAX) zebra_draw = ZEBRA_MODE_OVER;
     if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
     if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
     zebra_init_slim_palette_for_mode();

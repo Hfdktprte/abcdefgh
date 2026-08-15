@@ -60,6 +60,11 @@ static int slim_hide_zebras_during_dual_iso_recording(void)
 #include "falsecolor.h"
 #include "histogram.h"
 
+#ifdef CONFIG_SLIM_MENUS
+extern int lut_preview;
+extern void lut_preview_toggle(void *priv, int delta);
+#endif
+
 /* todo: move battery stuff in battery.c */
 #include "battery.h"
 
@@ -3355,6 +3360,17 @@ struct menu_entry zebra_menus[] = {
         .help = "DIGIC preview assistance; does not affect the recording.",
         .help2 = "Focus Peaking uses colored edges. Sharper Image is subtle; Edge Detect is monochrome.",
         .depends_on = DEP_LIVEVIEW,
+    },
+    {
+        .name = "LUT Preview",
+        .priv = &lut_preview,
+        .select = lut_preview_toggle,
+        .max = 1,
+        .choices = CHOICES("OFF", "ACTIVE.CUBE"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .help = "Preview-only 3D LUT. Recorded RAW/MLV stays unchanged.",
+        .help2 = "Copy a standard 3D LUT to ML/LUTS/ACTIVE.CUBE.",
+        .depends_on = DEP_LIVEVIEW | DEP_GLOBAL_DRAW,
     },
 #else
     {

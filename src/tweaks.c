@@ -21,6 +21,7 @@
 #include "cropmarks.h"
 #include "hdr.h"
 #include "lvinfo.h"
+#include "boot-hack.h"
 
 #ifdef FEATURE_LCD_SENSOR_SHORTCUTS
 #include "lcdsensor.h"
@@ -40,6 +41,7 @@ void ReverseDisplay();
 static void upside_down_step();
 static void warn_step();
 extern void display_gain_toggle(void* priv, int delta);
+void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf);
 
 #ifdef FEATURE_ZOOM_TRICK_5D3 // not reliable
 void zoom_trick_step();
@@ -2359,6 +2361,239 @@ static CONFIG_INT("lv.sat", preview_saturation, 0);         // range: -2:2, 3 sp
 static CONFIG_INT("lv.crazy", preview_crazy, 0);         // range: 0:2
 CONFIG_INT("lv.peak", preview_peaking, 0);               // range: 0:3
 
+/* Preview-only 3D LUT. The recorded RAW/MLV buffers are never modified.
+ * Active LUT: ML/LUTS/ACTIVE.CUBE (standard 3D .cube, size 2..33). */
+CONFIG_INT("lv.lut.preview", lut_preview, 0);
+
+#define LUT_PREVIEW_FILE "ML/LUTS/ACTIVE.CUBE"
+#define LUT_PREVIEW_MAX_SIZE 33
+
+static uint16_t *lut_preview_data = 0;
+static int lut_preview_size = 0;
+
+static const char * lut_skip_spaces(const char *p, const char *end)
+{
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    return p;
+}
+
+/* Parse a decimal LUT value as 0..4096. No floating-point runtime is used. */
+static int lut_parse_unit_value(const char **cursor, const char *end, int *value)
+{
+    const char *p = lut_skip_spaces(*cursor, end);
+    int negative = 0;
+    int whole = 0;
+    int fraction = 0;
+    int divisor = 1;
+    int digits = 0;
+
+    if (p < end && (*p == '-' || *p == '+')) negative = (*p++ == '-');
+    while (p < end && *p >= '0' && *p <= '9')
+    {
+        whole = whole * 10 + (*p++ - '0');
+        digits = 1;
+    }
+    if (p < end && *p == '.')
+    {
+        p++;
+        while (p < end && *p >= '0' && *p <= '9')
+        {
+            if (divisor < 1000000)
+            {
+                fraction = fraction * 10 + (*p - '0');
+                divisor *= 10;
+            }
+            p++;
+            digits = 1;
+        }
+    }
+    if (!digits) return 0;
+
+    int fixed = whole * 4096 + (fraction * 4096 + divisor / 2) / divisor;
+    *value = COERCE(negative ? -fixed : fixed, 0, 4096);
+    *cursor = p;
+    return 1;
+}
+
+static int lut_parse_positive_int(const char **cursor, const char *end, int *value)
+{
+    const char *p = lut_skip_spaces(*cursor, end);
+    int n = 0;
+    int digits = 0;
+    while (p < end && *p >= '0' && *p <= '9')
+    {
+        n = n * 10 + (*p++ - '0');
+        digits = 1;
+    }
+    if (!digits) return 0;
+    *cursor = p;
+    *value = n;
+    return 1;
+}
+
+static int lut_line_has_prefix(const char *line, const char *end, const char *prefix)
+{
+    line = lut_skip_spaces(line, end);
+    while (*prefix)
+    {
+        if (line >= end || *line++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
+static int lut_preview_load(void)
+{
+    int file_size = 0;
+    char *file = (char *)read_entire_file(LUT_PREVIEW_FILE, &file_size);
+    if (!file || file_size <= 0)
+    {
+        if (file) free(file);
+        return 0;
+    }
+
+    const char *p = file;
+    const char *end = file + file_size;
+    int size = 0;
+    int entries = 0;
+    uint16_t *data = 0;
+
+    while (p < end)
+    {
+        const char *line = p;
+        while (p < end && *p != '\n' && *p != '\r') p++;
+        const char *line_end = p;
+        while (p < end && (*p == '\n' || *p == '\r')) p++;
+
+        if (lut_line_has_prefix(line, line_end, "LUT_3D_SIZE"))
+        {
+            const char *q = lut_skip_spaces(line, line_end) + 11;
+            if (!lut_parse_positive_int(&q, line_end, &size) ||
+                size < 2 || size > LUT_PREVIEW_MAX_SIZE)
+                goto fail;
+            continue;
+        }
+
+        line = lut_skip_spaces(line, line_end);
+        if (!size || line >= line_end || *line == '#' ||
+            (*line != '-' && *line != '+' && *line != '.' &&
+             (*line < '0' || *line > '9')))
+            continue;
+
+        if (!data)
+        {
+            int count = size * size * size;
+            data = malloc(count * 3 * sizeof(*data));
+            if (!data) goto fail;
+        }
+
+        const char *q = line;
+        int r, g, b;
+        if (!lut_parse_unit_value(&q, line_end, &r) ||
+            !lut_parse_unit_value(&q, line_end, &g) ||
+            !lut_parse_unit_value(&q, line_end, &b) ||
+            entries >= size * size * size)
+            goto fail;
+        data[entries * 3 + 0] = r;
+        data[entries * 3 + 1] = g;
+        data[entries * 3 + 2] = b;
+        entries++;
+    }
+
+    if (!data || entries != size * size * size) goto fail;
+    if (lut_preview_data) free(lut_preview_data);
+    lut_preview_data = data;
+    lut_preview_size = size;
+    free(file);
+    return 1;
+
+fail:
+    if (data) free(data);
+    free(file);
+    return 0;
+}
+
+int lut_preview_is_ready(void)
+{
+    return lut_preview && lut_preview_data && lut_preview_size >= 2;
+}
+
+void lut_preview_toggle(void *priv, int delta)
+{
+    (void)priv;
+    (void)delta;
+    if (lut_preview)
+    {
+        lut_preview = 0;
+        return;
+    }
+
+    if (!lut_preview_load())
+    {
+        NotifyBox(3000, "LUT: copy 3D .cube to " LUT_PREVIEW_FILE);
+        return;
+    }
+    lut_preview = 1;
+}
+
+static inline void lut_preview_apply_rgb(int r, int g, int b, int *out_r, int *out_g, int *out_b)
+{
+    int n = lut_preview_size - 1;
+    int ri = (r * n + 127) / 255;
+    int gi = (g * n + 127) / 255;
+    int bi = (b * n + 127) / 255;
+    int index = ((bi * lut_preview_size + gi) * lut_preview_size + ri) * 3;
+    *out_r = (lut_preview_data[index + 0] * 255 + 2048) / 4096;
+    *out_g = (lut_preview_data[index + 1] * 255 + 2048) / 4096;
+    *out_b = (lut_preview_data[index + 2] * 255 + 2048) / 4096;
+}
+
+static void lut_preview_draw(void)
+{
+    uint32_t *src_buf;
+    uint32_t *dst_buf;
+    display_filter_get_buffers(&src_buf, &dst_buf);
+    if (!src_buf || !dst_buf || !lut_preview_is_ready()) return;
+
+    src_buf = CACHEABLE(src_buf);
+    dst_buf = CACHEABLE(dst_buf);
+    memcpy(dst_buf, src_buf, 720 * 480 * 2);
+
+    for (int y = os.y0; y < os.y_max; y++)
+    {
+        uint32_t *src = &src_buf[LV(0, y) / 4];
+        uint32_t *dst = &dst_buf[LV(0, y) / 4];
+        for (int x = 0; x < 720 / 2; x++)
+        {
+            uint32_t in = src[x];
+            int u = (int8_t)UYVY_GET_U(in);
+            int v = (int8_t)UYVY_GET_V(in);
+            int r1, g1, b1, r2, g2, b2;
+            int lr1, lg1, lb1, lr2, lg2, lb2;
+            yuv2rgb((in >> 8) & 0xFF, u, v, &r1, &g1, &b1);
+            yuv2rgb((in >> 24) & 0xFF, u, v, &r2, &g2, &b2);
+            lut_preview_apply_rgb(r1, g1, b1, &lr1, &lg1, &lb1);
+            lut_preview_apply_rgb(r2, g2, b2, &lr2, &lg2, &lb2);
+            uint32_t out1 = rgb2yuv422(lr1, lg1, lb1);
+            uint32_t out2 = rgb2yuv422(lr2, lg2, lb2);
+            int out_u = ((int8_t)UYVY_GET_U(out1) + (int8_t)UYVY_GET_U(out2)) / 2;
+            int out_v = ((int8_t)UYVY_GET_V(out1) + (int8_t)UYVY_GET_V(out2)) / 2;
+            dst[x] = UYVY_PACK(out_u, (out1 >> 8) & 0xFF,
+                                out_v, (out2 >> 8) & 0xFF);
+        }
+    }
+}
+
+static void lut_preview_load_task(void *unused)
+{
+    (void)unused;
+    /* Core config loads after INIT_FUNC callbacks. Load persistent LUT choice
+     * only after its setting has been restored and the card is ready. */
+    hold_your_horses();
+    if (lut_preview && !lut_preview_load()) lut_preview = 0;
+}
+
+TASK_CREATE("lut.preview.load", lut_preview_load_task, 0, 0x1f, 0x1000);
+
 CONFIG_INT("bmp.color.scheme", bmp_color_scheme, 0);
 
 static CONFIG_INT("lcd.adjust.position", lcd_adjust_position, 0);
@@ -3364,12 +3599,12 @@ int display_filter_enabled()
     #endif
     
     int fp = focus_peaking_as_display_filter();
-    if (!(defish_preview || anamorphic_preview || fp || mdf)) return 0;
+    if (!(defish_preview || anamorphic_preview || fp || mdf || lut_preview_is_ready())) return 0;
     /* Module display filters (dual ISO de-stripe, MLV raw preview, ...) must run in LV. */
     /* Anamorphic preview is a display correction, not an overlay.  Let it
      * keep running with Global Draw disabled; all callers still require an
      * active LiveView and valid display buffers. */
-    if (!zebra_should_run() && !mdf && !anamorphic_preview) return 0;
+    if (!zebra_should_run() && !mdf && !anamorphic_preview && !lut_preview_is_ready()) return 0;
     if (should_draw_zoom_overlay()) return 0; // not enough CPU power to run MZ and filters at the same time
     
     return fp ? 2 : 1;
@@ -3503,6 +3738,13 @@ void display_filter_step(int k)
     }
     else
     #endif
+
+    if (lut_preview_is_ready())
+    {
+        if (k % 1 == 0)
+            lut_preview_draw();
+    }
+    else
 
     #ifdef FEATURE_DEFISHING_PREVIEW
     if (defish_preview)

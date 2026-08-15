@@ -2367,9 +2367,17 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 
 #define LUT_PREVIEW_FILE "ML/LUTS/ACTIVE.CUBE"
 #define LUT_PREVIEW_MAX_SIZE 33
+#define LUT_PREVIEW_Y_BITS  6
+#define LUT_PREVIEW_UV_BITS 5
+#define LUT_PREVIEW_Y_SIZE  (1 << LUT_PREVIEW_Y_BITS)
+#define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
+#define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)
 
 static uint16_t *lut_preview_data = 0;
 static int lut_preview_size = 0;
+static uint32_t *lut_preview_yuv_map = 0;
+
+static int lut_preview_build_yuv_map(void);
 
 static const char * lut_skip_spaces(const char *p, const char *end)
 {
@@ -2504,6 +2512,18 @@ static int lut_preview_load(void)
     lut_preview_data = data;
     lut_preview_size = size;
     free(file);
+
+    if (!lut_preview_build_yuv_map())
+    {
+        free(lut_preview_data);
+        lut_preview_data = 0;
+        lut_preview_size = 0;
+        return 0;
+    }
+
+    /* Runtime uses the precomputed YUV map; release the larger cube data. */
+    free(lut_preview_data);
+    lut_preview_data = 0;
     return 1;
 
 fail:
@@ -2514,7 +2534,7 @@ fail:
 
 int lut_preview_is_ready(void)
 {
-    return lut_preview && lut_preview_data && lut_preview_size >= 2;
+    return lut_preview && lut_preview_yuv_map && lut_preview_size >= 2;
 }
 
 void lut_preview_toggle(void *priv, int delta)
@@ -2535,16 +2555,99 @@ void lut_preview_toggle(void *priv, int delta)
     lut_preview = 1;
 }
 
+static inline int lut_preview_cube_value(int ri, int gi, int bi, int channel)
+{
+    int index = ((bi * lut_preview_size + gi) * lut_preview_size + ri) * 3;
+    return lut_preview_data[index + channel];
+}
+
+/* Trilinear interpolation is done once while loading, never per frame. */
+static inline int lut_preview_interpolate_channel(
+    int r0, int r1, int rf, int g0, int g1, int gf,
+    int b0, int b1, int bf, int channel)
+{
+    int c000 = lut_preview_cube_value(r0, g0, b0, channel);
+    int c100 = lut_preview_cube_value(r1, g0, b0, channel);
+    int c010 = lut_preview_cube_value(r0, g1, b0, channel);
+    int c110 = lut_preview_cube_value(r1, g1, b0, channel);
+    int c001 = lut_preview_cube_value(r0, g0, b1, channel);
+    int c101 = lut_preview_cube_value(r1, g0, b1, channel);
+    int c011 = lut_preview_cube_value(r0, g1, b1, channel);
+    int c111 = lut_preview_cube_value(r1, g1, b1, channel);
+
+    int c00 = c000 + (((c100 - c000) * rf + 128) >> 8);
+    int c10 = c010 + (((c110 - c010) * rf + 128) >> 8);
+    int c01 = c001 + (((c101 - c001) * rf + 128) >> 8);
+    int c11 = c011 + (((c111 - c011) * rf + 128) >> 8);
+    int c0 = c00 + (((c10 - c00) * gf + 128) >> 8);
+    int c1 = c01 + (((c11 - c01) * gf + 128) >> 8);
+    return c0 + (((c1 - c0) * bf + 128) >> 8);
+}
+
 static inline void lut_preview_apply_rgb(int r, int g, int b, int *out_r, int *out_g, int *out_b)
 {
     int n = lut_preview_size - 1;
-    int ri = (r * n + 127) / 255;
-    int gi = (g * n + 127) / 255;
-    int bi = (b * n + 127) / 255;
-    int index = ((bi * lut_preview_size + gi) * lut_preview_size + ri) * 3;
-    *out_r = (lut_preview_data[index + 0] * 255 + 2048) / 4096;
-    *out_g = (lut_preview_data[index + 1] * 255 + 2048) / 4096;
-    *out_b = (lut_preview_data[index + 2] * 255 + 2048) / 4096;
+    int rc = r * n * 256 / 255;
+    int gc = g * n * 256 / 255;
+    int bc = b * n * 256 / 255;
+    int r0 = MIN(rc >> 8, n);
+    int g0 = MIN(gc >> 8, n);
+    int b0 = MIN(bc >> 8, n);
+    int r1 = MIN(r0 + 1, n);
+    int g1 = MIN(g0 + 1, n);
+    int b1 = MIN(b0 + 1, n);
+    int rf = r0 == n ? 0 : (rc & 0xFF);
+    int gf = g0 == n ? 0 : (gc & 0xFF);
+    int bf = b0 == n ? 0 : (bc & 0xFF);
+
+    int lr = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 0);
+    int lg = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 1);
+    int lb = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 2);
+    *out_r = COERCE((lr * 255 + 2048) / 4096, 0, 255);
+    *out_g = COERCE((lg * 255 + 2048) / 4096, 0, 255);
+    *out_b = COERCE((lb * 255 + 2048) / 4096, 0, 255);
+}
+
+static int lut_preview_build_yuv_map(void)
+{
+    uint32_t *map = malloc(LUT_PREVIEW_MAP_SIZE * sizeof(*map));
+    if (!map) return 0;
+
+    for (int vi = 0; vi < LUT_PREVIEW_UV_SIZE; vi++)
+    {
+        int v_byte = MIN((vi << (8 - LUT_PREVIEW_UV_BITS)) +
+                         (1 << (7 - LUT_PREVIEW_UV_BITS)), 255);
+        int v = (int8_t)v_byte;
+        for (int ui = 0; ui < LUT_PREVIEW_UV_SIZE; ui++)
+        {
+            int u_byte = MIN((ui << (8 - LUT_PREVIEW_UV_BITS)) +
+                             (1 << (7 - LUT_PREVIEW_UV_BITS)), 255);
+            int u = (int8_t)u_byte;
+            for (int yi = 0; yi < LUT_PREVIEW_Y_SIZE; yi++)
+            {
+                int y = MIN((yi << (8 - LUT_PREVIEW_Y_BITS)) +
+                            (1 << (7 - LUT_PREVIEW_Y_BITS)), 255);
+                int r, g, b, lr, lg, lb;
+                yuv2rgb(y, u, v, &r, &g, &b);
+                lut_preview_apply_rgb(r, g, b, &lr, &lg, &lb);
+                int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
+                map[index] = rgb2yuv422(lr, lg, lb);
+            }
+        }
+    }
+
+    if (lut_preview_yuv_map) free(lut_preview_yuv_map);
+    lut_preview_yuv_map = map;
+    return 1;
+}
+
+static inline uint32_t lut_preview_map_pixel(int y, int u, int v)
+{
+    int yi = y >> (8 - LUT_PREVIEW_Y_BITS);
+    int ui = u >> (8 - LUT_PREVIEW_UV_BITS);
+    int vi = v >> (8 - LUT_PREVIEW_UV_BITS);
+    int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
+    return lut_preview_yuv_map[index];
 }
 
 static void lut_preview_draw(void)
@@ -2556,25 +2659,20 @@ static void lut_preview_draw(void)
 
     src_buf = CACHEABLE(src_buf);
     dst_buf = CACHEABLE(dst_buf);
-    memcpy(dst_buf, src_buf, 720 * 480 * 2);
 
-    for (int y = os.y0; y < os.y_max; y++)
+    /* Update every output row directly. Copying an unfiltered frame first
+     * exposed a visible top-to-bottom transition while the LUT pass caught up. */
+    for (int y = 0; y < 480; y++)
     {
         uint32_t *src = &src_buf[LV(0, y) / 4];
         uint32_t *dst = &dst_buf[LV(0, y) / 4];
         for (int x = 0; x < 720 / 2; x++)
         {
             uint32_t in = src[x];
-            int u = (int8_t)UYVY_GET_U(in);
-            int v = (int8_t)UYVY_GET_V(in);
-            int r1, g1, b1, r2, g2, b2;
-            int lr1, lg1, lb1, lr2, lg2, lb2;
-            yuv2rgb((in >> 8) & 0xFF, u, v, &r1, &g1, &b1);
-            yuv2rgb((in >> 24) & 0xFF, u, v, &r2, &g2, &b2);
-            lut_preview_apply_rgb(r1, g1, b1, &lr1, &lg1, &lb1);
-            lut_preview_apply_rgb(r2, g2, b2, &lr2, &lg2, &lb2);
-            uint32_t out1 = rgb2yuv422(lr1, lg1, lb1);
-            uint32_t out2 = rgb2yuv422(lr2, lg2, lb2);
+            int u = UYVY_GET_U(in);
+            int v = UYVY_GET_V(in);
+            uint32_t out1 = lut_preview_map_pixel((in >> 8) & 0xFF, u, v);
+            uint32_t out2 = lut_preview_map_pixel((in >> 24) & 0xFF, u, v);
             int out_u = ((int8_t)UYVY_GET_U(out1) + (int8_t)UYVY_GET_U(out2)) / 2;
             int out_v = ((int8_t)UYVY_GET_V(out1) + (int8_t)UYVY_GET_V(out2)) / 2;
             dst[x] = UYVY_PACK(out_u, (out1 >> 8) & 0xFF,

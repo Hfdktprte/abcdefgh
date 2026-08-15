@@ -6142,6 +6142,7 @@ static struct menu_entry *custom_original_entry(struct menu_entry *entry)
 
 static void custom_toggle_selected_entry(void)
 {
+    int custom_active = menu_custom_is_active();
     struct menu_entry *shown =
         get_selected_menu_entry(get_current_menu_or_submenu());
     struct menu_entry *entry = custom_original_entry(shown);
@@ -6157,6 +6158,10 @@ static void custom_toggle_selected_entry(void)
     entry->starred = !entry->starred;
     menu_flags_save_dirty = 1;
     custom_menu_dirty = 1;
+    /* A Custom-page long SET removes the original mark immediately, then
+     * rebuilds the visible list rather than leaving a stale copied row. */
+    if (custom_active)
+        custom_menu_rebuild();
     menu_redraw_full();
 }
 
@@ -6181,8 +6186,7 @@ static int custom_handle_set_hold(struct event *event)
     }
 
     if (event->param == BGMT_PRESS_SET && !IS_FAKE(event) &&
-        !menu_grid_is_active() && !menu_quick_screen_is_active() &&
-        !menu_custom_is_active())
+        !menu_grid_is_active() && !menu_quick_screen_is_active())
     {
         custom_set_hold_pressed = 1;
         custom_set_hold_fired = 0;

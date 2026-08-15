@@ -2402,6 +2402,15 @@ static MENU_UPDATE_FUNC(monitoring_mode_display)
 {
     MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
 }
+
+/* Zebras have a third Slim mode; unlike Histogram/Waveform, its displayed
+ * text must not be collapsed to the generic OFF/ON monitoring label. */
+static MENU_UPDATE_FUNC(zebra_slim_mode_display)
+{
+    MENU_SET_VALUE("%s",
+        CURRENT_VALUE == 0 ? "OFF" :
+        CURRENT_VALUE == ZEBRA_MODE_OVER ? "Over" : "Over+Under");
+}
 #endif
 #ifdef FEATURE_ZEBRA
 static MENU_UPDATE_FUNC(zebra_draw_display)
@@ -3192,7 +3201,7 @@ struct menu_entry zebra_menus[] = {
         .max = ZEBRA_MODE_MAX,
         .icon_type = IT_DICE,
         .choices = CHOICES("OFF", "Over", "Over+Under"),
-        .update     = monitoring_mode_display,
+        .update     = zebra_slim_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "RAW sensor zebras for clipped highlights and dark shadows.",
         .help2 = "Over+Under adds dark-blue pixels at the 0 EV noise floor.",

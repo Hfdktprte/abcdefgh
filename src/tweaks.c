@@ -2417,8 +2417,13 @@ static int lut_parse_unit_value(const char **cursor, const char *end, int *value
     }
     if (!digits) return 0;
 
-    int fixed = whole * 4096 + (fraction * 4096 + divisor / 2) / divisor;
-    *value = COERCE(negative ? -fixed : fixed, 0, 4096);
+    /* Six-decimal .cube values exceed signed 32-bit range when multiplied
+     * by 4096 (for example 950378 * 4096). Use 64-bit intermediates so
+     * bright channel values are not wrapped and clamped to black. */
+    int64_t fixed = (int64_t)whole * 4096 +
+                    ((int64_t)fraction * 4096 + divisor / 2) / divisor;
+    if (negative) fixed = -fixed;
+    *value = fixed < 0 ? 0 : fixed > 4096 ? 4096 : (int)fixed;
     *cursor = p;
     return 1;
 }

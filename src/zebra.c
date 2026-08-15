@@ -42,6 +42,20 @@
 #include "powersave.h"
 #include "menu-grid.h"
 
+#ifdef CONFIG_SLIM_MENUS
+#include "module.h"
+
+/* Keep zebra drawing out of the bitmap layer while Dual ISO is recording.
+ * Dual ISO owns the alternating-row preview at that point; its zebra pass
+ * adds work and makes the striped preview harder to judge. */
+static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
+
+static int slim_hide_zebras_during_dual_iso_recording(void)
+{
+    return RECORDING && dual_iso_is_enabled && dual_iso_is_enabled();
+}
+#endif
+
 #include "imgconv.h"
 #include "falsecolor.h"
 #include "histogram.h"
@@ -1675,6 +1689,9 @@ static void draw_zebras( int Z )
 {
     uint8_t * const bvram = bmp_vram_real();
     int zd = Z && monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras
+#ifdef CONFIG_SLIM_MENUS
+    if (slim_hide_zebras_during_dual_iso_recording()) zd = 0;
+#endif
     if (zd)
     {
         #ifdef FEATURE_RAW_ZEBRAS
@@ -4720,6 +4737,23 @@ livev_hipriority_task( void* unused )
 #endif
 
         int zd = monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras (should match the one from draw_zebra_and_focus)
+#ifdef CONFIG_SLIM_MENUS
+        int hide_zebras_for_dual_iso = slim_hide_zebras_during_dual_iso_recording();
+        if (hide_zebras_for_dual_iso) zd = 0;
+
+        /* Remove the last zebra pixels once, at record start. The normal
+         * overlay passes repaint their own pixels on following frames. */
+        static int dual_iso_zebras_cleared = 0;
+        if (hide_zebras_for_dual_iso && !dual_iso_zebras_cleared)
+        {
+            BMP_LOCK(clrscr_mirror();)
+            dual_iso_zebras_cleared = 1;
+        }
+        else if (!hide_zebras_for_dual_iso)
+        {
+            dual_iso_zebras_cleared = 0;
+        }
+#endif
         if (!zd) digic_zebra_cleanup();
         
 #ifdef CONFIG_RAW_LIVEVIEW
@@ -4830,7 +4864,7 @@ livev_hipriority_task( void* unused )
             #ifdef FEATURE_FALSE_COLOR
             if (falsecolor_draw)
             {
-                if (k % 4 == 0)
+                if (k % (RECORDING ? 6 : 4) == 0)
                     BMP_LOCK( if (lv) draw_false_downsampled(); )
             }
             else
@@ -4840,7 +4874,7 @@ livev_hipriority_task( void* unused )
                     if (lv)
                         draw_zebra_and_focus(
                             k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
-                            k % 2 == 1  /* should redraw focus peaking? */
+                            k % (RECORDING ? 3 : 2) == 1  /* should redraw focus peaking? */
                         );
                 )
             }
@@ -4854,7 +4888,7 @@ livev_hipriority_task( void* unused )
         #endif
 
         #ifdef CONFIG_ELECTRONIC_LEVEL
-        if (electronic_level && k % 2)
+        if (electronic_level && k % (RECORDING ? 3 : 2))
             BMP_LOCK( if (lv) show_electronic_level(); )
         #endif
 
@@ -4905,7 +4939,9 @@ static void loprio_sleep()
     int fast_refresh =
         (monitoring_enabled(hist_draw) && monitoring_precision(hist_draw)) ||
         (monitoring_enabled(waveform_draw) && monitoring_precision(waveform_draw));
-    msleep(fast_refresh ? 100 : 200);
+    /* Histogram, waveform and similar low-priority overlays need not run
+     * at their idle cadence while the recorder is writing frames. */
+    msleep(RECORDING ? 250 : (fast_refresh ? 100 : 200));
 #else
     msleep(200);
 #endif

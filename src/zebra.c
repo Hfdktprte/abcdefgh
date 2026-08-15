@@ -3375,7 +3375,7 @@ struct menu_entry zebra_menus[] = {
         .icon_type = IT_DICE,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Preview-only 3D LUT. Recorded RAW/MLV stays unchanged.",
-        .help2 = "Copy up to 5 named standard .cube LUTs to ML/LUTS. SET opens LiveView selection.",
+        .help2 = "Copy up to 5 named standard .cube LUTs to ML/LUTS and select with Left/Right.",
         .depends_on = DEP_LIVEVIEW,
     },
 #else

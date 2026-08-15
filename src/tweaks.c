@@ -2368,7 +2368,10 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 
 #define LUT_PREVIEW_DIR "ML/LUTS/"
 #define LUT_PREVIEW_MAX_FILES 5
-#define LUT_PREVIEW_NAME_LEN 48
+/* Keep the complete card filename. The previous 48-byte copy silently
+ * truncated longer names, so discovery found five files but only the shorter
+ * paths could be reopened and selected. */
+#define LUT_PREVIEW_NAME_LEN 120
 #define LUT_PREVIEW_MAX_SIZE 33
 #define LUT_PREVIEW_MAX_SOURCE_SIZE 65
 #define LUT_PREVIEW_Y_BITS  6
@@ -2767,49 +2770,6 @@ MENU_UPDATE_FUNC(lut_preview_menu_update)
     MENU_SET_VALUE("%s", lut_preview_selected_name());
     if (!lut_preview_file_count)
         MENU_SET_WARNING(MENU_WARN_INFO, "Copy up to 5 standard .cube LUTs to ML/LUTS.");
-}
-
-void lut_preview_editor_refresh(void)
-{
-    if (!lut_preview_files_scanned)
-        lut_preview_scan_files();
-    lvinfo_touch_editor_set_item(0, lut_preview_selected_name(),
-                                 lut_preview_file_count > 0);
-}
-
-int lut_preview_editor_step(int sign)
-{
-    lut_preview_scan_files();
-    if (!lut_preview_file_count)
-    {
-        lut_preview_editor_refresh();
-        return 0;
-    }
-    int next = MOD(COERCE(lut_preview, 0, lut_preview_file_count) +
-                   (sign < 0 ? -1 : 1), lut_preview_file_count + 1);
-    int changed = lut_preview_select_index(next, 1);
-    lut_preview_editor_refresh();
-    return changed;
-}
-
-static void lut_preview_open_editor_delayed(int timer, void *opaque)
-{
-    (void)timer;
-    (void)opaque;
-    if (!lv || RECORDING)
-        return;
-    lut_preview_scan_files();
-    lvinfo_touch_editor_open(LVINFO_TOUCH_LUT);
-    lut_preview_editor_refresh();
-    redraw();
-}
-
-void lut_preview_open_liveview_editor(void)
-{
-    if (!lv || RECORDING)
-        return;
-    gui_stop_menu();
-    delayed_call(120, lut_preview_open_editor_delayed, 0);
 }
 
 static inline int lut_preview_cube_value(int ri, int gi, int bi, int channel)

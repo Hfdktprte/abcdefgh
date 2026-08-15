@@ -109,7 +109,6 @@ static int config_dirty = 0;
 
 #ifdef CONFIG_SLIM_MENUS
 extern void anamorphic_preview_set_toggle(void);
-extern void lut_preview_open_liveview_editor(void);
 
 #define CUSTOM_MENU_NAME "Custom"
 #define CUSTOM_MENU_MAX_ITEMS 8
@@ -3088,10 +3087,14 @@ skip_name:
         (settings_custom_marker ? 660 : 696);
     int draw_custom_marker = slim_style && entry->starred &&
         !customize_mode && !junkie_mode && !menu_custom_is_active();
-    if (draw_custom_marker)
+    int reserve_lut_marker = slim_style && entry->name &&
+        streq(entry->name, "LUT Preview");
+    if (draw_custom_marker || reserve_lut_marker)
     {
-        /* Keep arrows, values and the Settings scrollbar clear. */
-        x_end = MIN(x_end - 36, custom_marker_x - 18);
+        /* Keep arrows and values clear of a present or future Custom marker. */
+        if (draw_custom_marker)
+            x_end -= 36;
+        x_end = MIN(x_end, custom_marker_x - 18);
     }
 #endif
     
@@ -3104,6 +3107,22 @@ skip_name:
     
     // value string too big? move it to the left
     int val_width = bmp_string_width(fnt, info->value);
+#ifdef CONFIG_SLIM_MENUS
+    if (reserve_lut_marker && draw_tri_arrows)
+    {
+        /* Dynamic LUT filenames may be much longer than ordinary values.
+         * Preserve the beginning, trim only the invisible tail, and keep the
+         * complete displayed text strictly between the two arrow slots. */
+        int max_value_width = x_end - x - w -
+            2 * (arrow_w + arrow_pad);
+        int len = strlen(info->value);
+        while (len > 1 && val_width > max_value_width)
+        {
+            info->value[--len] = '\0';
+            val_width = bmp_string_width(fnt, info->value);
+        }
+    }
+#endif
     /* Secondary text after arrows (shutter angle digits + drawn ° in Canon style) */
     int adj_rinfo_w = 0;
 #ifdef CONFIG_SLIM_MENUS
@@ -5211,13 +5230,6 @@ void menu_entry_select(
             /* The center value is intentionally inert to touch. SET is the
              * single explicit OFF/restore control; arrows remain factors-only. */
             anamorphic_preview_set_toggle();
-            entry_used = 1;
-        }
-        else if (entry->name && streq(entry->name, "LUT Preview"))
-        {
-            /* SET opens the dedicated LiveView chooser. Left/right and touch
-             * arrows keep cycling the same OFF + discovered LUT list inline. */
-            lut_preview_open_liveview_editor();
             entry_used = 1;
         }
         else if (entry->edit_mode & EM_INLINE_ADJUST)

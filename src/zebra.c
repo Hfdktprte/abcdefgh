@@ -347,20 +347,14 @@ enum slim_focus_assist_mode
 /* Keep the menu's plain-language order independent from the original DIGIC
  * register values: 1 is sharpening, 2 is monochrome edges, 3 is colored
  * focus peaking. */
-static void slim_focus_assist_apply_mode(int migrate_legacy)
+static void slim_focus_assist_apply_mode(void)
 {
-    if (migrate_legacy && focus_assist_mode == FOCUS_ASSIST_OFF && preview_peaking)
-    {
-        focus_assist_mode =
-            preview_peaking == 1 ? FOCUS_ASSIST_SHARPER_IMAGE :
-            preview_peaking == 2 ? FOCUS_ASSIST_EDGE_DETECT :
-                                   FOCUS_ASSIST_PEAKING;
-    }
-
     if (focus_assist_mode < FOCUS_ASSIST_OFF ||
         focus_assist_mode > FOCUS_ASSIST_EDGE_DETECT)
         focus_assist_mode = FOCUS_ASSIST_OFF;
 
+    /* Focus Assist is now sole owner of this display-filter state. Older
+     * lv.peak values must not reactivate Edge Detect after boot. */
     preview_peaking =
         focus_assist_mode == FOCUS_ASSIST_PEAKING ? 3 :
         focus_assist_mode == FOCUS_ASSIST_SHARPER_IMAGE ? 1 :
@@ -376,7 +370,7 @@ static MENU_SELECT_FUNC(slim_focus_assist_select)
     while (mode < FOCUS_ASSIST_OFF) mode += FOCUS_ASSIST_EDGE_DETECT + 1;
     while (mode > FOCUS_ASSIST_EDGE_DETECT) mode -= FOCUS_ASSIST_EDGE_DETECT + 1;
     *value = focus_assist_mode = mode;
-    slim_focus_assist_apply_mode(0);
+    slim_focus_assist_apply_mode();
 }
 #else
 static CONFIG_INT( "focus.peaking.filter.edges", focus_peaking_filter_edges, 0); // prefer texture details rather than strong edges
@@ -4873,7 +4867,7 @@ livev_hipriority_task( void* unused )
                 BMP_LOCK(
                     if (lv)
                         draw_zebra_and_focus(
-                            k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
+                            k % (focus_peaking ? 5 : 3) == 0, /* zebras retain their normal refresh rate */
                             k % (RECORDING ? 3 : 2) == 1  /* should redraw focus peaking? */
                         );
                 )
@@ -5226,7 +5220,7 @@ static void zebra_init()
     if (zebra_draw > ZEBRA_MODE_MAX) zebra_draw = ZEBRA_MODE_OVER;
     if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
     if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
-    slim_focus_assist_apply_mode(1);
+    slim_focus_assist_apply_mode();
     zebra_init_slim_palette_for_mode();
 #endif
     precompute_yuv2rgb();

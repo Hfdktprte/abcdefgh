@@ -44,6 +44,7 @@ extern void display_gain_toggle(void* priv, int delta);
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf);
 static uint32_t *display_filter_get_lut_back_buffer(void);
 static int display_filter_queue_lut_buffer(void);
+static void lut_preview_release_display(void);
 
 #ifdef FEATURE_ZOOM_TRICK_5D3 // not reliable
 void zoom_trick_step();
@@ -2399,6 +2400,7 @@ static void *lut_preview_last_source = 0;
 static const char *lut_preview_load_error = "Invalid LUT";
 static struct semaphore *lut_preview_request_sem = 0;
 static struct semaphore *lut_preview_engine_sem = 0;
+static struct semaphore *lut_preview_wake_sem = 0;
 static volatile uint32_t lut_preview_request_generation = 0;
 static volatile uint32_t lut_preview_active_generation = 0;
 static volatile int lut_preview_requested_index = 0;
@@ -2472,6 +2474,36 @@ static void lut_preview_disarm_pipeline(void)
     lut_preview_gate_writer = 0;
     lut_preview_gate_frames = 0;
     lut_preview_last_source = 0;
+}
+
+/* OFF is a true dormant state: release the large compiled map immediately.
+ * The engine lock guarantees that no render pass can still be using it. */
+static void lut_preview_release_map(void)
+{
+    uint32_t *old_map;
+
+    if (lut_preview_engine_sem)
+        take_semaphore(lut_preview_engine_sem, 0);
+    old_map = lut_preview_yuv_map;
+    lut_preview_yuv_map = 0;
+    lut_preview_size = 0;
+    lut_preview_loaded_index = 0;
+    lut_preview_active = 0;
+    lut_preview_active_generation = 0;
+    lut_preview_last_source = 0;
+    if (lut_preview_engine_sem)
+        give_semaphore(lut_preview_engine_sem);
+
+    if (old_map)
+        free(old_map);
+}
+
+/* Zoom changes can happen faster than the normal display-filter worker. Stop
+ * publishing LUT frames as soon as Canon announces a new zoom pipeline. */
+PROP_HANDLER(PROP_LV_DISPSIZE)
+{
+    lut_preview_disarm_pipeline();
+    lut_preview_release_display();
 }
 
 /* Normalize the active EDMAC writer to Canon's YUV ring. A pointer outside
@@ -3032,7 +3064,7 @@ int lut_preview_is_ready(void)
 
 static void lut_preview_request_index(int index, int notify_error)
 {
-    if (!lut_preview_files_scanned)
+    if (index && !lut_preview_files_scanned)
         lut_preview_scan_files();
 
     index = COERCE(index, 0, lut_preview_file_count);
@@ -3055,6 +3087,10 @@ static void lut_preview_request_index(int index, int notify_error)
         lut_preview_request_generation++;
         if (lut_preview_request_sem)
             give_semaphore(lut_preview_request_sem);
+        lut_preview_release_map();
+        lut_preview_release_display();
+        if (lut_preview_wake_sem)
+            give_semaphore(lut_preview_wake_sem);
         lens_display_set_dirty();
         return;
     }
@@ -3067,6 +3103,8 @@ static void lut_preview_request_index(int index, int notify_error)
     lut_preview_request_generation++;
     if (lut_preview_request_sem)
         give_semaphore(lut_preview_request_sem);
+    if (lut_preview_wake_sem)
+        give_semaphore(lut_preview_wake_sem);
     lens_display_set_dirty();
 }
 
@@ -3316,10 +3354,15 @@ static void lut_preview_load_task(void *unused)
     msleep(2500);
     if (!lut_preview_request_sem || !lut_preview_engine_sem)
         return;
-    lut_preview_scan_files();
-    if (lut_preview > lut_preview_file_count)
-        lut_preview = 0;
-    lut_preview_request_index(lut_preview, 0);
+    /* With LUT Preview OFF, do not even scan the card. The task remains asleep
+     * until a menu selection explicitly requests a LUT. */
+    if (lut_preview)
+    {
+        lut_preview_scan_files();
+        if (lut_preview > lut_preview_file_count)
+            lut_preview = 0;
+        lut_preview_request_index(lut_preview, 0);
+    }
 
     uint32_t handled_generation = 0;
     TASK_LOOP
@@ -3340,6 +3383,14 @@ static void lut_preview_load_task(void *unused)
 
         if (generation == handled_generation)
         {
+            if (!index && !lut_preview_active && !lut_preview_yuv_map)
+            {
+                if (lut_preview_wake_sem)
+                    take_semaphore(lut_preview_wake_sem, 0);
+                else
+                    msleep(250);
+                continue;
+            }
             lut_preview_update_pipeline_gate();
             msleep(20);
             continue;
@@ -3347,7 +3398,9 @@ static void lut_preview_load_task(void *unused)
         handled_generation = generation;
         if (!index)
         {
-            lut_preview_update_pipeline_gate();
+            lut_preview_disarm_pipeline();
+            lut_preview_release_map();
+            lut_preview_release_display();
             continue;
         }
 
@@ -4438,6 +4491,18 @@ static int display_filter_queue_lut_buffer(void) { return 0; }
 
 static int display_filter_valid_image = 0;
 
+static void lut_preview_release_display(void)
+{
+#ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
+    /* The vsync callback performs the actual route handoff to Canon. Dropping
+     * pending/valid state here prevents one more stale LUT frame from being
+     * presented while that handoff is waiting for vsync. */
+    lut_preview_frame_pending = 0;
+    display_filter_valid_image = 0;
+    display_filter_release_requested = 1;
+#endif
+}
+
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
 {
     //~ struct vram_info * vram = get_yuv422_vram();
@@ -4746,6 +4811,8 @@ void display_filter_step(int k)
     if (filter_frame_completed && !lut_frame_queued)
         display_filter_valid_image = 1;
 }
+#else
+static void lut_preview_release_display(void) {}
 #endif
 
 #ifdef CONFIG_KILL_FLICKER
@@ -5271,6 +5338,8 @@ static void tweak_init()
         lut_preview_request_sem = create_named_semaphore("lut_request", 1);
     if (!lut_preview_engine_sem)
         lut_preview_engine_sem = create_named_semaphore("lut_engine", 1);
+    if (!lut_preview_wake_sem)
+        lut_preview_wake_sem = create_named_semaphore("lut_wake", 0);
 
 #ifdef CONFIG_SLIM_MENUS
     #ifdef FEATURE_ANAMORPHIC_PREVIEW

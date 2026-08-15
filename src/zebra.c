@@ -63,6 +63,7 @@ static int slim_hide_zebras_during_dual_iso_recording(void)
 #ifdef CONFIG_SLIM_MENUS
 extern int lut_preview;
 extern void lut_preview_toggle(void *priv, int delta);
+extern MENU_UPDATE_FUNC(lut_preview_menu_update);
 #endif
 
 /* todo: move battery stuff in battery.c */
@@ -3365,12 +3366,12 @@ struct menu_entry zebra_menus[] = {
         .name = "LUT Preview",
         .priv = &lut_preview,
         .select = lut_preview_toggle,
-        .max = 1,
-        .choices = CHOICES("OFF", "ACTIVE.CUBE"),
+        .update = lut_preview_menu_update,
+        .max = 5,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Preview-only 3D LUT. Recorded RAW/MLV stays unchanged.",
-        .help2 = "Copy a standard 3D LUT to ML/LUTS/ACTIVE.CUBE.",
-        .depends_on = DEP_LIVEVIEW | DEP_GLOBAL_DRAW,
+        .help2 = "Copy up to 5 named standard .cube LUTs to ML/LUTS. SET opens LiveView selection.",
+        .depends_on = DEP_LIVEVIEW,
     },
 #else
     {

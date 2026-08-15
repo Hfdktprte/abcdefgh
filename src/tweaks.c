@@ -4604,6 +4604,10 @@ static void* display_filter_buffer_unaligned = 0;
 static void* display_filter_buffer = 0;
 static void* lut_preview_buffer_unaligned = 0;
 static void* lut_preview_back_buffer = 0;
+/* Exact LCD route observed immediately before ML redirects the display.
+ * This is deliberately separate from latest_completed, which is a safe copy
+ * source but may be Canon's active DMA ring and must not be used as a route. */
+static void* display_filter_canon_route = 0;
 static volatile int lut_preview_frame_pending = 0;
 static volatile int display_filter_release_requested = 0;
 static volatile int display_filter_release_ack = 0;
@@ -4775,7 +4779,7 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
     }
 #elif defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY) // all new cameras should work with this method
 
-    uint32_t latest_canon = lut_preview_observe_canon_writer();
+    lut_preview_observe_canon_writer();
     if (!display_filter_buffer) return CBR_RET_CONTINUE;
     if (display_filter_release_requested || !display_filter_enabled())
     {
@@ -4783,9 +4787,10 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
          * not leave the last LUT output routed merely because task cleanup
          * has not run yet; hand display ownership back to Canon at vsync. */
         void *shown = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
-        /* Never restore an address merely remembered when the filter was
-         * first enabled. Use the completed member of Canon's current ring. */
-        void *restore = latest_canon ? (void *)latest_canon : 0;
+        /* Restore Canon's actual LCD route, not an EDMAC copy-source buffer.
+         * Routing the LCD to the latter pins scanout to a buffer Canon may be
+         * rewriting, which leaves tearing behind even after LUT is OFF. */
+        void *restore = display_filter_canon_route;
         if (display_filter_is_our_buffer(shown) && restore &&
             !display_filter_is_our_buffer(restore))
             YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)restore;
@@ -4796,7 +4801,10 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
             !display_filter_is_our_buffer(
                 (void *)YUV422_LV_BUFFER_DISPLAY_ADDR);
         if (display_filter_release_ack)
+        {
             display_filter_release_requested = 0;
+            display_filter_canon_route = 0;
+        }
         return CBR_RET_CONTINUE;
     }
 
@@ -4813,7 +4821,13 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
         display_filter_valid_image = 1;
     }
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
-    
+
+    /* Capture the live Canon route at the last possible moment before the
+     * first redirect. Never overwrite it with either ML front/back buffer. */
+    void *current_route = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
+    if (!display_filter_is_our_buffer(current_route))
+        display_filter_canon_route = current_route;
+
     /* switch the displayed buffer to our filtered image */
     YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) display_filter_buffer;
 #endif

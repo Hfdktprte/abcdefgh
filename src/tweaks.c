@@ -2357,7 +2357,7 @@ static CONFIG_INT("lv.sat", preview_saturation, 0);         // range: -2:2, 3 sp
 #define PREVIEW_CONTRAST_AUTO (preview_contrast == 3)
 
 static CONFIG_INT("lv.crazy", preview_crazy, 0);         // range: 0:2
-static CONFIG_INT("lv.peak", preview_peaking, 0);        // range: 0:2
+CONFIG_INT("lv.peak", preview_peaking, 0);               // range: 0:3
 
 CONFIG_INT("bmp.color.scheme", bmp_color_scheme, 0);
 
@@ -3553,27 +3553,7 @@ extern MENU_UPDATE_FUNC(display_gain_print);
 extern int display_gain_menu_index;
 
 #ifdef CONFIG_SLIM_MENUS
-/* Custom panel: Digic Peaking Off/On (On = slightly sharper) + Screen Layout. */
-static MENU_UPDATE_FUNC(slim_digic_peaking_update)
-{
-    if (preview_peaking > 1)
-        preview_peaking = 1;
-}
-
 static struct menu_entry custom_display_menus[] = {
-    #ifdef FEATURE_DIGIC_FOCUS_PEAKING
-    {
-        .name = "Digic Peaking",
-        .priv = &preview_peaking,
-        .min = 0,
-        .max = 1,
-        .update = slim_digic_peaking_update,
-        .choices = CHOICES("OFF", "ON"),
-        .edit_mode = EM_INLINE_ADJUST,
-        .help  = "Focus peaking via DIGIC. ON uses the slightly sharper filter.",
-        .depends_on = DEP_LIVEVIEW,
-    },
-    #endif
     #ifdef FEATURE_SCREEN_LAYOUT
     {
         .name = "Screen Layout",

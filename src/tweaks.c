@@ -2664,7 +2664,6 @@ MENU_UPDATE_FUNC(lut_preview_menu_update)
     if (lut_preview > lut_preview_file_count)
         lut_preview_select_index(0, 0);
     MENU_SET_VALUE("%s", lut_preview_selected_name());
-    MENU_SET_ENABLED(lut_preview != 0);
     if (!lut_preview_file_count)
         MENU_SET_WARNING(MENU_WARN_INFO, "Copy up to 5 standard .cube LUTs to ML/LUTS.");
 }

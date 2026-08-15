@@ -92,7 +92,6 @@ static int (*crop_rec_lv_transition_busy)() =
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
 static int (*dual_iso_slim_step_recovery)(int) =
     MODULE_FUNCTION(dual_iso_slim_step_recovery);
-extern int lut_preview_editor_step(int sign);
 
 static int slim_touch_dual_iso_enabled(void)
 {
@@ -233,14 +232,10 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
             slim_touch_pending_sign = sign;
             delayed_call(100, slim_touch_lv_apply_pending_menu_change, 0);
             break;
-        case LVINFO_TOUCH_LUT:
-            if (lut_preview_editor_step(sign))
-                lvinfo_touch_editor_feedback(slot, sign);
-            break;
         default:
             break;
     }
-    if (!deferred && field != LVINFO_TOUCH_LUT)
+    if (!deferred)
         lvinfo_touch_editor_feedback(slot, sign);
     lens_display_set_dirty();
 }
@@ -559,32 +554,10 @@ static int handle_slim_lv_editor_keys(struct event *event)
 
     if (event->param == BGMT_MENU)
     {
-        int lut_editor =
-            lvinfo_touch_editor_field() == LVINFO_TOUCH_LUT;
         lvinfo_touch_editor_close();
         slim_touch_tap_count = 0;
         slim_touch_tap_deadline = 0;
-        /* The LUT chooser uses MENU as a pure dismiss action. Other direct
-         * editors retain their established MENU fall-through behavior. */
-        return lut_editor ? 0 : 1;
-    }
-
-    if (lvinfo_touch_editor_field() == LVINFO_TOUCH_LUT)
-    {
-        if (event->param == BGMT_PRESS_UP ||
-            event->param == BGMT_WHEEL_UP)
-        {
-            if (lut_preview_editor_step(1))
-                lvinfo_touch_editor_feedback(0, 1);
-            return 0;
-        }
-        if (event->param == BGMT_PRESS_DOWN ||
-            event->param == BGMT_WHEEL_DOWN)
-        {
-            if (lut_preview_editor_step(-1))
-                lvinfo_touch_editor_feedback(0, -1);
-            return 0;
-        }
+        return 1;
     }
 
     switch (event->param)

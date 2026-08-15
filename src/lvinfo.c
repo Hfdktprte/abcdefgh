@@ -42,8 +42,6 @@ static int lvinfo_touch_feedback_sign;
 #define LVINFO_TOUCH_BOX_H          180
 #define LVINFO_TOUCH_SINGLE_X       270
 #define LVINFO_TOUCH_SINGLE_W       180
-#define LVINFO_TOUCH_LUT_X          140
-#define LVINFO_TOUCH_LUT_W          440
 #define LVINFO_TOUCH_CROP_X         105
 #define LVINFO_TOUCH_CROP_W         510
 #define LVINFO_TOUCH_UP_TIP_Y       (LVINFO_TOUCH_BOX_Y + 28)
@@ -153,21 +151,15 @@ static void lvinfo_touch_draw_editor(void)
     {
         const char *value =
             (lvinfo_touch_field == LVINFO_TOUCH_FPS ||
-             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH ||
-             lvinfo_touch_field == LVINFO_TOUCH_LUT)
+             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH)
             ? lvinfo_touch_menu_value[0]
             : lvinfo_touch_field_value(lvinfo_touch_field);
         int enabled =
             (lvinfo_touch_field == LVINFO_TOUCH_FPS ||
-             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH ||
-             lvinfo_touch_field == LVINFO_TOUCH_LUT)
+             lvinfo_touch_field == LVINFO_TOUCH_BIT_DEPTH)
             ? lvinfo_touch_menu_enabled[0] : 1;
-        int box_x = lvinfo_touch_field == LVINFO_TOUCH_LUT
-            ? LVINFO_TOUCH_LUT_X : LVINFO_TOUCH_SINGLE_X;
-        int box_w = lvinfo_touch_field == LVINFO_TOUCH_LUT
-            ? LVINFO_TOUCH_LUT_W : LVINFO_TOUCH_SINGLE_W;
-        bmp_fill(COLOR_BLACK, box_x, LVINFO_TOUCH_BOX_Y,
-                 box_w, LVINFO_TOUCH_BOX_H);
+        bmp_fill(COLOR_BLACK, LVINFO_TOUCH_SINGLE_X, LVINFO_TOUCH_BOX_Y,
+                 LVINFO_TOUCH_SINGLE_W, LVINFO_TOUCH_BOX_H);
         lvinfo_touch_draw_value(0, 360, value_y, value, enabled);
     }
 }
@@ -889,13 +881,9 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
         return 0;
 
     box_x = lvinfo_touch_field == LVINFO_TOUCH_CROP
-        ? LVINFO_TOUCH_CROP_X :
-        lvinfo_touch_field == LVINFO_TOUCH_LUT
-        ? LVINFO_TOUCH_LUT_X : LVINFO_TOUCH_SINGLE_X;
+        ? LVINFO_TOUCH_CROP_X : LVINFO_TOUCH_SINGLE_X;
     box_w = lvinfo_touch_field == LVINFO_TOUCH_CROP
-        ? LVINFO_TOUCH_CROP_W :
-        lvinfo_touch_field == LVINFO_TOUCH_LUT
-        ? LVINFO_TOUCH_LUT_W : LVINFO_TOUCH_SINGLE_W;
+        ? LVINFO_TOUCH_CROP_W : LVINFO_TOUCH_SINGLE_W;
     if (x < box_x || x >= box_x + box_w ||
         y < LVINFO_TOUCH_BOX_Y || y >= LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H)
         return 0;

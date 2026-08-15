@@ -3369,6 +3369,10 @@ struct menu_entry zebra_menus[] = {
         .select = lut_preview_toggle,
         .update = lut_preview_menu_update,
         .max = 5,
+        /* Filenames are populated dynamically, so menu auto-detection cannot
+         * infer a dice control from .choices. Without this, value 0 is
+         * misclassified as a disabled percentage row. */
+        .icon_type = IT_DICE,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Preview-only 3D LUT. Recorded RAW/MLV stays unchanged.",
         .help2 = "Copy up to 5 named standard .cube LUTs to ML/LUTS. SET opens LiveView selection.",

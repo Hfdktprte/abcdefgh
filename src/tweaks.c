@@ -2370,6 +2370,7 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 #define LUT_PREVIEW_MAX_FILES 5
 #define LUT_PREVIEW_NAME_LEN 48
 #define LUT_PREVIEW_MAX_SIZE 33
+#define LUT_PREVIEW_MAX_SOURCE_SIZE 65
 #define LUT_PREVIEW_Y_BITS  6
 /* A 4-bit chroma grid saves 192 KB but creates visible color bands on the
  * EOS M LCD. Keep 5-bit chroma precision; the frame-skip, active-area and
@@ -2387,6 +2388,7 @@ static int lut_preview_file_count = 0;
 static int lut_preview_files_scanned = 0;
 static int lut_preview_loaded_index = 0;
 static void *lut_preview_last_source = 0;
+static const char *lut_preview_load_error = "Invalid LUT";
 
 static int lut_preview_build_yuv_map(void);
 
@@ -2522,87 +2524,172 @@ static int lut_line_has_prefix(const char *line, const char *end, const char *pr
     return 1;
 }
 
-static int lut_preview_load_file(const char *path)
+struct lut_preview_load_context
 {
-    int file_size = 0;
-    char *file = (char *)read_entire_file(path, &file_size);
-    if (!file || file_size <= 0)
+    int source_size;
+    int cube_size;
+    int entries;
+    int stored;
+    int source_to_cube[LUT_PREVIEW_MAX_SOURCE_SIZE + 1];
+    uint16_t *data;
+};
+
+static int lut_preview_prepare_cube(struct lut_preview_load_context *ctx,
+                                    int source_size)
+{
+    if (ctx->source_size || source_size < 2 ||
+        source_size > LUT_PREVIEW_MAX_SOURCE_SIZE)
     {
-        if (file) free(file);
+        lut_preview_load_error = "Unsupported LUT size";
         return 0;
     }
 
-    const char *p = file;
-    const char *end = file + file_size;
-    int size = 0;
-    int entries = 0;
-    uint16_t *data = 0;
-
-    while (p < end)
+    ctx->source_size = source_size;
+    ctx->cube_size = MIN(source_size, LUT_PREVIEW_MAX_SIZE);
+    for (int i = 0; i <= LUT_PREVIEW_MAX_SOURCE_SIZE; i++)
+        ctx->source_to_cube[i] = -1;
+    for (int i = 0; i < ctx->cube_size; i++)
     {
-        const char *line = p;
-        while (p < end && *p != '\n' && *p != '\r') p++;
-        const char *line_end = p;
-        while (p < end && (*p == '\n' || *p == '\r')) p++;
-
-        if (lut_line_has_prefix(line, line_end, "LUT_3D_SIZE"))
-        {
-            const char *q = lut_skip_spaces(line, line_end) + 11;
-            if (!lut_parse_positive_int(&q, line_end, &size) ||
-                size < 2 || size > LUT_PREVIEW_MAX_SIZE)
-                goto fail;
-            continue;
-        }
-
-        line = lut_skip_spaces(line, line_end);
-        if (!size || line >= line_end || *line == '#' ||
-            (*line != '-' && *line != '+' && *line != '.' &&
-             (*line < '0' || *line > '9')))
-            continue;
-
-        if (!data)
-        {
-            int count = size * size * size;
-            data = malloc(count * 3 * sizeof(*data));
-            if (!data) goto fail;
-        }
-
-        const char *q = line;
-        int r, g, b;
-        if (!lut_parse_unit_value(&q, line_end, &r) ||
-            !lut_parse_unit_value(&q, line_end, &g) ||
-            !lut_parse_unit_value(&q, line_end, &b) ||
-            entries >= size * size * size)
-            goto fail;
-        data[entries * 3 + 0] = r;
-        data[entries * 3 + 1] = g;
-        data[entries * 3 + 2] = b;
-        entries++;
+        int source = (i * (source_size - 1) +
+                      (ctx->cube_size - 1) / 2) /
+                     (ctx->cube_size - 1);
+        ctx->source_to_cube[source] = i;
     }
 
-    if (!data || entries != size * size * size) goto fail;
-    if (lut_preview_data) free(lut_preview_data);
-    lut_preview_data = data;
-    lut_preview_size = size;
-    free(file);
+    int count = ctx->cube_size * ctx->cube_size * ctx->cube_size;
+    ctx->data = malloc(count * 3 * sizeof(*ctx->data));
+    if (!ctx->data)
+    {
+        lut_preview_load_error = "Not enough memory for LUT";
+        return 0;
+    }
+    return 1;
+}
 
+static int lut_preview_parse_line(struct lut_preview_load_context *ctx,
+                                  const char *line, const char *line_end)
+{
+    if (lut_line_has_prefix(line, line_end, "LUT_3D_SIZE"))
+    {
+        const char *q = lut_skip_spaces(line, line_end) + 11;
+        int size = 0;
+        if (!lut_parse_positive_int(&q, line_end, &size))
+        {
+            lut_preview_load_error = "Invalid LUT size";
+            return 0;
+        }
+        return lut_preview_prepare_cube(ctx, size);
+    }
+
+    line = lut_skip_spaces(line, line_end);
+    if (!ctx->source_size || line >= line_end || *line == '#' ||
+        (*line != '-' && *line != '+' && *line != '.' &&
+         (*line < '0' || *line > '9')))
+        return 1;
+
+    int total = ctx->source_size * ctx->source_size * ctx->source_size;
+    const char *q = line;
+    int r, g, b;
+    if (ctx->entries >= total ||
+        !lut_parse_unit_value(&q, line_end, &r) ||
+        !lut_parse_unit_value(&q, line_end, &g) ||
+        !lut_parse_unit_value(&q, line_end, &b))
+    {
+        lut_preview_load_error = "Invalid LUT data";
+        return 0;
+    }
+
+    int ri = ctx->entries % ctx->source_size;
+    int gi = (ctx->entries / ctx->source_size) % ctx->source_size;
+    int bi = ctx->entries / (ctx->source_size * ctx->source_size);
+    int dr = ctx->source_to_cube[ri];
+    int dg = ctx->source_to_cube[gi];
+    int db = ctx->source_to_cube[bi];
+    if (dr >= 0 && dg >= 0 && db >= 0)
+    {
+        int index = ((db * ctx->cube_size + dg) * ctx->cube_size + dr) * 3;
+        ctx->data[index + 0] = r;
+        ctx->data[index + 1] = g;
+        ctx->data[index + 2] = b;
+        ctx->stored++;
+    }
+    ctx->entries++;
+    return 1;
+}
+
+static int lut_preview_load_file(const char *path)
+{
+    FILE *file = FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (!file)
+    {
+        lut_preview_load_error = "Cannot open LUT";
+        return 0;
+    }
+
+    /* Stream the text instead of read_entire_file. A 65-point LUT is often
+     * 7 MB; keeping it all in RAM made valid LUTs fail only while the menu's
+     * bitmap buffers were allocated. */
+    struct lut_preview_load_context ctx = { 0 };
+    char input[4096];
+    char line[192];
+    int line_len = 0;
+    int line_overflow = 0;
+    int ok = 1;
+    int n;
+
+    lut_preview_load_error = "Invalid LUT";
+    while (ok && (n = FIO_ReadFile(file, input, sizeof(input))) > 0)
+    {
+        for (int i = 0; i < n && ok; i++)
+        {
+            char c = input[i];
+            if (c == '\n' || c == '\r')
+            {
+                if (line_len && !line_overflow)
+                    ok = lut_preview_parse_line(&ctx, line, line + line_len);
+                line_len = 0;
+                line_overflow = 0;
+            }
+            else if (line_len < (int)sizeof(line))
+            {
+                line[line_len++] = c;
+            }
+            else
+            {
+                line_overflow = 1;
+            }
+        }
+    }
+    if (ok && line_len && !line_overflow)
+        ok = lut_preview_parse_line(&ctx, line, line + line_len);
+    FIO_CloseFile(file);
+
+    int source_total = ctx.source_size * ctx.source_size * ctx.source_size;
+    int cube_total = ctx.cube_size * ctx.cube_size * ctx.cube_size;
+    if (!ok || !ctx.data || ctx.entries != source_total ||
+        ctx.stored != cube_total)
+    {
+        if (ok) lut_preview_load_error = "Incomplete LUT data";
+        if (ctx.data) free(ctx.data);
+        return 0;
+    }
+
+    if (lut_preview_data) free(lut_preview_data);
+    lut_preview_data = ctx.data;
+    lut_preview_size = ctx.cube_size;
     if (!lut_preview_build_yuv_map())
     {
         free(lut_preview_data);
         lut_preview_data = 0;
         lut_preview_size = 0;
+        lut_preview_load_error = "Not enough memory for LUT map";
         return 0;
     }
 
-    /* Runtime uses the precomputed YUV map; release the larger cube data. */
+    /* Runtime uses the precomputed YUV map; release the temporary cube. */
     free(lut_preview_data);
     lut_preview_data = 0;
     return 1;
-
-fail:
-    if (data) free(data);
-    free(file);
-    return 0;
 }
 
 int lut_preview_is_ready(void)
@@ -2632,7 +2719,8 @@ static int lut_preview_select_index(int index, int notify_error)
     if (!lut_preview_load_file(path))
     {
         if (notify_error)
-            NotifyBox(3000, "Invalid LUT: %s", lut_preview_names[index - 1]);
+            NotifyBox(3000, "%s:\n%s", lut_preview_load_error,
+                      lut_preview_names[index - 1]);
         return 0;
     }
 
@@ -2825,7 +2913,7 @@ static int lut_preview_should_render(void)
 {
     return lut_preview_is_ready() && lv && !RECORDING &&
            !RECORDING_H264_STARTING && lv_dispsize <= 5 &&
-           !should_draw_zoom_overlay();
+           !should_draw_zoom_overlay() && !gui_menu_shown();
 }
 
 /* Keep the LiveView filter worker awake for LUT preview even when bitmap

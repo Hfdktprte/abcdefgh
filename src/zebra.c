@@ -352,20 +352,22 @@ enum slim_focus_assist_mode
 };
 
 /* Keep the menu's plain-language order independent from the original DIGIC
- * register values: 1 is sharpening, 2 is monochrome edges, 3 is colored
- * focus peaking. */
+ * register values. Focus Peaking is the regular ML dot overlay; only Sharper
+ * Image and Edge Detect use the DIGIC display filter. */
 static void slim_focus_assist_apply_mode(void)
 {
     if (focus_assist_mode < FOCUS_ASSIST_OFF ||
         focus_assist_mode > FOCUS_ASSIST_EDGE_DETECT)
         focus_assist_mode = FOCUS_ASSIST_OFF;
 
-    /* Focus Assist is now sole owner of this display-filter state. Older
-     * lv.peak values must not reactivate Edge Detect after boot. */
+    /* Focus Assist owns both implementations. Always set both states so a
+     * previously selected DIGIC filter cannot leak into Focus Peaking, and a
+     * previous dot overlay cannot remain in the other modes. */
+    focus_peaking = focus_assist_mode == FOCUS_ASSIST_PEAKING;
     preview_peaking =
-        focus_assist_mode == FOCUS_ASSIST_PEAKING ? 3 :
         focus_assist_mode == FOCUS_ASSIST_SHARPER_IMAGE ? 1 :
         focus_assist_mode == FOCUS_ASSIST_EDGE_DETECT ? 2 : 0;
+
 }
 
 static MENU_SELECT_FUNC(slim_focus_assist_select)
@@ -5259,6 +5261,11 @@ static void zebra_init()
     if (zebra_draw > ZEBRA_MODE_MAX) zebra_draw = ZEBRA_MODE_OVER;
     if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
     if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
+    #if defined(CONFIG_DISPLAY_FILTERS) && defined(FEATURE_FOCUS_PEAK_DISP_FILTER)
+    /* Do not let an old hidden display-filter preference replace Slim's
+     * expected red-dot Focus Peaking overlay. */
+    focus_peaking_disp = 0;
+    #endif
     slim_focus_assist_apply_mode();
     zebra_init_slim_palette_for_mode();
 #endif

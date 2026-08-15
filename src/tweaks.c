@@ -2397,11 +2397,98 @@ static volatile uint32_t lut_preview_request_generation = 0;
 static volatile uint32_t lut_preview_active_generation = 0;
 static volatile int lut_preview_requested_index = 0;
 static volatile int lut_preview_active = 0;
+static volatile int lut_preview_pipeline_armed = 0;
+static uint32_t lut_preview_gate_writer = 0;
+static int lut_preview_gate_frames = 0;
 static char lut_preview_requested_path[FIO_MAX_PATH_LENGTH];
 static char lut_preview_requested_name[LUT_PREVIEW_NAME_LEN];
 static int lut_preview_requested_notify = 0;
+/* Resolved when crop_rec.mo loads. LUT display ownership must remain with
+ * Canon while Crop Rec is rebuilding its sensor and preview geometry. */
+static int (*crop_rec_lv_transition_busy)() =
+    MODULE_FUNCTION(crop_rec_lv_transition_busy);
 
 static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size);
+
+static void lut_preview_disarm_pipeline(void)
+{
+    lut_preview_pipeline_armed = 0;
+    lut_preview_gate_writer = 0;
+    lut_preview_gate_frames = 0;
+    lut_preview_last_source = 0;
+}
+
+/* Normalize the active EDMAC writer to Canon's YUV ring. A pointer outside
+ * this ring means the display path is changing or unavailable. */
+static uint32_t lut_preview_canon_writer(void)
+{
+#ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
+    uint32_t current = (uint32_t)CACHEABLE(
+        shamem_read(REG_EDMAC_WRITE_LV_ADDR));
+    uint32_t buffers[] = {
+        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_1),
+        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_2),
+        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_3),
+        #ifdef YUV422_LV_BUFFER_4
+        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_4),
+        #endif
+    };
+
+    for (int i = 0; i < COUNT(buffers); i++)
+        if (ABS((int)current - (int)buffers[i]) < 200000)
+            return buffers[i];
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+/* Readiness is evidence-based, not a boot timeout: after every boot, menu,
+ * zoom or recording transition, wait for Crop Rec to finish and then observe
+ * three distinct completed Canon YUV frames before redirecting the LCD. */
+static void lut_preview_update_pipeline_gate(void)
+{
+    extern int ml_started;
+    int crop_busy = crop_rec_lv_transition_busy &&
+                    crop_rec_lv_transition_busy();
+
+    if (
+        #ifdef CONFIG_EOSM
+        /* crop_rec.mo owns EOS M movie geometry. A null function pointer
+         * means the module has not loaded yet, so native LV is not final. */
+        !crop_rec_lv_transition_busy ||
+        #endif
+        (!lut_preview_active && !lut_preview_requested_index) ||
+        !ml_started || !lv || lv_paused ||
+        RECORDING || RECORDING_H264_STARTING || gui_menu_shown() ||
+        lv_dispsize > 5 || should_draw_zoom_overlay() || crop_busy ||
+        !liveview_display_idle())
+    {
+        lut_preview_disarm_pipeline();
+        return;
+    }
+
+    if (lut_preview_pipeline_armed)
+        return;
+
+    uint32_t writer = lut_preview_canon_writer();
+    if (!writer)
+    {
+        lut_preview_disarm_pipeline();
+        return;
+    }
+
+    if (writer != lut_preview_gate_writer)
+    {
+        lut_preview_gate_writer = writer;
+        lut_preview_gate_frames++;
+        if (lut_preview_gate_frames >= 3)
+        {
+            lut_preview_pipeline_armed = 1;
+            lut_preview_last_source = 0;
+        }
+    }
+}
 
 static int lut_preview_valid_filename(const char *name)
 {
@@ -2737,6 +2824,7 @@ static void lut_preview_request_index(int index, int notify_error)
      * or compile it, but neither that work nor an old rendered frame can be
      * published for the newly selected menu item. */
     lut_preview_active = 0;
+    lut_preview_disarm_pipeline();
     if (!index)
     {
         lut_preview_last_source = 0;
@@ -2904,7 +2992,8 @@ static inline uint32_t lut_preview_map_pair(const uint32_t *map, uint32_t in)
 
 static int lut_preview_should_render(void)
 {
-    return lut_preview_is_ready() && lv && !RECORDING &&
+    return lut_preview_is_ready() && lut_preview_pipeline_armed &&
+           lv && !RECORDING &&
            !RECORDING_H264_STARTING && lv_dispsize <= 5 &&
            !should_draw_zoom_overlay() && !gui_menu_shown();
 }
@@ -3029,12 +3118,16 @@ static void lut_preview_load_task(void *unused)
 
         if (generation == handled_generation)
         {
+            lut_preview_update_pipeline_gate();
             msleep(20);
             continue;
         }
         handled_generation = generation;
         if (!index)
+        {
+            lut_preview_update_pipeline_gate();
             continue;
+        }
 
         take_semaphore(lut_preview_engine_sem, 0);
         int already_loaded = index == lut_preview_loaded_index &&
@@ -3047,11 +3140,37 @@ static void lut_preview_load_task(void *unused)
         }
         give_semaphore(lut_preview_engine_sem);
         if (already_loaded)
+        {
+            lut_preview_update_pipeline_gate();
+            continue;
+        }
+
+        /* Parsing a large text cube and compiling the runtime YUV map are
+         * CPU-heavy. On boot, do not let this work compete with Canon/Crop
+         * Rec configuration; begin only after real Canon frames have made
+         * the readiness gate pass. A newer menu request cancels the wait. */
+        int request_changed = 0;
+        while (!lut_preview_pipeline_armed)
+        {
+            lut_preview_update_pipeline_gate();
+            take_semaphore(lut_preview_request_sem, 0);
+            request_changed = generation != lut_preview_request_generation ||
+                              index != lut_preview_requested_index;
+            give_semaphore(lut_preview_request_sem);
+            if (request_changed)
+                break;
+            msleep(20);
+        }
+        if (request_changed)
             continue;
 
         uint32_t *new_map = 0;
         int new_size = 0;
         int loaded = lut_preview_load_file(path, &new_map, &new_size);
+        /* A transition may have started while the map was compiling. Keep
+         * the compiled map, but prevent display redirection until a fresh
+         * set of Canon frames passes the gate again. */
+        lut_preview_update_pipeline_gate();
 
         /* Serialize the final generation check with new GUI requests, then
          * commit the immutable map while no renderer can retain the old one. */
@@ -3090,6 +3209,7 @@ static void lut_preview_load_task(void *unused)
         give_semaphore(lut_preview_request_sem);
         if (old_map) free(old_map);
         lens_display_set_dirty();
+        lut_preview_update_pipeline_gate();
     }
 }
 

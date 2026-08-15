@@ -109,6 +109,7 @@ static int config_dirty = 0;
 
 #ifdef CONFIG_SLIM_MENUS
 extern void anamorphic_preview_set_toggle(void);
+extern void lut_preview_open_liveview_editor(void);
 
 #define CUSTOM_MENU_NAME "Custom"
 #define CUSTOM_MENU_MAX_ITEMS 8
@@ -5210,6 +5211,13 @@ void menu_entry_select(
             /* The center value is intentionally inert to touch. SET is the
              * single explicit OFF/restore control; arrows remain factors-only. */
             anamorphic_preview_set_toggle();
+            entry_used = 1;
+        }
+        else if (entry->name && streq(entry->name, "LUT Preview"))
+        {
+            /* SET opens the dedicated LiveView chooser. Left/right and touch
+             * arrows keep cycling the same OFF + discovered LUT list inline. */
+            lut_preview_open_liveview_editor();
             entry_used = 1;
         }
         else if (entry->edit_mode & EM_INLINE_ADJUST)

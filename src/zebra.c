@@ -64,6 +64,7 @@ static int slim_hide_zebras_during_dual_iso_recording(void)
 extern int lut_preview;
 extern void lut_preview_toggle(void *priv, int delta);
 extern MENU_UPDATE_FUNC(lut_preview_menu_update);
+extern int lut_preview_worker_needed(void);
 #endif
 
 /* todo: move battery stuff in battery.c */
@@ -4282,6 +4283,11 @@ int zebra_should_run()
         !WAVEFORM_FULLSCREEN;
 }
 
+static int livev_hipriority_should_run(void)
+{
+    return zebra_should_run() || lut_preview_worker_needed();
+}
+
 int zebra_draw_enabled(void)
 {
     return monitoring_enabled(zebra_draw);
@@ -4771,11 +4777,17 @@ livev_hipriority_task( void* unused )
         static int raw_flag = 0;
 #endif
         
-        if (!zebra_should_run())
+        if (!livev_hipriority_should_run())
         {
+            /* A LUT may have just been suspended by REC or x10 while Global
+             * Draw is off. Run filter cleanup once before this task sleeps. */
+            #ifdef CONFIG_DISPLAY_FILTERS
+            extern void display_filter_step(int frame_number);
+            display_filter_step(k);
+            #endif
             while (clearscreen == 1 && (get_halfshutter_pressed() || dofpreview)) msleep(100);
             while (RECORDING_H264_STARTING) msleep(100);
-            if (!zebra_should_run())
+            if (!livev_hipriority_should_run())
             {
                 digic_zebra_cleanup();
                 if (lv && !gui_menu_shown()) redraw();
@@ -4785,7 +4797,7 @@ livev_hipriority_task( void* unused )
                 #ifdef CONFIG_RAW_LIVEVIEW
                 if (raw_flag) { raw_lv_release(); raw_flag = 0; }
                 #endif
-                while (!zebra_should_run()) 
+                while (!livev_hipriority_should_run())
                 {
                     msleep(100);
                 }
@@ -4794,7 +4806,7 @@ livev_hipriority_task( void* unused )
                 crop_set_dirty(10);
                 msleep(500);
             }
-            if (!zebra_should_run())
+            if (!livev_hipriority_should_run())
             {
                 /* false alarm */
                 continue;

@@ -11,7 +11,6 @@
 /* Order of Settings panel rows. Entries fill these placeholders by name. */
 static struct menu_entry custom_menu_placeholders[] =
 {
-    { .name = "Digic Peaking",       .placeholder = 1 },
     { .name = "Screen Layout",       .placeholder = 1 },
     { .name = "INFO Button",         .placeholder = 1 },
     { .name = "SET Button",          .placeholder = 1 },

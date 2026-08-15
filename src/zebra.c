@@ -319,6 +319,51 @@ static CONFIG_INT( "focus.peaking", focus_peaking, 0);
 static CONFIG_INT( "focus.peaking.filter.edges", focus_peaking_filter_edges, 1);
 static CONFIG_INT( "focus.peaking.thr", focus_peaking_pthr, 1);
 static CONFIG_INT( "focus.peaking.color", focus_peaking_color, 0);
+extern int preview_peaking;
+static CONFIG_INT("focus.assist.mode", focus_assist_mode, 0);
+
+enum slim_focus_assist_mode
+{
+    FOCUS_ASSIST_OFF = 0,
+    FOCUS_ASSIST_PEAKING,
+    FOCUS_ASSIST_SHARPER_IMAGE,
+    FOCUS_ASSIST_EDGE_DETECT,
+};
+
+/* Keep the menu's plain-language order independent from the original DIGIC
+ * register values: 1 is sharpening, 2 is monochrome edges, 3 is colored
+ * focus peaking. */
+static void slim_focus_assist_apply_mode(int migrate_legacy)
+{
+    if (migrate_legacy && focus_assist_mode == FOCUS_ASSIST_OFF && preview_peaking)
+    {
+        focus_assist_mode =
+            preview_peaking == 1 ? FOCUS_ASSIST_SHARPER_IMAGE :
+            preview_peaking == 2 ? FOCUS_ASSIST_EDGE_DETECT :
+                                   FOCUS_ASSIST_PEAKING;
+    }
+
+    if (focus_assist_mode < FOCUS_ASSIST_OFF ||
+        focus_assist_mode > FOCUS_ASSIST_EDGE_DETECT)
+        focus_assist_mode = FOCUS_ASSIST_OFF;
+
+    preview_peaking =
+        focus_assist_mode == FOCUS_ASSIST_PEAKING ? 3 :
+        focus_assist_mode == FOCUS_ASSIST_SHARPER_IMAGE ? 1 :
+        focus_assist_mode == FOCUS_ASSIST_EDGE_DETECT ? 2 : 0;
+}
+
+static MENU_SELECT_FUNC(slim_focus_assist_select)
+{
+    int *value = priv;
+    if (!value) return;
+
+    int mode = *value + delta;
+    while (mode < FOCUS_ASSIST_OFF) mode += FOCUS_ASSIST_EDGE_DETECT + 1;
+    while (mode > FOCUS_ASSIST_EDGE_DETECT) mode -= FOCUS_ASSIST_EDGE_DETECT + 1;
+    *value = focus_assist_mode = mode;
+    slim_focus_assist_apply_mode(0);
+}
 #else
 static CONFIG_INT( "focus.peaking.filter.edges", focus_peaking_filter_edges, 0); // prefer texture details rather than strong edges
 static CONFIG_INT( "focus.peaking.thr", focus_peaking_pthr, 5); // 1%
@@ -3285,17 +3330,20 @@ struct menu_entry zebra_menus[] = {
         #endif
     #endif
 
-    #ifdef FEATURE_FOCUS_PEAK
+#ifdef FEATURE_FOCUS_PEAK
 #ifdef CONFIG_SLIM_MENUS
     {
-        .name = "Focus Peak",
-        .priv           = &focus_peaking,
-        .max = 1,
-        .icon_type = IT_BOOL,
-        .choices = CHOICES("OFF", "ON"),
+        .name = "Focus Assist",
+        .priv           = &focus_assist_mode,
+        .select         = slim_focus_assist_select,
+        .min            = 0,
+        .max            = FOCUS_ASSIST_EDGE_DETECT,
+        .icon_type = IT_DICE,
+        .choices = CHOICES("OFF", "Focus Peaking", "Sharper Image", "Edge Detect"),
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "Show which parts of the image are in focus.",
-        .help2 = "Dial L/R toggles ON/OFF.",
+        .help = "DIGIC preview assistance; does not affect the recording.",
+        .help2 = "Focus Peaking uses colored edges. Sharper Image is subtle; Edge Detect is monochrome.",
+        .depends_on = DEP_LIVEVIEW,
     },
 #else
     {
@@ -5142,6 +5190,7 @@ static void zebra_init()
     if (zebra_draw > ZEBRA_MODE_MAX) zebra_draw = ZEBRA_MODE_OVER;
     if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
     if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
+    slim_focus_assist_apply_mode(1);
     zebra_init_slim_palette_for_mode();
 #endif
     precompute_yuv2rgb();

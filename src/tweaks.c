@@ -2826,6 +2826,14 @@ static int lut_preview_should_render(void)
            !should_draw_zoom_overlay();
 }
 
+/* Keep the LiveView filter worker awake for LUT preview even when bitmap
+ * Global Draw is disabled. Recording/x10 make this false, allowing the worker
+ * to restore Canon's buffer and release both LUT output frames immediately. */
+int lut_preview_worker_needed(void)
+{
+    return lut_preview_should_render();
+}
+
 static int lut_preview_draw(void)
 {
     uint32_t *src_buf;

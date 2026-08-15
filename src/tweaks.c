@@ -2382,10 +2382,16 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 #define LUT_PREVIEW_Y_SIZE  (1 << LUT_PREVIEW_Y_BITS)
 #define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
 #define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)
+#define LUT_PREVIEW_MAP_BYTES (LUT_PREVIEW_MAP_SIZE * sizeof(uint32_t))
+#define LUT_PREVIEW_CACHE_MAGIC 0x4C564331 /* "LVC1" */
+#define LUT_PREVIEW_CACHE_VERSION 1
+#define LUT_PREVIEW_CACHE_IO_SIZE 8192
 
 static int lut_preview_size = 0;
 static uint32_t *lut_preview_yuv_map = 0;
 static char lut_preview_names[LUT_PREVIEW_MAX_FILES][LUT_PREVIEW_NAME_LEN];
+static uint32_t lut_preview_source_sizes[LUT_PREVIEW_MAX_FILES];
+static uint32_t lut_preview_source_timestamps[LUT_PREVIEW_MAX_FILES];
 static int lut_preview_file_count = 0;
 static int lut_preview_files_scanned = 0;
 static int lut_preview_loaded_index = 0;
@@ -2409,6 +2415,56 @@ static int (*crop_rec_lv_transition_busy)() =
     MODULE_FUNCTION(crop_rec_lv_transition_busy);
 
 static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size);
+
+struct lut_preview_cache_header
+{
+    uint32_t magic;
+    uint32_t version;
+    uint32_t header_size;
+    uint32_t map_bytes;
+    uint32_t map_entries;
+    uint32_t y_bits;
+    uint32_t uv_bits;
+    uint32_t cube_size;
+    uint32_t source_size;
+    uint32_t source_timestamp;
+    uint32_t source_name_hash;
+    uint32_t map_hash;
+};
+
+static uint32_t lut_preview_hash_bytes(uint32_t hash, const void *data,
+                                       uint32_t size)
+{
+    const uint8_t *bytes = data;
+    for (uint32_t i = 0; i < size; i++)
+    {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static uint32_t lut_preview_name_hash(const char *name)
+{
+    uint32_t hash = 2166136261u;
+    while (*name)
+    {
+        char c = *name++;
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        hash = lut_preview_hash_bytes(hash, &c, 1);
+    }
+    return hash;
+}
+
+static void lut_preview_cache_paths(const char *name, char *cache_path,
+                                    char *temp_path)
+{
+    uint32_t hash = lut_preview_name_hash(name);
+    snprintf(cache_path, FIO_MAX_PATH_LENGTH,
+             LUT_PREVIEW_DIR "L%08X.LVC", hash);
+    snprintf(temp_path, FIO_MAX_PATH_LENGTH,
+             LUT_PREVIEW_DIR "T%08X.TMP", hash);
+}
 
 static void lut_preview_disarm_pipeline(void)
 {
@@ -2499,6 +2555,8 @@ static int lut_preview_valid_filename(const char *name)
 static void lut_preview_sort_files(void)
 {
     char tmp[LUT_PREVIEW_NAME_LEN];
+    uint32_t tmp_size;
+    uint32_t tmp_timestamp;
     for (int i = 0; i < lut_preview_file_count; i++)
     {
         for (int j = i + 1; j < lut_preview_file_count; j++)
@@ -2509,6 +2567,13 @@ static void lut_preview_sort_files(void)
                 snprintf(lut_preview_names[i], LUT_PREVIEW_NAME_LEN, "%s",
                          lut_preview_names[j]);
                 snprintf(lut_preview_names[j], LUT_PREVIEW_NAME_LEN, "%s", tmp);
+                tmp_size = lut_preview_source_sizes[i];
+                lut_preview_source_sizes[i] = lut_preview_source_sizes[j];
+                lut_preview_source_sizes[j] = tmp_size;
+                tmp_timestamp = lut_preview_source_timestamps[i];
+                lut_preview_source_timestamps[i] =
+                    lut_preview_source_timestamps[j];
+                lut_preview_source_timestamps[j] = tmp_timestamp;
             }
         }
     }
@@ -2532,6 +2597,8 @@ static void lut_preview_scan_files(void)
             continue;
         snprintf(lut_preview_names[lut_preview_file_count], LUT_PREVIEW_NAME_LEN,
                  "%s", file.name);
+        lut_preview_source_sizes[lut_preview_file_count] = file.size;
+        lut_preview_source_timestamps[lut_preview_file_count] = file.timestamp;
         lut_preview_file_count++;
     }
     while (FIO_FindNextEx(dirent, &file) == 0);
@@ -2545,6 +2612,161 @@ static const char *lut_preview_selected_name(void)
     if (lut_preview < 1 || lut_preview > lut_preview_file_count)
         return "OFF";
     return lut_preview_names[lut_preview - 1];
+}
+
+static int lut_preview_load_cache(int index, uint32_t **map_out,
+                                  int *cube_size_out)
+{
+    char cache_path[FIO_MAX_PATH_LENGTH];
+    char temp_path[FIO_MAX_PATH_LENGTH];
+    struct lut_preview_cache_header header;
+    uint32_t file_size = 0;
+    uint32_t hash = 2166136261u;
+    int source = index - 1;
+    int stale = 0;
+
+    *map_out = 0;
+    *cube_size_out = 0;
+
+    if (source < 0 || source >= lut_preview_file_count)
+        return 0;
+
+    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
+    (void)temp_path;
+    if (FIO_GetFileSize(cache_path, &file_size) ||
+        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
+        return 0;
+
+    void *io = fio_malloc(LUT_PREVIEW_CACHE_IO_SIZE);
+    if (!io)
+        return 0;
+    FILE *file = FIO_OpenFile(cache_path, O_RDONLY | O_SYNC);
+    if (!file)
+    {
+        fio_free(io);
+        return 0;
+    }
+
+    if (FIO_ReadFile(file, io, sizeof(header)) != sizeof(header))
+    {
+        stale = 1;
+        goto cache_read_done;
+    }
+    memcpy(&header, io, sizeof(header));
+    if (header.magic != LUT_PREVIEW_CACHE_MAGIC ||
+        header.version != LUT_PREVIEW_CACHE_VERSION ||
+        header.header_size != sizeof(header) ||
+        header.map_bytes != LUT_PREVIEW_MAP_BYTES ||
+        header.map_entries != LUT_PREVIEW_MAP_SIZE ||
+        header.y_bits != LUT_PREVIEW_Y_BITS ||
+        header.uv_bits != LUT_PREVIEW_UV_BITS ||
+        header.cube_size < 2 || header.cube_size > LUT_PREVIEW_MAX_SIZE ||
+        header.source_size != lut_preview_source_sizes[source] ||
+        header.source_timestamp != lut_preview_source_timestamps[source] ||
+        header.source_name_hash !=
+            lut_preview_name_hash(lut_preview_names[source]))
+    {
+        stale = 1;
+        goto cache_read_done;
+    }
+
+    uint32_t *map = malloc(LUT_PREVIEW_MAP_BYTES);
+    if (!map)
+        goto cache_read_done;
+
+    uint32_t offset = 0;
+    while (offset < LUT_PREVIEW_MAP_BYTES)
+    {
+        uint32_t chunk = MIN(LUT_PREVIEW_CACHE_IO_SIZE,
+                             LUT_PREVIEW_MAP_BYTES - offset);
+        if (FIO_ReadFile(file, io, chunk) != (int)chunk)
+        {
+            stale = 1;
+            free(map);
+            map = 0;
+            break;
+        }
+        memcpy((uint8_t *)map + offset, io, chunk);
+        hash = lut_preview_hash_bytes(hash, io, chunk);
+        offset += chunk;
+    }
+
+    if (map && hash != header.map_hash)
+    {
+        stale = 1;
+        free(map);
+        map = 0;
+    }
+
+    if (map)
+    {
+        *map_out = map;
+        *cube_size_out = header.cube_size;
+    }
+
+cache_read_done:
+    FIO_CloseFile(file);
+    fio_free(io);
+    if (stale)
+        FIO_RemoveFile(cache_path);
+    return *map_out != 0;
+}
+
+static int lut_preview_save_cache(int index, const uint32_t *map,
+                                  int cube_size)
+{
+    char cache_path[FIO_MAX_PATH_LENGTH];
+    char temp_path[FIO_MAX_PATH_LENGTH];
+    uint32_t file_size = 0;
+    int source = index - 1;
+
+    if (!map || source < 0 || source >= lut_preview_file_count ||
+        cube_size < 2 || cube_size > LUT_PREVIEW_MAX_SIZE)
+        return 0;
+
+    struct lut_preview_cache_header header = {
+        .magic = LUT_PREVIEW_CACHE_MAGIC,
+        .version = LUT_PREVIEW_CACHE_VERSION,
+        .header_size = sizeof(struct lut_preview_cache_header),
+        .map_bytes = LUT_PREVIEW_MAP_BYTES,
+        .map_entries = LUT_PREVIEW_MAP_SIZE,
+        .y_bits = LUT_PREVIEW_Y_BITS,
+        .uv_bits = LUT_PREVIEW_UV_BITS,
+        .cube_size = cube_size,
+        .source_size = lut_preview_source_sizes[source],
+        .source_timestamp = lut_preview_source_timestamps[source],
+        .source_name_hash = lut_preview_name_hash(lut_preview_names[source]),
+        .map_hash = lut_preview_hash_bytes(2166136261u, map,
+                                           LUT_PREVIEW_MAP_BYTES),
+    };
+
+    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
+    FIO_RemoveFile(temp_path);
+    FILE *file = FIO_CreateFile(temp_path);
+    if (!file)
+        return 0;
+
+    int ok = FIO_WriteFile(file, &header, sizeof(header)) == sizeof(header) &&
+             FIO_WriteFile(file, map, LUT_PREVIEW_MAP_BYTES) ==
+                 (int)LUT_PREVIEW_MAP_BYTES;
+    FIO_CloseFile(file);
+
+    if (!ok || FIO_GetFileSize(temp_path, &file_size) ||
+        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
+    {
+        FIO_RemoveFile(temp_path);
+        return 0;
+    }
+
+    /* Publish only a fully written cache. A power loss can leave the temp
+     * file behind, but never a header that claims an incomplete map is valid. */
+    FIO_RemoveFile(cache_path);
+    if (FIO_RenameFile(temp_path, cache_path))
+    {
+        FIO_RemoveFile(temp_path);
+        return 0;
+    }
+    return 1;
 }
 
 static const char * lut_skip_spaces(const char *p, const char *end)
@@ -3166,7 +3388,20 @@ static void lut_preview_load_task(void *unused)
 
         uint32_t *new_map = 0;
         int new_size = 0;
-        int loaded = lut_preview_load_file(path, &new_map, &new_size);
+        int cache_hit = lut_preview_load_cache(index, &new_map, &new_size);
+        int loaded = cache_hit ||
+            lut_preview_load_file(path, &new_map, &new_size);
+        if (loaded && !cache_hit && lut_preview_pipeline_armed &&
+            !RECORDING && !RECORDING_H264_STARTING)
+        {
+            take_semaphore(lut_preview_request_sem, 0);
+            int request_still_current =
+                generation == lut_preview_request_generation &&
+                index == lut_preview_requested_index;
+            give_semaphore(lut_preview_request_sem);
+            if (request_still_current)
+                lut_preview_save_cache(index, new_map, new_size);
+        }
         /* A transition may have started while the map was compiling. Keep
          * the compiled map, but prevent display redirection until a fresh
          * set of Canon frames passes the gate again. */

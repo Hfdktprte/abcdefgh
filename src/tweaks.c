@@ -3442,21 +3442,17 @@ static int lut_preview_draw(void)
 static void lut_preview_load_task(void *unused)
 {
     (void)unused;
-    /* Core config loads after INIT_FUNC callbacks. Load persistent LUT choice
-     * only after its setting has been restored and the card is ready. */
+    /* Core config loads after INIT_FUNC callbacks. Wait for it, then override
+     * any saved LUT choice before scanning the card, allocating a map or
+     * taking display ownership. LUT Preview is intentionally session-only. */
     hold_your_horses();
+    if (!lut_preview_request_sem || !lut_preview_engine_sem)
+        return;
+    lut_preview_request_index(0, 0);
+
     /* Do not compete with the startup logo/front-buffer handoff. Large
      * 64/65-point LUTs may require several MB of card reads. */
     msleep(2500);
-    if (!lut_preview_request_sem || !lut_preview_engine_sem)
-        return;
-    /* With LUT Preview OFF, do not even scan the card. The task remains asleep
-     * until a menu selection explicitly requests a LUT. */
-    if (lut_preview)
-    {
-        lut_preview_scan_files();
-        lut_preview_request_index(lut_preview_resolve_saved_selection(), 0);
-    }
 
     uint32_t handled_generation = 0;
     TASK_LOOP

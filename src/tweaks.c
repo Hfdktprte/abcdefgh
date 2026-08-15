@@ -2630,15 +2630,24 @@ static int lut_preview_load_file(const char *path)
      * 7 MB; keeping it all in RAM made valid LUTs fail only while the menu's
      * bitmap buffers were allocated. */
     struct lut_preview_load_context ctx = { 0 };
-    char input[4096];
+    /* lut.preview.load has a 4 KB task stack. Keeping this 4 KB block local
+     * overflows that stack at boot before the ML UI replaces the logo. */
+    char *input = malloc(4096);
     char line[192];
     int line_len = 0;
     int line_overflow = 0;
     int ok = 1;
     int n;
 
+    if (!input)
+    {
+        FIO_CloseFile(file);
+        lut_preview_load_error = "Not enough memory to read LUT";
+        return 0;
+    }
+
     lut_preview_load_error = "Invalid LUT";
-    while (ok && (n = FIO_ReadFile(file, input, sizeof(input))) > 0)
+    while (ok && (n = FIO_ReadFile(file, input, 4096)) > 0)
     {
         for (int i = 0; i < n && ok; i++)
         {
@@ -2663,6 +2672,7 @@ static int lut_preview_load_file(const char *path)
     if (ok && line_len && !line_overflow)
         ok = lut_preview_parse_line(&ctx, line, line + line_len);
     FIO_CloseFile(file);
+    free(input);
 
     int source_total = ctx.source_size * ctx.source_size * ctx.source_size;
     int cube_total = ctx.cube_size * ctx.cube_size * ctx.cube_size;
@@ -2977,6 +2987,9 @@ static void lut_preview_load_task(void *unused)
     /* Core config loads after INIT_FUNC callbacks. Load persistent LUT choice
      * only after its setting has been restored and the card is ready. */
     hold_your_horses();
+    /* Do not compete with the startup logo/front-buffer handoff. Large
+     * 64/65-point LUTs may require several MB of card reads. */
+    msleep(2500);
     lut_preview_scan_files();
     if (lut_preview > lut_preview_file_count ||
         (lut_preview && !lut_preview_select_index(lut_preview, 0)))

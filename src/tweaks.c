@@ -2412,8 +2412,6 @@ static volatile int lut_preview_active = 0;
 static volatile int lut_preview_pipeline_armed = 0;
 static uint32_t lut_preview_gate_writer = 0;
 static int lut_preview_gate_frames = 0;
-static uint32_t lut_preview_observed_writer = 0;
-static uint32_t lut_preview_latest_completed = 0;
 static char lut_preview_requested_path[FIO_MAX_PATH_LENGTH];
 static char lut_preview_requested_name[LUT_PREVIEW_NAME_LEN];
 static int lut_preview_requested_notify = 0;
@@ -2546,29 +2544,6 @@ static uint32_t lut_preview_canon_writer(void)
 #endif
 }
 
-/* Canon's current EDMAC address is still being written. When it advances,
- * the previous ring member is the freshest completed frame and therefore the
- * only safe restoration/render source. */
-static uint32_t lut_preview_observe_canon_writer(void)
-{
-    /* Called from both the display worker and the vsync callback. Without a
-     * critical section, vsync can update observed_writer between the task's
-     * comparison and assignment, causing the current (still-writing) Canon
-     * buffer to be mislabeled as completed and copied as a torn frame. */
-    uint32_t irq_state = cli();
-    uint32_t writer = lut_preview_canon_writer();
-    if (writer && writer != lut_preview_observed_writer)
-    {
-        uint32_t completed = lut_preview_observed_writer;
-        lut_preview_observed_writer = writer;
-        if (completed)
-            lut_preview_latest_completed = completed;
-    }
-    uint32_t latest = lut_preview_latest_completed;
-    sei(irq_state);
-    return latest;
-}
-
 /* Readiness is evidence-based, not a boot timeout: after every boot, menu,
  * zoom or recording transition, wait for Crop Rec to finish and then observe
  * three distinct completed Canon YUV frames before redirecting the LCD. */
@@ -2598,7 +2573,6 @@ static void lut_preview_update_pipeline_gate(void)
         return;
 
     uint32_t writer = lut_preview_canon_writer();
-    lut_preview_observe_canon_writer();
     if (!writer)
     {
         lut_preview_disarm_pipeline();
@@ -3422,23 +3396,15 @@ static int lut_preview_draw(void)
      * halfway through a slow render and create horizontal mixed-frame bands. */
     memcpy(dst_buf, src_buf, 720 * 480 * 2);
 
-    /* Convert Canon's active overlay rectangle to normalized 720x480 buffer
-     * coordinates. This excludes both letterbox and 4:3 pillarbox regions;
-     * the full snapshot above preserves them without wasting LUT lookups. */
-    int y_skip_bm = COERCE(get_y_skip_offset_for_histogram(), 0, os.y_ex / 2);
-    int x_skip_bm = is_movie_mode() && video_mode_resolution >= 2 ?
-                    os.off_43 : 0;
-    int y_start = COERCE(BM2N_Y(os.y0 + y_skip_bm), 0, 480);
-    int y_end = COERCE(BM2N_Y(os.y_max - y_skip_bm), 0, 480);
-    int x_start = COERCE(BM2N_X(os.x0 + x_skip_bm), 0, 720) / 2;
-    int x_end = COERCE(BM2N_X(os.x_max - x_skip_bm), 0, 720) / 2;
-    x_start = (x_start + 3) & ~3;
-    x_end &= ~3;
-    for (int y = y_start; y < y_end; y++)
+    /* Preserve Canon's letterbox rows, but process the complete width. This
+     * is the proven EOS M path; inferred side-bar bounds can leave part of a
+     * frame stale when Crop Rec changes preview geometry. */
+    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
+    for (int y = y_skip; y < 480 - y_skip; y++)
     {
         uint32_t *dst = &dst_buf[LV(0, y) / 4];
         /* Four UYVY pairs per iteration: fewer branches and address updates. */
-        for (int x = x_start; x < x_end; x += 4)
+        for (int x = 0; x < 720 / 2; x += 4)
         {
             dst[x + 0] = lut_preview_map_pair(map, dst[x + 0]);
             dst[x + 1] = lut_preview_map_pair(map, dst[x + 1]);
@@ -3459,12 +3425,9 @@ static int lut_preview_draw(void)
         }
     }
 
-    /* Display hardware reads physical RAM. Keep interrupts from dirtying an
-     * already-cleaned cache set before this complete frame is queued. Unlike
-     * sync_caches(), this does not flush the instruction cache every frame. */
-    uint32_t irq_state = cli();
-    _clean_d_cache();
-    sei(irq_state);
+    /* Use the established display-filter cache barrier. EOS M's LUT output
+     * showed stale lower scanlines with the lighter D-cache-only handoff. */
+    sync_caches();
     if (request_generation != lut_preview_request_generation ||
         !lut_preview_should_render() || !display_filter_queue_lut_buffer())
     {
@@ -4604,10 +4567,7 @@ static void* display_filter_buffer_unaligned = 0;
 static void* display_filter_buffer = 0;
 static void* lut_preview_buffer_unaligned = 0;
 static void* lut_preview_back_buffer = 0;
-/* Exact LCD route observed immediately before ML redirects the display.
- * This is deliberately separate from latest_completed, which is a safe copy
- * source but may be Canon's active DMA ring and must not be used as a route. */
-static void* display_filter_canon_route = 0;
+static void* last_canon_buffer = 0;
 static volatile int lut_preview_frame_pending = 0;
 static volatile int display_filter_release_requested = 0;
 static volatile int display_filter_release_ack = 0;
@@ -4654,10 +4614,11 @@ static int display_filter_valid_image = 0;
 static void lut_preview_release_display(void)
 {
 #ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
-    /* Request only. Pending/valid flags and the LCD route are owned solely by
-     * the vsync callback, so a GUI/loader task can never tear a scanout. */
+    /* Stop publishing immediately; vsync performs the route handoff. This is
+     * the established display-filter release sequence on EOS M. */
+    lut_preview_frame_pending = 0;
+    display_filter_valid_image = 0;
     display_filter_release_requested = 1;
-    display_filter_release_ack = 0;
 #endif
 }
 
@@ -4668,8 +4629,29 @@ void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
     //~ void* src = (void*)vram->vram;
     //~ void* dst = src_buf + buf_size;
 #if defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY)
-    
-    *src_buf = (uint32_t *)lut_preview_observe_canon_writer();
+
+    /* EDMAC is updating current; the preceding ring member is complete. Keep
+     * this tracker local to the display worker, as in the proven ML path. */
+    static void* prev = 0;
+    static void* buff = 0;
+    void* current = (void*)shamem_read(REG_EDMAC_WRITE_LV_ADDR);
+    int c = (int)current;
+    int b1 = (int)CACHEABLE(YUV422_LV_BUFFER_1);
+    int b2 = (int)CACHEABLE(YUV422_LV_BUFFER_2);
+    int b3 = (int)CACHEABLE(YUV422_LV_BUFFER_3);
+    #ifdef YUV422_LV_BUFFER_4
+    int b4 = (int)CACHEABLE(YUV422_LV_BUFFER_4);
+    #endif
+    if (ABS(c - b1) < 200000) current = (void*)b1;
+    else if (ABS(c - b2) < 200000) current = (void*)b2;
+    else if (ABS(c - b3) < 200000) current = (void*)b3;
+    #ifdef YUV422_LV_BUFFER_4
+    else if (ABS(c - b4) < 200000) current = (void*)b4;
+    #endif
+    if (current != prev)
+        buff = prev;
+    prev = current;
+    *src_buf = buff;
     *dst_buf = CACHEABLE(display_filter_buffer);
 #else // just use some reasonable defaults that won't crash the camera
     *src_buf = CACHEABLE(YUV422_LV_BUFFER_1);
@@ -4779,35 +4761,25 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
     }
 #elif defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY) // all new cameras should work with this method
 
-    lut_preview_observe_canon_writer();
     if (!display_filter_buffer) return CBR_RET_CONTINUE;
-    if (display_filter_release_requested || !display_filter_enabled())
+    if (!display_filter_enabled())
     {
         /* Recording and x10 may put the normal overlay worker to sleep. Do
          * not leave the last LUT output routed merely because task cleanup
          * has not run yet; hand display ownership back to Canon at vsync. */
         void *shown = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
-        /* Restore Canon's actual LCD route, not an EDMAC copy-source buffer.
-         * Routing the LCD to the latter pins scanout to a buffer Canon may be
-         * rewriting, which leaves tearing behind even after LUT is OFF. */
-        void *restore = display_filter_canon_route;
-        if (display_filter_is_our_buffer(shown) && restore &&
-            !display_filter_is_our_buffer(restore))
-            YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)restore;
+        if (display_filter_is_our_buffer(shown) && last_canon_buffer)
+            YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
         lut_preview_frame_pending = 0;
         display_filter_valid_image = 0;
         lut_preview_last_source = 0;
         display_filter_release_ack =
             !display_filter_is_our_buffer(
                 (void *)YUV422_LV_BUFFER_DISPLAY_ADDR);
-        if (display_filter_release_ack)
-        {
-            display_filter_release_requested = 0;
-            display_filter_canon_route = 0;
-        }
         return CBR_RET_CONTINUE;
     }
 
+    display_filter_release_requested = 0;
     display_filter_release_ack = 0;
 
     /* Publish only completed LUT frames, and recycle the old front only from
@@ -4822,11 +4794,10 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
     }
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
 
-    /* Capture the live Canon route at the last possible moment before the
-     * first redirect. Never overwrite it with either ML front/back buffer. */
-    void *current_route = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
+    /* Save Canon's route so disabling the filter restores normal LiveView. */
+    void *current_route = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
     if (!display_filter_is_our_buffer(current_route))
-        display_filter_canon_route = current_route;
+        last_canon_buffer = current_route;
 
     /* switch the displayed buffer to our filtered image */
     YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) display_filter_buffer;
@@ -4889,6 +4860,10 @@ void display_filter_step(int k)
         display_filter_release_ack = 0;
     }
     #endif
+
+    /* Preserve the proven display-filter cadence. Running immediately after
+     * every wake can repeatedly collide with Canon's scanout schedule. */
+    msleep(20);
     
     //~ if (!HALFSHUTTER_PRESSED) return;
     

@@ -2551,14 +2551,22 @@ static uint32_t lut_preview_canon_writer(void)
  * only safe restoration/render source. */
 static uint32_t lut_preview_observe_canon_writer(void)
 {
+    /* Called from both the display worker and the vsync callback. Without a
+     * critical section, vsync can update observed_writer between the task's
+     * comparison and assignment, causing the current (still-writing) Canon
+     * buffer to be mislabeled as completed and copied as a torn frame. */
+    uint32_t irq_state = cli();
     uint32_t writer = lut_preview_canon_writer();
     if (writer && writer != lut_preview_observed_writer)
     {
-        if (lut_preview_observed_writer)
-            lut_preview_latest_completed = lut_preview_observed_writer;
+        uint32_t completed = lut_preview_observed_writer;
         lut_preview_observed_writer = writer;
+        if (completed)
+            lut_preview_latest_completed = completed;
     }
-    return lut_preview_latest_completed;
+    uint32_t latest = lut_preview_latest_completed;
+    sei(irq_state);
+    return latest;
 }
 
 /* Readiness is evidence-based, not a boot timeout: after every boot, menu,
@@ -3451,9 +3459,12 @@ static int lut_preview_draw(void)
         }
     }
 
-    /* Display hardware reads physical RAM. Drain dirty D-cache lines before
-     * the vsync presenter is allowed to route this completed frame. */
+    /* Display hardware reads physical RAM. Keep interrupts from dirtying an
+     * already-cleaned cache set before this complete frame is queued. Unlike
+     * sync_caches(), this does not flush the instruction cache every frame. */
+    uint32_t irq_state = cli();
     _clean_d_cache();
+    sei(irq_state);
     if (request_generation != lut_preview_request_generation ||
         !lut_preview_should_render() || !display_filter_queue_lut_buffer())
     {

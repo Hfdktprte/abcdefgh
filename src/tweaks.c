@@ -43,7 +43,7 @@ static void warn_step();
 extern void display_gain_toggle(void* priv, int delta);
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf);
 static uint32_t *display_filter_get_lut_back_buffer(void);
-static void display_filter_swap_lut_buffers(void);
+static int display_filter_queue_lut_buffer(void);
 
 #ifdef FEATURE_ZOOM_TRICK_5D3 // not reliable
 void zoom_trick_step();
@@ -2383,7 +2383,6 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 #define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
 #define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)
 
-static uint16_t *lut_preview_data = 0;
 static int lut_preview_size = 0;
 static uint32_t *lut_preview_yuv_map = 0;
 static char lut_preview_names[LUT_PREVIEW_MAX_FILES][LUT_PREVIEW_NAME_LEN];
@@ -2392,8 +2391,17 @@ static int lut_preview_files_scanned = 0;
 static int lut_preview_loaded_index = 0;
 static void *lut_preview_last_source = 0;
 static const char *lut_preview_load_error = "Invalid LUT";
+static struct semaphore *lut_preview_request_sem = 0;
+static struct semaphore *lut_preview_engine_sem = 0;
+static volatile uint32_t lut_preview_request_generation = 0;
+static volatile uint32_t lut_preview_active_generation = 0;
+static volatile int lut_preview_requested_index = 0;
+static volatile int lut_preview_active = 0;
+static char lut_preview_requested_path[FIO_MAX_PATH_LENGTH];
+static char lut_preview_requested_name[LUT_PREVIEW_NAME_LEN];
+static int lut_preview_requested_notify = 0;
 
-static int lut_preview_build_yuv_map(void);
+static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size);
 
 static int lut_preview_valid_filename(const char *name)
 {
@@ -2620,8 +2628,11 @@ static int lut_preview_parse_line(struct lut_preview_load_context *ctx,
     return 1;
 }
 
-static int lut_preview_load_file(const char *path)
+static int lut_preview_load_file(const char *path, uint32_t **map_out,
+                                 int *cube_size_out)
 {
+    *map_out = 0;
+    *cube_size_out = 0;
     FILE *file = FIO_OpenFile(path, O_RDONLY | O_SYNC);
     if (!file)
     {
@@ -2687,61 +2698,66 @@ static int lut_preview_load_file(const char *path)
         return 0;
     }
 
-    if (lut_preview_data) free(lut_preview_data);
-    lut_preview_data = ctx.data;
-    lut_preview_size = ctx.cube_size;
-    if (!lut_preview_build_yuv_map())
+    uint32_t *map = lut_preview_build_yuv_map(ctx.data, ctx.cube_size);
+    if (!map)
     {
-        free(lut_preview_data);
-        lut_preview_data = 0;
-        lut_preview_size = 0;
+        free(ctx.data);
         lut_preview_load_error = "Not enough memory for LUT map";
         return 0;
     }
 
-    /* Runtime uses the precomputed YUV map; release the temporary cube. */
-    free(lut_preview_data);
-    lut_preview_data = 0;
+    /* Runtime uses the immutable precomputed YUV map. The parsed cube is
+     * private to this loader generation and can be released immediately. */
+    free(ctx.data);
+    *map_out = map;
+    *cube_size_out = ctx.cube_size;
     return 1;
 }
 
 int lut_preview_is_ready(void)
 {
-    return lut_preview && lut_preview == lut_preview_loaded_index &&
-           lut_preview_yuv_map && lut_preview_size >= 2;
+    return lut_preview && lut_preview_active && lut_preview_yuv_map &&
+           lut_preview_size >= 2 &&
+           lut_preview_active_generation == lut_preview_request_generation;
 }
 
-static int lut_preview_select_index(int index, int notify_error)
+static void lut_preview_request_index(int index, int notify_error)
 {
     if (!lut_preview_files_scanned)
         lut_preview_scan_files();
 
     index = COERCE(index, 0, lut_preview_file_count);
-    if (!index)
-    {
-        lut_preview = 0;
-        lut_preview_loaded_index = 0;
-        lut_preview_last_source = 0;
-        lens_display_set_dirty();
-        return 1;
-    }
-
-    char path[FIO_MAX_PATH_LENGTH];
-    snprintf(path, sizeof(path), LUT_PREVIEW_DIR "%s",
-             lut_preview_names[index - 1]);
-    if (!lut_preview_load_file(path))
-    {
-        if (notify_error)
-            NotifyBox(3000, "%s:\n%s", lut_preview_load_error,
-                      lut_preview_names[index - 1]);
-        return 0;
-    }
+    if (lut_preview_request_sem)
+        take_semaphore(lut_preview_request_sem, 0);
 
     lut_preview = index;
-    lut_preview_loaded_index = index;
-    lut_preview_last_source = 0;
+    lut_preview_requested_index = index;
+    lut_preview_requested_notify = notify_error;
+    /* Invalidate the old generation immediately. The loader may still parse
+     * or compile it, but neither that work nor an old rendered frame can be
+     * published for the newly selected menu item. */
+    lut_preview_active = 0;
+    if (!index)
+    {
+        lut_preview_last_source = 0;
+        lut_preview_requested_path[0] = '\0';
+        lut_preview_requested_name[0] = '\0';
+        lut_preview_request_generation++;
+        if (lut_preview_request_sem)
+            give_semaphore(lut_preview_request_sem);
+        lens_display_set_dirty();
+        return;
+    }
+
+    snprintf(lut_preview_requested_path, sizeof(lut_preview_requested_path),
+             LUT_PREVIEW_DIR "%s",
+             lut_preview_names[index - 1]);
+    snprintf(lut_preview_requested_name, sizeof(lut_preview_requested_name),
+             "%s", lut_preview_names[index - 1]);
+    lut_preview_request_generation++;
+    if (lut_preview_request_sem)
+        give_semaphore(lut_preview_request_sem);
     lens_display_set_dirty();
-    return 1;
 }
 
 void lut_preview_toggle(void *priv, int delta)
@@ -2750,7 +2766,7 @@ void lut_preview_toggle(void *priv, int delta)
     lut_preview_scan_files();
     if (!lut_preview_file_count)
     {
-        lut_preview_select_index(0, 0);
+        lut_preview_request_index(0, 0);
         NotifyBox(3000, "Copy up to 5 .cube LUTs to " LUT_PREVIEW_DIR);
         return;
     }
@@ -2758,7 +2774,7 @@ void lut_preview_toggle(void *priv, int delta)
     int direction = delta < 0 ? -1 : 1;
     int next = MOD(COERCE(lut_preview, 0, lut_preview_file_count) + direction,
                    lut_preview_file_count + 1);
-    lut_preview_select_index(next, 1);
+    lut_preview_request_index(next, 1);
 }
 
 MENU_UPDATE_FUNC(lut_preview_menu_update)
@@ -2766,31 +2782,33 @@ MENU_UPDATE_FUNC(lut_preview_menu_update)
     if (!lut_preview_files_scanned)
         lut_preview_scan_files();
     if (lut_preview > lut_preview_file_count)
-        lut_preview_select_index(0, 0);
+        lut_preview_request_index(0, 0);
     MENU_SET_VALUE("%s", lut_preview_selected_name());
     if (!lut_preview_file_count)
         MENU_SET_WARNING(MENU_WARN_INFO, "Copy up to 5 standard .cube LUTs to ML/LUTS.");
 }
 
-static inline int lut_preview_cube_value(int ri, int gi, int bi, int channel)
+static inline int lut_preview_cube_value(const uint16_t *cube, int cube_size,
+                                         int ri, int gi, int bi, int channel)
 {
-    int index = ((bi * lut_preview_size + gi) * lut_preview_size + ri) * 3;
-    return lut_preview_data[index + channel];
+    int index = ((bi * cube_size + gi) * cube_size + ri) * 3;
+    return cube[index + channel];
 }
 
 /* Trilinear interpolation is done once while loading, never per frame. */
 static inline int lut_preview_interpolate_channel(
+    const uint16_t *cube, int cube_size,
     int r0, int r1, int rf, int g0, int g1, int gf,
     int b0, int b1, int bf, int channel)
 {
-    int c000 = lut_preview_cube_value(r0, g0, b0, channel);
-    int c100 = lut_preview_cube_value(r1, g0, b0, channel);
-    int c010 = lut_preview_cube_value(r0, g1, b0, channel);
-    int c110 = lut_preview_cube_value(r1, g1, b0, channel);
-    int c001 = lut_preview_cube_value(r0, g0, b1, channel);
-    int c101 = lut_preview_cube_value(r1, g0, b1, channel);
-    int c011 = lut_preview_cube_value(r0, g1, b1, channel);
-    int c111 = lut_preview_cube_value(r1, g1, b1, channel);
+    int c000 = lut_preview_cube_value(cube, cube_size, r0, g0, b0, channel);
+    int c100 = lut_preview_cube_value(cube, cube_size, r1, g0, b0, channel);
+    int c010 = lut_preview_cube_value(cube, cube_size, r0, g1, b0, channel);
+    int c110 = lut_preview_cube_value(cube, cube_size, r1, g1, b0, channel);
+    int c001 = lut_preview_cube_value(cube, cube_size, r0, g0, b1, channel);
+    int c101 = lut_preview_cube_value(cube, cube_size, r1, g0, b1, channel);
+    int c011 = lut_preview_cube_value(cube, cube_size, r0, g1, b1, channel);
+    int c111 = lut_preview_cube_value(cube, cube_size, r1, g1, b1, channel);
 
     int c00 = c000 + (((c100 - c000) * rf + 128) >> 8);
     int c10 = c010 + (((c110 - c010) * rf + 128) >> 8);
@@ -2801,9 +2819,11 @@ static inline int lut_preview_interpolate_channel(
     return c0 + (((c1 - c0) * bf + 128) >> 8);
 }
 
-static inline void lut_preview_apply_rgb(int r, int g, int b, int *out_r, int *out_g, int *out_b)
+static inline void lut_preview_apply_rgb(const uint16_t *cube, int cube_size,
+                                         int r, int g, int b,
+                                         int *out_r, int *out_g, int *out_b)
 {
-    int n = lut_preview_size - 1;
+    int n = cube_size - 1;
     int rc = r * n * 256 / 255;
     int gc = g * n * 256 / 255;
     int bc = b * n * 256 / 255;
@@ -2817,15 +2837,18 @@ static inline void lut_preview_apply_rgb(int r, int g, int b, int *out_r, int *o
     int gf = g0 == n ? 0 : (gc & 0xFF);
     int bf = b0 == n ? 0 : (bc & 0xFF);
 
-    int lr = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 0);
-    int lg = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 1);
-    int lb = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 2);
+    int lr = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
+                                              g0, g1, gf, b0, b1, bf, 0);
+    int lg = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
+                                              g0, g1, gf, b0, b1, bf, 1);
+    int lb = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
+                                              g0, g1, gf, b0, b1, bf, 2);
     *out_r = COERCE((lr * 255 + 2048) / 4096, 0, 255);
     *out_g = COERCE((lg * 255 + 2048) / 4096, 0, 255);
     *out_b = COERCE((lb * 255 + 2048) / 4096, 0, 255);
 }
 
-static int lut_preview_build_yuv_map(void)
+static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size)
 {
     uint32_t *map = malloc(LUT_PREVIEW_MAP_SIZE * sizeof(*map));
     if (!map) return 0;
@@ -2846,33 +2869,33 @@ static int lut_preview_build_yuv_map(void)
                             (1 << (7 - LUT_PREVIEW_Y_BITS)), 255);
                 int r, g, b, lr, lg, lb;
                 yuv2rgb(y, u, v, &r, &g, &b);
-                lut_preview_apply_rgb(r, g, b, &lr, &lg, &lb);
+                lut_preview_apply_rgb(cube, cube_size, r, g, b,
+                                      &lr, &lg, &lb);
                 int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
                 map[index] = rgb2yuv422(lr, lg, lb);
             }
         }
     }
 
-    if (lut_preview_yuv_map) free(lut_preview_yuv_map);
-    lut_preview_yuv_map = map;
-    return 1;
+    return map;
 }
 
-static inline uint32_t lut_preview_map_pixel(int y, int u, int v)
+static inline int lut_preview_map_base(int u, int v)
 {
-    int yi = y >> (8 - LUT_PREVIEW_Y_BITS);
     int ui = u >> (8 - LUT_PREVIEW_UV_BITS);
     int vi = v >> (8 - LUT_PREVIEW_UV_BITS);
-    int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
-    return lut_preview_yuv_map[index];
+    return (vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE;
 }
 
-static inline uint32_t lut_preview_map_pair(uint32_t in)
+static inline uint32_t lut_preview_map_pair(const uint32_t *map, uint32_t in)
 {
     int u = UYVY_GET_U(in);
     int v = UYVY_GET_V(in);
-    uint32_t out1 = lut_preview_map_pixel((in >> 8) & 0xFF, u, v);
-    uint32_t out2 = lut_preview_map_pixel((in >> 24) & 0xFF, u, v);
+    int base = lut_preview_map_base(u, v);
+    uint32_t out1 = map[base + (((in >> 8) & 0xFF) >>
+                                (8 - LUT_PREVIEW_Y_BITS))];
+    uint32_t out2 = map[base + (((in >> 24) & 0xFF) >>
+                                (8 - LUT_PREVIEW_Y_BITS))];
     int out_u = ((int8_t)UYVY_GET_U(out1) + (int8_t)UYVY_GET_U(out2)) / 2;
     int out_v = ((int8_t)UYVY_GET_V(out1) + (int8_t)UYVY_GET_V(out2)) / 2;
     return UYVY_PACK(out_u, (out1 >> 8) & 0xFF,
@@ -2908,36 +2931,66 @@ static int lut_preview_draw(void)
 
     uint32_t *dst_buf = display_filter_get_lut_back_buffer();
     if (!dst_buf) return 0;
-    lut_preview_last_source = src_buf;
 
     src_buf = CACHEABLE(src_buf);
     dst_buf = CACHEABLE(dst_buf);
 
-    /* Preserve Canon's top/bottom letterbox rows without wasting LUT lookups.
-     * The completed hidden frame is swapped only after every active row is done. */
-    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
-    for (int y = 0; y < y_skip; y++)
+    if (!lut_preview_engine_sem) return 0;
+    take_semaphore(lut_preview_engine_sem, 0);
+    uint32_t *map = lut_preview_yuv_map;
+    uint32_t request_generation = lut_preview_request_generation;
+    int zoom_state = lv_dispsize;
+    int recording_state = RECORDING_STATE;
+    if (!map || !lut_preview_should_render())
     {
-        memcpy(&dst_buf[LV(0, y) / 4], &src_buf[LV(0, y) / 4], 720 * 2);
-        int bottom = 479 - y;
-        memcpy(&dst_buf[LV(0, bottom) / 4],
-               &src_buf[LV(0, bottom) / 4], 720 * 2);
+        give_semaphore(lut_preview_engine_sem);
+        return 0;
     }
 
+    /* Snapshot Canon's completed frame into the confirmed-free output buffer.
+     * The LUT pass then works in place, so Canon cannot recycle the source
+     * halfway through a slow render and create horizontal mixed-frame bands. */
+    memcpy(dst_buf, src_buf, 720 * 480 * 2);
+
+    /* The full snapshot already preserves Canon's bars. Transform only the
+     * image rows and leave those bars untouched. */
+    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
     for (int y = y_skip; y < 480 - y_skip; y++)
     {
-        uint32_t *src = &src_buf[LV(0, y) / 4];
         uint32_t *dst = &dst_buf[LV(0, y) / 4];
         /* Four UYVY pairs per iteration: fewer branches and address updates. */
         for (int x = 0; x < 720 / 2; x += 4)
         {
-            dst[x + 0] = lut_preview_map_pair(src[x + 0]);
-            dst[x + 1] = lut_preview_map_pair(src[x + 1]);
-            dst[x + 2] = lut_preview_map_pair(src[x + 2]);
-            dst[x + 3] = lut_preview_map_pair(src[x + 3]);
+            dst[x + 0] = lut_preview_map_pair(map, dst[x + 0]);
+            dst[x + 1] = lut_preview_map_pair(map, dst[x + 1]);
+            dst[x + 2] = lut_preview_map_pair(map, dst[x + 2]);
+            dst[x + 3] = lut_preview_map_pair(map, dst[x + 3]);
+        }
+
+        /* Abort stale work promptly during REC, zoom, menu or LUT changes.
+         * Never publish a frame produced for an old display generation. */
+        if ((y & 15) == 15 &&
+            (request_generation != lut_preview_request_generation ||
+             zoom_state != lv_dispsize ||
+             recording_state != RECORDING_STATE ||
+             !lut_preview_should_render()))
+        {
+            give_semaphore(lut_preview_engine_sem);
+            return 0;
         }
     }
-    display_filter_swap_lut_buffers();
+
+    /* Display hardware reads physical RAM. Drain dirty D-cache lines before
+     * the vsync presenter is allowed to route this completed frame. */
+    sync_caches();
+    if (request_generation != lut_preview_request_generation ||
+        !lut_preview_should_render() || !display_filter_queue_lut_buffer())
+    {
+        give_semaphore(lut_preview_engine_sem);
+        return 0;
+    }
+    lut_preview_last_source = src_buf;
+    give_semaphore(lut_preview_engine_sem);
     return 1;
 }
 
@@ -2950,10 +3003,94 @@ static void lut_preview_load_task(void *unused)
     /* Do not compete with the startup logo/front-buffer handoff. Large
      * 64/65-point LUTs may require several MB of card reads. */
     msleep(2500);
+    if (!lut_preview_request_sem || !lut_preview_engine_sem)
+        return;
     lut_preview_scan_files();
-    if (lut_preview > lut_preview_file_count ||
-        (lut_preview && !lut_preview_select_index(lut_preview, 0)))
-        lut_preview_select_index(0, 0);
+    if (lut_preview > lut_preview_file_count)
+        lut_preview = 0;
+    lut_preview_request_index(lut_preview, 0);
+
+    uint32_t handled_generation = 0;
+    TASK_LOOP
+    {
+        uint32_t generation;
+        int index;
+        int notify_error;
+        char path[FIO_MAX_PATH_LENGTH];
+        char name[LUT_PREVIEW_NAME_LEN];
+
+        take_semaphore(lut_preview_request_sem, 0);
+        generation = lut_preview_request_generation;
+        index = lut_preview_requested_index;
+        notify_error = lut_preview_requested_notify;
+        snprintf(path, sizeof(path), "%s", lut_preview_requested_path);
+        snprintf(name, sizeof(name), "%s", lut_preview_requested_name);
+        give_semaphore(lut_preview_request_sem);
+
+        if (generation == handled_generation)
+        {
+            msleep(20);
+            continue;
+        }
+        handled_generation = generation;
+        if (!index)
+            continue;
+
+        take_semaphore(lut_preview_engine_sem, 0);
+        int already_loaded = index == lut_preview_loaded_index &&
+                             lut_preview_yuv_map != 0;
+        if (already_loaded)
+        {
+            lut_preview_active = 1;
+            lut_preview_active_generation = generation;
+            lut_preview_last_source = 0;
+        }
+        give_semaphore(lut_preview_engine_sem);
+        if (already_loaded)
+            continue;
+
+        uint32_t *new_map = 0;
+        int new_size = 0;
+        int loaded = lut_preview_load_file(path, &new_map, &new_size);
+
+        /* Serialize the final generation check with new GUI requests, then
+         * commit the immutable map while no renderer can retain the old one. */
+        take_semaphore(lut_preview_request_sem, 0);
+        if (generation != lut_preview_request_generation ||
+            index != lut_preview_requested_index)
+        {
+            give_semaphore(lut_preview_request_sem);
+            if (new_map) free(new_map);
+            continue;
+        }
+
+        take_semaphore(lut_preview_engine_sem, 0);
+
+        if (!loaded)
+        {
+            lut_preview_active = 0;
+            lut_preview_last_source = 0;
+            give_semaphore(lut_preview_engine_sem);
+            give_semaphore(lut_preview_request_sem);
+            if (notify_error)
+                NotifyBox(3000, "%s:\n%s", lut_preview_load_error, name);
+            continue;
+        }
+
+        /* Transactional generation handoff. The render semaphore guarantees
+         * that no frame can retain the old map after this pointer swap. */
+        uint32_t *old_map = lut_preview_yuv_map;
+        lut_preview_yuv_map = new_map;
+        lut_preview_size = new_size;
+        lut_preview_loaded_index = index;
+        lut_preview_last_source = 0;
+        lut_preview_active_generation = generation;
+        lut_preview_active = 1;
+        give_semaphore(lut_preview_engine_sem);
+        give_semaphore(lut_preview_request_sem);
+        if (old_map) free(old_map);
+        lens_display_set_dirty();
+    }
 }
 
 TASK_CREATE("lut.preview.load", lut_preview_load_task, 0, 0x1f, 0x1000);
@@ -3903,6 +4040,9 @@ static void* display_filter_buffer = 0;
 static void* lut_preview_buffer_unaligned = 0;
 static void* lut_preview_back_buffer = 0;
 static void* last_canon_buffer = 0;
+static volatile int lut_preview_frame_pending = 0;
+static volatile int display_filter_release_requested = 0;
+static volatile int display_filter_release_ack = 0;
 
 static int display_filter_is_our_buffer(void *buffer)
 {
@@ -3914,6 +4054,10 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
 {
     if (!display_filter_buffer)
         return 0;
+    /* A completed back buffer is waiting for vsync. It is not writable until
+     * the presenter has installed it and released the previous front. */
+    if (lut_preview_frame_pending)
+        return 0;
     if (!lut_preview_back_buffer)
     {
         lut_preview_buffer_unaligned = malloc(720 * 480 * 2 + 32);
@@ -3924,17 +4068,17 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
     return CACHEABLE(lut_preview_back_buffer);
 }
 
-static void display_filter_swap_lut_buffers(void)
+static int display_filter_queue_lut_buffer(void)
 {
-    if (!display_filter_buffer || !lut_preview_back_buffer)
-        return;
-    void *old_front = display_filter_buffer;
-    display_filter_buffer = lut_preview_back_buffer;
-    lut_preview_back_buffer = old_front;
+    if (!display_filter_buffer || !lut_preview_back_buffer ||
+        lut_preview_frame_pending)
+        return 0;
+    lut_preview_frame_pending = 1;
+    return 1;
 }
 #else
 static uint32_t *display_filter_get_lut_back_buffer(void) { return 0; }
-static void display_filter_swap_lut_buffers(void) {}
+static int display_filter_queue_lut_buffer(void) { return 0; }
 #endif
 
 static int display_filter_valid_image = 0;
@@ -4091,9 +4235,28 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
         void *shown = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
         if (display_filter_is_our_buffer(shown) && last_canon_buffer)
             YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
+        lut_preview_frame_pending = 0;
         display_filter_valid_image = 0;
         lut_preview_last_source = 0;
+        display_filter_release_requested = 1;
+        display_filter_release_ack =
+            !display_filter_is_our_buffer(
+                (void *)YUV422_LV_BUFFER_DISPLAY_ADDR);
         return CBR_RET_CONTINUE;
+    }
+
+    display_filter_release_requested = 0;
+    display_filter_release_ack = 0;
+
+    /* Publish only completed LUT frames, and recycle the old front only from
+     * this vsync callback. The render task never swaps display ownership. */
+    if (lut_preview_frame_pending && lut_preview_should_render())
+    {
+        void *old_front = display_filter_buffer;
+        display_filter_buffer = lut_preview_back_buffer;
+        lut_preview_back_buffer = old_front;
+        lut_preview_frame_pending = 0;
+        display_filter_valid_image = 1;
     }
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
     
@@ -4114,14 +4277,24 @@ void display_filter_step(int k)
     if (!display_filter_enabled())
     {
         #ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
-        /* for new cameras: if there are no more display filters active, free the output buffer */
+        /* First return display ownership at vsync. Never free memory that the
+         * LCD may still be scanning from the previous frame. */
         if (display_filter_buffer)
         {
             if (display_filter_is_our_buffer(
                     (void *)YUV422_LV_BUFFER_DISPLAY_ADDR))
             {
-                YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) last_canon_buffer;
+                display_filter_release_requested = 1;
+                display_filter_release_ack = 0;
+                return;
             }
+
+            if (display_filter_release_requested &&
+                !display_filter_release_ack)
+                return;
+
+            if (lut_preview_engine_sem)
+                take_semaphore(lut_preview_engine_sem, 0);
             free(display_filter_buffer_unaligned);
             if (lut_preview_buffer_unaligned)
                 free(lut_preview_buffer_unaligned);
@@ -4130,6 +4303,11 @@ void display_filter_step(int k)
             lut_preview_back_buffer = 0;
             lut_preview_buffer_unaligned = 0;
             lut_preview_last_source = 0;
+            lut_preview_frame_pending = 0;
+            display_filter_release_requested = 0;
+            display_filter_release_ack = 0;
+            if (lut_preview_engine_sem)
+                give_semaphore(lut_preview_engine_sem);
         }
         #endif
         return;
@@ -4142,6 +4320,10 @@ void display_filter_step(int k)
         /* some routines (e.g. defishing) use 64-bit operations, so allocate a bit more and align the buffer */
         display_filter_buffer_unaligned = malloc(720*480*2 + 32);
         display_filter_buffer = ALIGN64SUP(display_filter_buffer_unaligned);
+        display_filter_valid_image = 0;
+        lut_preview_frame_pending = 0;
+        display_filter_release_requested = 0;
+        display_filter_release_ack = 0;
     }
     #endif
     
@@ -4149,17 +4331,23 @@ void display_filter_step(int k)
     
     //~ if (!HALFSHUTTER_PRESSED) return;
     
+    int filter_frame_completed = 0;
+    int lut_frame_queued = 0;
+
     #ifdef CONFIG_MODULES
     if (module_display_filter_update())
     {
+        filter_frame_completed = 1;
     }
     else
     #endif
-
     if (lut_preview_should_render())
     {
         if (k % 1 == 0)
-            lut_preview_draw();
+        {
+            lut_frame_queued = lut_preview_draw();
+            filter_frame_completed = lut_frame_queued;
+        }
     }
     else
 
@@ -4167,7 +4355,10 @@ void display_filter_step(int k)
     if (defish_preview)
     {
         if (k % 2 == 0)
+        {
             BMP_LOCK( if (lv) defish_draw_lv_color(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     
@@ -4175,7 +4366,10 @@ void display_filter_step(int k)
     if (anamorphic_preview)
     {
         if (k % 1 == 0)
+        {
             BMP_LOCK( if (lv) anamorphic_squeeze(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     
@@ -4183,13 +4377,19 @@ void display_filter_step(int k)
     if (focus_peaking_as_display_filter())
     {
         if (k % 1 == 0)
+        {
             BMP_LOCK( if (lv) peak_disp_filter(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     {
     }
     
-    display_filter_valid_image = 1;
+    /* LUT frames become valid only in the vsync presenter after the pending
+     * buffer is installed. Legacy filters still draw directly into front. */
+    if (filter_frame_completed && !lut_frame_queued)
+        display_filter_valid_image = 1;
 }
 #endif
 
@@ -4709,6 +4909,14 @@ static struct menu_entry play_menus[] = {
 
 static void tweak_init()
 {
+    /* GUI requests never wait for a frame render or LUT compilation. The
+     * short request lock and the engine ownership lock are deliberately
+     * separate and are created before the asynchronous loader is released. */
+    if (!lut_preview_request_sem)
+        lut_preview_request_sem = create_named_semaphore("lut_request", 1);
+    if (!lut_preview_engine_sem)
+        lut_preview_engine_sem = create_named_semaphore("lut_engine", 1);
+
 #ifdef CONFIG_SLIM_MENUS
     #ifdef FEATURE_ANAMORPHIC_PREVIEW
     anamorphic_preview_add_slim_menu();

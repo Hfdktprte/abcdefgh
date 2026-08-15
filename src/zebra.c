@@ -4804,6 +4804,12 @@ livev_hipriority_task( void* unused )
                 while (!livev_hipriority_should_run())
                 {
                     msleep(100);
+                    #ifdef CONFIG_DISPLAY_FILTERS
+                    /* The LCD route is released from the VSYNC callback.
+                     * Revisit cleanup while the normal overlay worker sleeps
+                     * so LUT buffers are freed only after that acknowledgement. */
+                    display_filter_step(k);
+                    #endif
                 }
                 vram_params_set_dirty();
                 zoom_overlay_triggered_by_focus_ring_countdown = 0;

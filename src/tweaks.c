@@ -2371,7 +2371,10 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 #define LUT_PREVIEW_NAME_LEN 48
 #define LUT_PREVIEW_MAX_SIZE 33
 #define LUT_PREVIEW_Y_BITS  6
-#define LUT_PREVIEW_UV_BITS 4
+/* A 4-bit chroma grid saves 192 KB but creates visible color bands on the
+ * EOS M LCD. Keep 5-bit chroma precision; the frame-skip, active-area and
+ * unrolled-loop optimizations provide speed without degrading the picture. */
+#define LUT_PREVIEW_UV_BITS 5
 #define LUT_PREVIEW_Y_SIZE  (1 << LUT_PREVIEW_Y_BITS)
 #define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
 #define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)

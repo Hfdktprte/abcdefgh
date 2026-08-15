@@ -335,11 +335,13 @@ int nondigic_zoom_overlay_enabled()
 static CONFIG_INT( "focus.peaking", focus_peaking, 0);
 //~ static CONFIG_INT( "focus.peaking.method", focus_peaking_method, 1);
 #ifdef CONFIG_SLIM_MENUS
-/* Slim's hidden legacy controls begin with a useful general-purpose tuning:
- * Balanced detection and a 0.1% target density. */
-static CONFIG_INT( "focus.peaking.filter.edges", focus_peaking_filter_edges, 1);
-static CONFIG_INT( "focus.peaking.thr", focus_peaking_pthr, 1);
-static CONFIG_INT( "focus.peaking.color", focus_peaking_color, 0);
+/* Keep Danne's focus-peaking detector with a practical Slim default:
+ * Balanced detection, a 0.5% target density and red dots. Slim-specific
+ * config keys prevent obsolete hidden tuning from overriding these defaults
+ * after an upgrade. */
+static CONFIG_INT( "focus.peaking.slim.filter.edges", focus_peaking_filter_edges, 1);
+static CONFIG_INT( "focus.peaking.slim.thr", focus_peaking_pthr, 5);
+static CONFIG_INT( "focus.peaking.slim.color", focus_peaking_color, 0);
 extern int preview_peaking;
 static CONFIG_INT("focus.assist.mode", focus_assist_mode, 0);
 

@@ -877,9 +877,21 @@ static void mlv_play_osd_task(void *priv)
             break;
         }
         
-        if(mlv_play_osd_draw())
+        uint32_t osd_animating = 0;
+        BMP_LOCK(
+            osd_animating = mlv_play_osd_draw();
+        )
+
+        if(osd_animating)
         {
             next_render_time = get_ms_clock() + mlv_play_render_timestep;
+        }
+        else if(mlv_play_osd_state == MLV_PLAY_MENU_SHOWN)
+        {
+            /* Playback and overlay tasks share bitmap VRAM.  Refresh the
+             * completed control row often enough to repair any Canon/ML
+             * repaint without making the animation task continuously busy. */
+            next_render_time = get_ms_clock() + 100;
         }
         else
         {
@@ -2582,7 +2594,13 @@ static void mlv_play_enter_playback()
     /* prepare display */
     NotifyBoxHide();
     enter_play_mode();
-    
+
+    /* Canon changes bitmap routing/palette state while entering playback.
+     * Force ML's bitmap colors back on before the OSD task draws its controls;
+     * a stale mute state can otherwise leave only parts of the blue selector. */
+    bmp_mute_flag_reset();
+    bmp_on();
+
     /* render task is slave and controlled via these variables */
     mlv_play_render_abort = 0;
     mlv_play_rendering = 1;

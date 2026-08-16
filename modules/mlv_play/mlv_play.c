@@ -107,6 +107,7 @@ static uint32_t mlv_play_osd_force_redraw = 0;
 static uint32_t mlv_play_osd_idle = 1000;
 static uint32_t mlv_play_osd_item = 0;
 static uint32_t mlv_play_paused = 0;
+static int32_t mlv_play_osd_trace_state = -1;
 static uint32_t mlv_play_info = 1;
 static uint32_t mlv_play_timer_stop = 1;
 static uint32_t mlv_play_frames_skipped = 0;
@@ -736,6 +737,44 @@ static uint32_t mlv_play_osd_draw()
     
     /* draw selected item over with blue background */
     bmp_printf(FONT(osd_font,COLOR_WHITE,COLOR_BLUE), mlv_play_osd_x - w/2 + selected_x, mlv_play_osd_y, "  %s  ", selected_item);
+
+    /* Hardware-only diagnostic for EOS M playback OSD failures.  Log only
+     * state transitions, then count the pixels that actually reached the
+     * real bitmap page.  This distinguishes missing key events, bad layout,
+     * failed text rendering and wrong-page routing without changing timing. */
+    if ((int32_t)mlv_play_osd_state != mlv_play_osd_trace_state)
+    {
+        uint8_t *real = bmp_vram_real();
+        uint8_t *idle = bmp_vram_idle();
+        uint32_t white = 0;
+        uint32_t blue = 0;
+        uint32_t occupied = 0;
+        int y0 = COERCE(mlv_play_osd_y - (int)border, 0, 479);
+        int y1 = COERCE(mlv_play_osd_y + (int)h + (int)border, 0, 480);
+
+        if (real)
+        {
+            for (int y = y0; y < y1; y++)
+            {
+                for (int x = 0; x < 720; x++)
+                {
+                    uint8_t pixel = real[x + y * BMPPITCH];
+                    white += pixel == COLOR_WHITE;
+                    blue += pixel == COLOR_BLUE;
+                    occupied += pixel != COLOR_EMPTY;
+                }
+            }
+        }
+
+        trace_write(mlv_play_trace_ctx,
+            "OSD state=%d item=%d xy=%d,%d wh=%d,%d os=%d,%d..%d,%d "
+            "pages=%08x/%08x pixels=%d/%d/%d",
+            mlv_play_osd_state, mlv_play_osd_item,
+            mlv_play_osd_x, mlv_play_osd_y, w, h,
+            os.x0, os.y0, os.x_max, os.y_max,
+            (uint32_t)real, (uint32_t)idle, white, blue, occupied);
+        mlv_play_osd_trace_state = mlv_play_osd_state;
+    }
     
     return redraw;
 }
@@ -775,6 +814,10 @@ static void mlv_play_osd_task(void *priv)
         {
             /* there was a keypress */
             last_keypress_time = get_ms_clock();
+            trace_write(mlv_play_trace_ctx,
+                "OSD key=%x state=%d item=%d y=%d",
+                key, mlv_play_osd_state, mlv_play_osd_item,
+                mlv_play_osd_y);
             
             /* no matter which state - these are handled */
             switch(key)
@@ -2612,6 +2655,7 @@ static void mlv_play_enter_playback()
     bmp_mute_flag_reset();
     bmp_on();
     bmp_draw_to_idle(0);
+    mlv_play_osd_trace_state = -1;
 
     /* render task is slave and controlled via these variables */
     mlv_play_render_abort = 0;

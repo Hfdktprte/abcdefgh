@@ -110,6 +110,13 @@ static void FAST vsync_func() // called once per frame.. in theory :)
     extern void image_effects_step();
     image_effects_step();
 
+    /* The boot splash may still own the bitmap layer while Canon completes
+     * its first LV frame.  Mask its late status tile after Canon's state
+     * transition, before that frame is scanned out. */
+    extern void boot_logo_vsync_mask(void) __attribute__((weak));
+    if (boot_logo_vsync_mask)
+        boot_logo_vsync_mask();
+
     #ifdef FEATURE_DISPLAY_SHAKE
     display_shake_step();
     #endif

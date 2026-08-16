@@ -43,8 +43,7 @@ static void warn_step();
 extern void display_gain_toggle(void* priv, int delta);
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf);
 static uint32_t *display_filter_get_lut_back_buffer(void);
-static int display_filter_queue_lut_buffer(void);
-static void lut_preview_release_display(void);
+static void display_filter_swap_lut_buffers(void);
 
 #ifdef FEATURE_ZOOM_TRICK_5D3 // not reliable
 void zoom_trick_step();
@@ -2366,10 +2365,6 @@ CONFIG_INT("lv.peak", preview_peaking, 0);               // range: 0:3
 
 /* Preview-only 3D LUT. The recorded RAW/MLV buffers are never modified. */
 CONFIG_INT("lv.lut.preview", lut_preview, 0);
-/* File identity is authoritative; the numeric index is only the current
- * catalog position. This keeps the selected LUT stable when card directory
- * order changes or an alphabetically earlier file is added. */
-CONFIG_INT("lv.lut.preview.hash", lut_preview_saved_hash, 0);
 
 #define LUT_PREVIEW_DIR "ML/LUTS/"
 #define LUT_PREVIEW_MAX_FILES 5
@@ -2387,225 +2382,18 @@ CONFIG_INT("lv.lut.preview.hash", lut_preview_saved_hash, 0);
 #define LUT_PREVIEW_Y_SIZE  (1 << LUT_PREVIEW_Y_BITS)
 #define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
 #define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)
-#define LUT_PREVIEW_MAP_BYTES (LUT_PREVIEW_MAP_SIZE * sizeof(uint32_t))
-#define LUT_PREVIEW_CACHE_MAGIC 0x4C564331 /* "LVC1" */
-#define LUT_PREVIEW_CACHE_VERSION 1
-#define LUT_PREVIEW_CACHE_IO_SIZE 8192
 
+static uint16_t *lut_preview_data = 0;
 static int lut_preview_size = 0;
 static uint32_t *lut_preview_yuv_map = 0;
 static char lut_preview_names[LUT_PREVIEW_MAX_FILES][LUT_PREVIEW_NAME_LEN];
-static uint32_t lut_preview_source_sizes[LUT_PREVIEW_MAX_FILES];
-static uint32_t lut_preview_source_timestamps[LUT_PREVIEW_MAX_FILES];
 static int lut_preview_file_count = 0;
 static int lut_preview_files_scanned = 0;
 static int lut_preview_loaded_index = 0;
 static void *lut_preview_last_source = 0;
 static const char *lut_preview_load_error = "Invalid LUT";
-static struct semaphore *lut_preview_request_sem = 0;
-static struct semaphore *lut_preview_engine_sem = 0;
-static struct semaphore *lut_preview_wake_sem = 0;
-static volatile uint32_t lut_preview_request_generation = 0;
-static volatile uint32_t lut_preview_active_generation = 0;
-static volatile int lut_preview_requested_index = 0;
-static volatile int lut_preview_active = 0;
-static volatile int lut_preview_pipeline_armed = 0;
-static uint32_t lut_preview_gate_writer = 0;
-static int lut_preview_gate_frames = 0;
-static char lut_preview_requested_path[FIO_MAX_PATH_LENGTH];
-static char lut_preview_requested_name[LUT_PREVIEW_NAME_LEN];
-static int lut_preview_requested_notify = 0;
-/* Resolved when crop_rec.mo loads. LUT display ownership must remain with
- * Canon while Crop Rec is rebuilding its sensor and preview geometry. */
-static int (*crop_rec_lv_transition_busy)() =
-    MODULE_FUNCTION(crop_rec_lv_transition_busy);
 
-static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size,
-                                           uint32_t generation, int index,
-                                           int *cancelled);
-
-enum lut_preview_load_result
-{
-    LUT_PREVIEW_LOAD_CANCELLED = -1,
-    LUT_PREVIEW_LOAD_FAILED = 0,
-    LUT_PREVIEW_LOAD_OK = 1,
-};
-
-struct lut_preview_cache_header
-{
-    uint32_t magic;
-    uint32_t version;
-    uint32_t header_size;
-    uint32_t map_bytes;
-    uint32_t map_entries;
-    uint32_t y_bits;
-    uint32_t uv_bits;
-    uint32_t cube_size;
-    uint32_t source_size;
-    uint32_t source_timestamp;
-    uint32_t source_name_hash;
-    uint32_t map_hash;
-};
-
-static uint32_t lut_preview_hash_bytes(uint32_t hash, const void *data,
-                                       uint32_t size)
-{
-    const uint8_t *bytes = data;
-    for (uint32_t i = 0; i < size; i++)
-    {
-        hash ^= bytes[i];
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
-static uint32_t lut_preview_name_hash(const char *name)
-{
-    uint32_t hash = 2166136261u;
-    while (*name)
-    {
-        char c = *name++;
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        hash = lut_preview_hash_bytes(hash, &c, 1);
-    }
-    return hash;
-}
-
-static void lut_preview_cache_paths(const char *name, char *cache_path,
-                                    char *temp_path)
-{
-    uint32_t hash = lut_preview_name_hash(name);
-    snprintf(cache_path, FIO_MAX_PATH_LENGTH,
-             LUT_PREVIEW_DIR "L%08X.LVC", hash);
-    snprintf(temp_path, FIO_MAX_PATH_LENGTH,
-             LUT_PREVIEW_DIR "T%08X.TMP", hash);
-}
-
-static void lut_preview_disarm_pipeline(void)
-{
-    lut_preview_pipeline_armed = 0;
-    lut_preview_gate_writer = 0;
-    lut_preview_gate_frames = 0;
-    lut_preview_last_source = 0;
-}
-
-/* OFF is a true dormant state: release the large compiled map immediately.
- * The engine lock guarantees that no render pass can still be using it. */
-static void lut_preview_release_map(void)
-{
-    uint32_t *old_map;
-
-    if (lut_preview_engine_sem)
-        take_semaphore(lut_preview_engine_sem, 0);
-    old_map = lut_preview_yuv_map;
-    lut_preview_yuv_map = 0;
-    lut_preview_size = 0;
-    lut_preview_loaded_index = 0;
-    lut_preview_active = 0;
-    lut_preview_active_generation = 0;
-    lut_preview_last_source = 0;
-    if (lut_preview_engine_sem)
-        give_semaphore(lut_preview_engine_sem);
-
-    if (old_map)
-        free(old_map);
-}
-
-/* Zoom changes can happen faster than the normal display-filter worker. Stop
- * publishing LUT frames as soon as Canon announces a new zoom pipeline. */
-PROP_HANDLER(PROP_LV_DISPSIZE)
-{
-    lut_preview_disarm_pipeline();
-    lut_preview_release_display();
-}
-
-/* Normalize the active EDMAC writer to Canon's YUV ring. A pointer outside
- * this ring means the display path is changing or unavailable. */
-static uint32_t lut_preview_canon_writer(void)
-{
-#ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
-    uint32_t current = (uint32_t)CACHEABLE(
-        shamem_read(REG_EDMAC_WRITE_LV_ADDR));
-    uint32_t buffers[] = {
-        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_1),
-        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_2),
-        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_3),
-        #ifdef YUV422_LV_BUFFER_4
-        (uint32_t)CACHEABLE(YUV422_LV_BUFFER_4),
-        #endif
-    };
-
-    for (int i = 0; i < COUNT(buffers); i++)
-        if (ABS((int)current - (int)buffers[i]) < 200000)
-            return buffers[i];
-    return 0;
-#else
-    return 1;
-#endif
-}
-
-/* Readiness is evidence-based, not a boot timeout: after every boot, menu,
- * zoom or recording transition, wait for Crop Rec to finish and then observe
- * three distinct completed Canon YUV frames before redirecting the LCD. */
-static void lut_preview_update_pipeline_gate(void)
-{
-    extern int ml_started;
-    int crop_busy = crop_rec_lv_transition_busy &&
-                    crop_rec_lv_transition_busy();
-
-    if (
-        #ifdef CONFIG_EOSM
-        /* crop_rec.mo owns EOS M movie geometry. A null function pointer
-         * means the module has not loaded yet, so native LV is not final. */
-        !crop_rec_lv_transition_busy ||
-        #endif
-        (!lut_preview_active && !lut_preview_requested_index) ||
-        !ml_started || !lv || lv_paused ||
-        RECORDING || RECORDING_H264_STARTING || gui_menu_shown() ||
-        lv_dispsize > 5 || should_draw_zoom_overlay() || crop_busy ||
-        !liveview_display_idle())
-    {
-        lut_preview_disarm_pipeline();
-        return;
-    }
-
-    if (lut_preview_pipeline_armed)
-        return;
-
-    uint32_t writer = lut_preview_canon_writer();
-    if (!writer)
-    {
-        lut_preview_disarm_pipeline();
-        return;
-    }
-
-    if (writer != lut_preview_gate_writer)
-    {
-        lut_preview_gate_writer = writer;
-        lut_preview_gate_frames++;
-        if (lut_preview_gate_frames >= 3)
-        {
-            lut_preview_pipeline_armed = 1;
-            lut_preview_last_source = 0;
-        }
-    }
-}
-
-/* Long card reads and map compilation must yield immediately to every camera
- * pipeline transition. The same generation is retried after the evidence
- * gate observes stable Canon frames again. */
-static int lut_preview_load_cancelled(uint32_t generation, int index)
-{
-    int crop_busy = crop_rec_lv_transition_busy &&
-                    crop_rec_lv_transition_busy();
-    return ml_shutdown_requested ||
-           generation != lut_preview_request_generation ||
-           index != lut_preview_requested_index || !lut_preview ||
-           !lv || lv_paused || RECORDING || RECORDING_H264_STARTING ||
-           gui_menu_shown() || lv_dispsize > 5 ||
-           should_draw_zoom_overlay() || crop_busy ||
-           !liveview_display_idle() || !lut_preview_pipeline_armed;
-}
+static int lut_preview_build_yuv_map(void);
 
 static int lut_preview_valid_filename(const char *name)
 {
@@ -2613,40 +2401,22 @@ static int lut_preview_valid_filename(const char *name)
     return n > 5 && !strcasecmp(name + n - 5, ".cube");
 }
 
-static int lut_preview_find_hash(uint32_t hash)
+static void lut_preview_sort_files(void)
 {
+    char tmp[LUT_PREVIEW_NAME_LEN];
     for (int i = 0; i < lut_preview_file_count; i++)
-        if (lut_preview_name_hash(lut_preview_names[i]) == hash)
-            return i + 1;
-    return 0;
-}
-
-/* Keep the alphabetically first five names from the complete directory,
- * independent of FAT enumeration order, without allocating an unbounded
- * catalog. */
-static void lut_preview_catalog_insert(const struct fio_file *file)
-{
-    int pos = 0;
-    while (pos < lut_preview_file_count &&
-           strcasecmp(lut_preview_names[pos], file->name) < 0)
-        pos++;
-
-    if (pos >= LUT_PREVIEW_MAX_FILES)
-        return;
-
-    if (lut_preview_file_count < LUT_PREVIEW_MAX_FILES)
-        lut_preview_file_count++;
-    for (int i = lut_preview_file_count - 1; i > pos; i--)
     {
-        snprintf(lut_preview_names[i], LUT_PREVIEW_NAME_LEN, "%s",
-                 lut_preview_names[i - 1]);
-        lut_preview_source_sizes[i] = lut_preview_source_sizes[i - 1];
-        lut_preview_source_timestamps[i] =
-            lut_preview_source_timestamps[i - 1];
+        for (int j = i + 1; j < lut_preview_file_count; j++)
+        {
+            if (strcasecmp(lut_preview_names[i], lut_preview_names[j]) > 0)
+            {
+                snprintf(tmp, sizeof(tmp), "%s", lut_preview_names[i]);
+                snprintf(lut_preview_names[i], LUT_PREVIEW_NAME_LEN, "%s",
+                         lut_preview_names[j]);
+                snprintf(lut_preview_names[j], LUT_PREVIEW_NAME_LEN, "%s", tmp);
+            }
+        }
     }
-    snprintf(lut_preview_names[pos], LUT_PREVIEW_NAME_LEN, "%s", file->name);
-    lut_preview_source_sizes[pos] = file->size;
-    lut_preview_source_timestamps[pos] = file->timestamp;
 }
 
 static void lut_preview_scan_files(void)
@@ -2663,11 +2433,16 @@ static void lut_preview_scan_files(void)
     {
         if ((file.mode & ATTR_DIRECTORY) || !lut_preview_valid_filename(file.name))
             continue;
-        lut_preview_catalog_insert(&file);
+        if (lut_preview_file_count >= LUT_PREVIEW_MAX_FILES)
+            continue;
+        snprintf(lut_preview_names[lut_preview_file_count], LUT_PREVIEW_NAME_LEN,
+                 "%s", file.name);
+        lut_preview_file_count++;
     }
     while (FIO_FindNextEx(dirent, &file) == 0);
 
     FIO_FindClose(dirent);
+    lut_preview_sort_files();
 }
 
 static const char *lut_preview_selected_name(void)
@@ -2675,197 +2450,6 @@ static const char *lut_preview_selected_name(void)
     if (lut_preview < 1 || lut_preview > lut_preview_file_count)
         return "OFF";
     return lut_preview_names[lut_preview - 1];
-}
-
-static int lut_preview_resolve_saved_selection(void)
-{
-    uint32_t saved = (uint32_t)lut_preview_saved_hash;
-    if (saved)
-        return lut_preview_find_hash(saved);
-
-    /* One-time migration from older index-only configuration files. */
-    if (lut_preview >= 1 && lut_preview <= lut_preview_file_count)
-    {
-        lut_preview_saved_hash =
-            (int)lut_preview_name_hash(lut_preview_names[lut_preview - 1]);
-        return lut_preview;
-    }
-    return 0;
-}
-
-static int lut_preview_load_cache(int index, uint32_t generation,
-                                  uint32_t **map_out, int *cube_size_out)
-{
-    char cache_path[FIO_MAX_PATH_LENGTH];
-    char temp_path[FIO_MAX_PATH_LENGTH];
-    struct lut_preview_cache_header header;
-    uint32_t file_size = 0;
-    uint32_t hash = 2166136261u;
-    int source = index - 1;
-    int stale = 0;
-
-    *map_out = 0;
-    *cube_size_out = 0;
-
-    if (source < 0 || source >= lut_preview_file_count)
-        return 0;
-
-    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
-    (void)temp_path;
-    if (FIO_GetFileSize(cache_path, &file_size) ||
-        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
-        return 0;
-
-    void *io = fio_malloc(LUT_PREVIEW_CACHE_IO_SIZE);
-    if (!io)
-        return 0;
-    FILE *file = FIO_OpenFile(cache_path, O_RDONLY | O_SYNC);
-    if (!file)
-    {
-        fio_free(io);
-        return 0;
-    }
-
-    if (FIO_ReadFile(file, io, sizeof(header)) != sizeof(header))
-    {
-        stale = 1;
-        goto cache_read_done;
-    }
-    memcpy(&header, io, sizeof(header));
-    if (header.magic != LUT_PREVIEW_CACHE_MAGIC ||
-        header.version != LUT_PREVIEW_CACHE_VERSION ||
-        header.header_size != sizeof(header) ||
-        header.map_bytes != LUT_PREVIEW_MAP_BYTES ||
-        header.map_entries != LUT_PREVIEW_MAP_SIZE ||
-        header.y_bits != LUT_PREVIEW_Y_BITS ||
-        header.uv_bits != LUT_PREVIEW_UV_BITS ||
-        header.cube_size < 2 || header.cube_size > LUT_PREVIEW_MAX_SIZE ||
-        header.source_size != lut_preview_source_sizes[source] ||
-        header.source_timestamp != lut_preview_source_timestamps[source] ||
-        header.source_name_hash !=
-            lut_preview_name_hash(lut_preview_names[source]))
-    {
-        stale = 1;
-        goto cache_read_done;
-    }
-
-    uint32_t *map = malloc(LUT_PREVIEW_MAP_BYTES);
-    if (!map)
-        goto cache_read_done;
-
-    uint32_t offset = 0;
-    while (offset < LUT_PREVIEW_MAP_BYTES)
-    {
-        if (lut_preview_load_cancelled(generation, index))
-        {
-            free(map);
-            map = 0;
-            FIO_CloseFile(file);
-            fio_free(io);
-            return LUT_PREVIEW_LOAD_CANCELLED;
-        }
-        uint32_t chunk = MIN(LUT_PREVIEW_CACHE_IO_SIZE,
-                             LUT_PREVIEW_MAP_BYTES - offset);
-        if (FIO_ReadFile(file, io, chunk) != (int)chunk)
-        {
-            stale = 1;
-            free(map);
-            map = 0;
-            break;
-        }
-        memcpy((uint8_t *)map + offset, io, chunk);
-        hash = lut_preview_hash_bytes(hash, io, chunk);
-        offset += chunk;
-    }
-
-    if (map && hash != header.map_hash)
-    {
-        stale = 1;
-        free(map);
-        map = 0;
-    }
-
-    if (map)
-    {
-        *map_out = map;
-        *cube_size_out = header.cube_size;
-    }
-
-cache_read_done:
-    FIO_CloseFile(file);
-    fio_free(io);
-    if (stale)
-        FIO_RemoveFile(cache_path);
-    return *map_out ? LUT_PREVIEW_LOAD_OK : LUT_PREVIEW_LOAD_FAILED;
-}
-
-static int lut_preview_save_cache(int index, uint32_t generation,
-                                  const uint32_t *map, int cube_size)
-{
-    char cache_path[FIO_MAX_PATH_LENGTH];
-    char temp_path[FIO_MAX_PATH_LENGTH];
-    uint32_t file_size = 0;
-    int source = index - 1;
-
-    if (!map || source < 0 || source >= lut_preview_file_count ||
-        cube_size < 2 || cube_size > LUT_PREVIEW_MAX_SIZE)
-        return 0;
-
-    struct lut_preview_cache_header header = {
-        .magic = LUT_PREVIEW_CACHE_MAGIC,
-        .version = LUT_PREVIEW_CACHE_VERSION,
-        .header_size = sizeof(struct lut_preview_cache_header),
-        .map_bytes = LUT_PREVIEW_MAP_BYTES,
-        .map_entries = LUT_PREVIEW_MAP_SIZE,
-        .y_bits = LUT_PREVIEW_Y_BITS,
-        .uv_bits = LUT_PREVIEW_UV_BITS,
-        .cube_size = cube_size,
-        .source_size = lut_preview_source_sizes[source],
-        .source_timestamp = lut_preview_source_timestamps[source],
-        .source_name_hash = lut_preview_name_hash(lut_preview_names[source]),
-        .map_hash = lut_preview_hash_bytes(2166136261u, map,
-                                           LUT_PREVIEW_MAP_BYTES),
-    };
-
-    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
-    FIO_RemoveFile(temp_path);
-    FILE *file = FIO_CreateFile(temp_path);
-    if (!file)
-        return 0;
-
-    int ok = FIO_WriteFile(file, &header, sizeof(header)) == sizeof(header);
-    uint32_t offset = 0;
-    while (ok && offset < LUT_PREVIEW_MAP_BYTES)
-    {
-        if (lut_preview_load_cancelled(generation, index))
-        {
-            ok = 0;
-            break;
-        }
-        uint32_t chunk = MIN(LUT_PREVIEW_CACHE_IO_SIZE,
-                             LUT_PREVIEW_MAP_BYTES - offset);
-        ok = FIO_WriteFile(file, (const uint8_t *)map + offset, chunk) ==
-             (int)chunk;
-        offset += chunk;
-    }
-    FIO_CloseFile(file);
-
-    if (!ok || FIO_GetFileSize(temp_path, &file_size) ||
-        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
-    {
-        FIO_RemoveFile(temp_path);
-        return 0;
-    }
-
-    /* Publish only a fully written cache. A power loss can leave the temp
-     * file behind, but never a header that claims an incomplete map is valid. */
-    FIO_RemoveFile(cache_path);
-    if (FIO_RenameFile(temp_path, cache_path))
-    {
-        FIO_RemoveFile(temp_path);
-        return 0;
-    }
-    return 1;
 }
 
 static const char * lut_skip_spaces(const char *p, const char *end)
@@ -3036,12 +2620,8 @@ static int lut_preview_parse_line(struct lut_preview_load_context *ctx,
     return 1;
 }
 
-static int lut_preview_load_file(const char *path, uint32_t generation,
-                                 int index, uint32_t **map_out,
-                                 int *cube_size_out)
+static int lut_preview_load_file(const char *path)
 {
-    *map_out = 0;
-    *cube_size_out = 0;
     FILE *file = FIO_OpenFile(path, O_RDONLY | O_SYNC);
     if (!file)
     {
@@ -3072,13 +2652,6 @@ static int lut_preview_load_file(const char *path, uint32_t generation,
     lut_preview_load_error = "Invalid LUT";
     while (ok && (n = FIO_ReadFile(file, input, 4096)) > 0)
     {
-        if (lut_preview_load_cancelled(generation, index))
-        {
-            FIO_CloseFile(file);
-            free(input);
-            if (ctx.data) free(ctx.data);
-            return LUT_PREVIEW_LOAD_CANCELLED;
-        }
         for (int i = 0; i < n && ok; i++)
         {
             char c = input[i];
@@ -3111,82 +2684,64 @@ static int lut_preview_load_file(const char *path, uint32_t generation,
     {
         if (ok) lut_preview_load_error = "Incomplete LUT data";
         if (ctx.data) free(ctx.data);
-        return LUT_PREVIEW_LOAD_FAILED;
+        return 0;
     }
 
-    int cancelled = 0;
-    uint32_t *map = lut_preview_build_yuv_map(ctx.data, ctx.cube_size,
-                                              generation, index, &cancelled);
-    if (!map)
+    if (lut_preview_data) free(lut_preview_data);
+    lut_preview_data = ctx.data;
+    lut_preview_size = ctx.cube_size;
+    if (!lut_preview_build_yuv_map())
     {
-        free(ctx.data);
-        if (cancelled)
-            return LUT_PREVIEW_LOAD_CANCELLED;
+        free(lut_preview_data);
+        lut_preview_data = 0;
+        lut_preview_size = 0;
         lut_preview_load_error = "Not enough memory for LUT map";
-        return LUT_PREVIEW_LOAD_FAILED;
+        return 0;
     }
 
-    /* Runtime uses the immutable precomputed YUV map. The parsed cube is
-     * private to this loader generation and can be released immediately. */
-    free(ctx.data);
-    *map_out = map;
-    *cube_size_out = ctx.cube_size;
-    return LUT_PREVIEW_LOAD_OK;
+    /* Runtime uses the precomputed YUV map; release the temporary cube. */
+    free(lut_preview_data);
+    lut_preview_data = 0;
+    return 1;
 }
 
 int lut_preview_is_ready(void)
 {
-    return lut_preview && lut_preview_active && lut_preview_yuv_map &&
-           lut_preview_size >= 2 &&
-           lut_preview_active_generation == lut_preview_request_generation;
+    return lut_preview && lut_preview == lut_preview_loaded_index &&
+           lut_preview_yuv_map && lut_preview_size >= 2;
 }
 
-static void lut_preview_request_index(int index, int notify_error)
+static int lut_preview_select_index(int index, int notify_error)
 {
-    if (index && !lut_preview_files_scanned)
+    if (!lut_preview_files_scanned)
         lut_preview_scan_files();
 
     index = COERCE(index, 0, lut_preview_file_count);
-    if (lut_preview_request_sem)
-        take_semaphore(lut_preview_request_sem, 0);
-
-    lut_preview = index;
-    lut_preview_saved_hash = index ?
-        (int)lut_preview_name_hash(lut_preview_names[index - 1]) : 0;
-    lut_preview_requested_index = index;
-    lut_preview_requested_notify = notify_error;
-    /* Invalidate the old generation immediately. The loader may still parse
-     * or compile it, but neither that work nor an old rendered frame can be
-     * published for the newly selected menu item. */
-    lut_preview_active = 0;
-    lut_preview_disarm_pipeline();
     if (!index)
     {
+        lut_preview = 0;
+        lut_preview_loaded_index = 0;
         lut_preview_last_source = 0;
-        lut_preview_requested_path[0] = '\0';
-        lut_preview_requested_name[0] = '\0';
-        lut_preview_request_generation++;
-        if (lut_preview_request_sem)
-            give_semaphore(lut_preview_request_sem);
-        lut_preview_release_map();
-        lut_preview_release_display();
-        if (lut_preview_wake_sem)
-            give_semaphore(lut_preview_wake_sem);
         lens_display_set_dirty();
-        return;
+        return 1;
     }
 
-    snprintf(lut_preview_requested_path, sizeof(lut_preview_requested_path),
-             LUT_PREVIEW_DIR "%s",
+    char path[FIO_MAX_PATH_LENGTH];
+    snprintf(path, sizeof(path), LUT_PREVIEW_DIR "%s",
              lut_preview_names[index - 1]);
-    snprintf(lut_preview_requested_name, sizeof(lut_preview_requested_name),
-             "%s", lut_preview_names[index - 1]);
-    lut_preview_request_generation++;
-    if (lut_preview_request_sem)
-        give_semaphore(lut_preview_request_sem);
-    if (lut_preview_wake_sem)
-        give_semaphore(lut_preview_wake_sem);
+    if (!lut_preview_load_file(path))
+    {
+        if (notify_error)
+            NotifyBox(3000, "%s:\n%s", lut_preview_load_error,
+                      lut_preview_names[index - 1]);
+        return 0;
+    }
+
+    lut_preview = index;
+    lut_preview_loaded_index = index;
+    lut_preview_last_source = 0;
     lens_display_set_dirty();
+    return 1;
 }
 
 void lut_preview_toggle(void *priv, int delta)
@@ -3195,51 +2750,47 @@ void lut_preview_toggle(void *priv, int delta)
     lut_preview_scan_files();
     if (!lut_preview_file_count)
     {
-        lut_preview_request_index(0, 0);
+        lut_preview_select_index(0, 0);
         NotifyBox(3000, "Copy up to 5 .cube LUTs to " LUT_PREVIEW_DIR);
         return;
     }
 
     int direction = delta < 0 ? -1 : 1;
-    int current = lut_preview_resolve_saved_selection();
-    int next = MOD(COERCE(current, 0, lut_preview_file_count) + direction,
+    int next = MOD(COERCE(lut_preview, 0, lut_preview_file_count) + direction,
                    lut_preview_file_count + 1);
-    lut_preview_request_index(next, 1);
+    lut_preview_select_index(next, 1);
 }
 
 MENU_UPDATE_FUNC(lut_preview_menu_update)
 {
     if (!lut_preview_files_scanned)
         lut_preview_scan_files();
-    int resolved = lut_preview_resolve_saved_selection();
-    if (resolved != lut_preview)
-        lut_preview_request_index(resolved, 0);
+    if (lut_preview > lut_preview_file_count)
+        lut_preview_select_index(0, 0);
     MENU_SET_VALUE("%s", lut_preview_selected_name());
     if (!lut_preview_file_count)
         MENU_SET_WARNING(MENU_WARN_INFO, "Copy up to 5 standard .cube LUTs to ML/LUTS.");
 }
 
-static inline int lut_preview_cube_value(const uint16_t *cube, int cube_size,
-                                         int ri, int gi, int bi, int channel)
+static inline int lut_preview_cube_value(int ri, int gi, int bi, int channel)
 {
-    int index = ((bi * cube_size + gi) * cube_size + ri) * 3;
-    return cube[index + channel];
+    int index = ((bi * lut_preview_size + gi) * lut_preview_size + ri) * 3;
+    return lut_preview_data[index + channel];
 }
 
 /* Trilinear interpolation is done once while loading, never per frame. */
 static inline int lut_preview_interpolate_channel(
-    const uint16_t *cube, int cube_size,
     int r0, int r1, int rf, int g0, int g1, int gf,
     int b0, int b1, int bf, int channel)
 {
-    int c000 = lut_preview_cube_value(cube, cube_size, r0, g0, b0, channel);
-    int c100 = lut_preview_cube_value(cube, cube_size, r1, g0, b0, channel);
-    int c010 = lut_preview_cube_value(cube, cube_size, r0, g1, b0, channel);
-    int c110 = lut_preview_cube_value(cube, cube_size, r1, g1, b0, channel);
-    int c001 = lut_preview_cube_value(cube, cube_size, r0, g0, b1, channel);
-    int c101 = lut_preview_cube_value(cube, cube_size, r1, g0, b1, channel);
-    int c011 = lut_preview_cube_value(cube, cube_size, r0, g1, b1, channel);
-    int c111 = lut_preview_cube_value(cube, cube_size, r1, g1, b1, channel);
+    int c000 = lut_preview_cube_value(r0, g0, b0, channel);
+    int c100 = lut_preview_cube_value(r1, g0, b0, channel);
+    int c010 = lut_preview_cube_value(r0, g1, b0, channel);
+    int c110 = lut_preview_cube_value(r1, g1, b0, channel);
+    int c001 = lut_preview_cube_value(r0, g0, b1, channel);
+    int c101 = lut_preview_cube_value(r1, g0, b1, channel);
+    int c011 = lut_preview_cube_value(r0, g1, b1, channel);
+    int c111 = lut_preview_cube_value(r1, g1, b1, channel);
 
     int c00 = c000 + (((c100 - c000) * rf + 128) >> 8);
     int c10 = c010 + (((c110 - c010) * rf + 128) >> 8);
@@ -3250,11 +2801,9 @@ static inline int lut_preview_interpolate_channel(
     return c0 + (((c1 - c0) * bf + 128) >> 8);
 }
 
-static inline void lut_preview_apply_rgb(const uint16_t *cube, int cube_size,
-                                         int r, int g, int b,
-                                         int *out_r, int *out_g, int *out_b)
+static inline void lut_preview_apply_rgb(int r, int g, int b, int *out_r, int *out_g, int *out_b)
 {
-    int n = cube_size - 1;
+    int n = lut_preview_size - 1;
     int rc = r * n * 256 / 255;
     int gc = g * n * 256 / 255;
     int bc = b * n * 256 / 255;
@@ -3268,33 +2817,21 @@ static inline void lut_preview_apply_rgb(const uint16_t *cube, int cube_size,
     int gf = g0 == n ? 0 : (gc & 0xFF);
     int bf = b0 == n ? 0 : (bc & 0xFF);
 
-    int lr = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
-                                              g0, g1, gf, b0, b1, bf, 0);
-    int lg = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
-                                              g0, g1, gf, b0, b1, bf, 1);
-    int lb = lut_preview_interpolate_channel(cube, cube_size, r0, r1, rf,
-                                              g0, g1, gf, b0, b1, bf, 2);
+    int lr = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 0);
+    int lg = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 1);
+    int lb = lut_preview_interpolate_channel(r0, r1, rf, g0, g1, gf, b0, b1, bf, 2);
     *out_r = COERCE((lr * 255 + 2048) / 4096, 0, 255);
     *out_g = COERCE((lg * 255 + 2048) / 4096, 0, 255);
     *out_b = COERCE((lb * 255 + 2048) / 4096, 0, 255);
 }
 
-static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size,
-                                           uint32_t generation, int index,
-                                           int *cancelled)
+static int lut_preview_build_yuv_map(void)
 {
-    *cancelled = 0;
     uint32_t *map = malloc(LUT_PREVIEW_MAP_SIZE * sizeof(*map));
     if (!map) return 0;
 
     for (int vi = 0; vi < LUT_PREVIEW_UV_SIZE; vi++)
     {
-        if (lut_preview_load_cancelled(generation, index))
-        {
-            *cancelled = 1;
-            free(map);
-            return 0;
-        }
         int v_byte = MIN((vi << (8 - LUT_PREVIEW_UV_BITS)) +
                          (1 << (7 - LUT_PREVIEW_UV_BITS)), 255);
         int v = (int8_t)v_byte;
@@ -3309,36 +2846,33 @@ static uint32_t *lut_preview_build_yuv_map(const uint16_t *cube, int cube_size,
                             (1 << (7 - LUT_PREVIEW_Y_BITS)), 255);
                 int r, g, b, lr, lg, lb;
                 yuv2rgb(y, u, v, &r, &g, &b);
-                lut_preview_apply_rgb(cube, cube_size, r, g, b,
-                                      &lr, &lg, &lb);
+                lut_preview_apply_rgb(r, g, b, &lr, &lg, &lb);
                 int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
                 map[index] = rgb2yuv422(lr, lg, lb);
             }
         }
-        /* Compilation is deliberately cooperative; Canon tasks get CPU time
-         * and the cancellation gate is sampled at least once per V slice. */
-        if ((vi & 3) == 3) msleep(1);
     }
 
-    return map;
+    if (lut_preview_yuv_map) free(lut_preview_yuv_map);
+    lut_preview_yuv_map = map;
+    return 1;
 }
 
-static inline int lut_preview_map_base(int u, int v)
+static inline uint32_t lut_preview_map_pixel(int y, int u, int v)
 {
+    int yi = y >> (8 - LUT_PREVIEW_Y_BITS);
     int ui = u >> (8 - LUT_PREVIEW_UV_BITS);
     int vi = v >> (8 - LUT_PREVIEW_UV_BITS);
-    return (vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE;
+    int index = ((vi * LUT_PREVIEW_UV_SIZE + ui) * LUT_PREVIEW_Y_SIZE + yi);
+    return lut_preview_yuv_map[index];
 }
 
-static inline uint32_t lut_preview_map_pair(const uint32_t *map, uint32_t in)
+static inline uint32_t lut_preview_map_pair(uint32_t in)
 {
     int u = UYVY_GET_U(in);
     int v = UYVY_GET_V(in);
-    int base = lut_preview_map_base(u, v);
-    uint32_t out1 = map[base + (((in >> 8) & 0xFF) >>
-                                (8 - LUT_PREVIEW_Y_BITS))];
-    uint32_t out2 = map[base + (((in >> 24) & 0xFF) >>
-                                (8 - LUT_PREVIEW_Y_BITS))];
+    uint32_t out1 = lut_preview_map_pixel((in >> 8) & 0xFF, u, v);
+    uint32_t out2 = lut_preview_map_pixel((in >> 24) & 0xFF, u, v);
     int out_u = ((int8_t)UYVY_GET_U(out1) + (int8_t)UYVY_GET_U(out2)) / 2;
     int out_v = ((int8_t)UYVY_GET_V(out1) + (int8_t)UYVY_GET_V(out2)) / 2;
     return UYVY_PACK(out_u, (out1 >> 8) & 0xFF,
@@ -3347,8 +2881,7 @@ static inline uint32_t lut_preview_map_pair(const uint32_t *map, uint32_t in)
 
 static int lut_preview_should_render(void)
 {
-    return lut_preview_is_ready() && lut_preview_pipeline_armed &&
-           lv && !PLAY_OR_QR_MODE && !MENU_MODE && !RECORDING &&
+    return lut_preview_is_ready() && lv && !RECORDING &&
            !RECORDING_H264_STARTING && lv_dispsize <= 5 &&
            !should_draw_zoom_overlay() && !gui_menu_shown();
 }
@@ -3375,246 +2908,54 @@ static int lut_preview_draw(void)
 
     uint32_t *dst_buf = display_filter_get_lut_back_buffer();
     if (!dst_buf) return 0;
+    lut_preview_last_source = src_buf;
 
     src_buf = CACHEABLE(src_buf);
     dst_buf = CACHEABLE(dst_buf);
 
-    if (!lut_preview_engine_sem) return 0;
-    take_semaphore(lut_preview_engine_sem, 0);
-    uint32_t *map = lut_preview_yuv_map;
-    uint32_t request_generation = lut_preview_request_generation;
-    int zoom_state = lv_dispsize;
-    int recording_state = RECORDING_STATE;
-    if (!map || !lut_preview_should_render())
+    /* Preserve Canon's top/bottom letterbox rows without wasting LUT lookups.
+     * The completed hidden frame is swapped only after every active row is done. */
+    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
+    for (int y = 0; y < y_skip; y++)
     {
-        give_semaphore(lut_preview_engine_sem);
-        return 0;
+        memcpy(&dst_buf[LV(0, y) / 4], &src_buf[LV(0, y) / 4], 720 * 2);
+        int bottom = 479 - y;
+        memcpy(&dst_buf[LV(0, bottom) / 4],
+               &src_buf[LV(0, bottom) / 4], 720 * 2);
     }
 
-    /* Snapshot Canon's completed frame into the confirmed-free output buffer.
-     * The LUT pass then works in place, so Canon cannot recycle the source
-     * halfway through a slow render and create horizontal mixed-frame bands. */
-    memcpy(dst_buf, src_buf, 720 * 480 * 2);
-
-    /* Preserve Canon's letterbox rows, but process the complete width. This
-     * is the proven EOS M path; inferred side-bar bounds can leave part of a
-     * frame stale when Crop Rec changes preview geometry. */
-    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
     for (int y = y_skip; y < 480 - y_skip; y++)
     {
+        uint32_t *src = &src_buf[LV(0, y) / 4];
         uint32_t *dst = &dst_buf[LV(0, y) / 4];
         /* Four UYVY pairs per iteration: fewer branches and address updates. */
         for (int x = 0; x < 720 / 2; x += 4)
         {
-            dst[x + 0] = lut_preview_map_pair(map, dst[x + 0]);
-            dst[x + 1] = lut_preview_map_pair(map, dst[x + 1]);
-            dst[x + 2] = lut_preview_map_pair(map, dst[x + 2]);
-            dst[x + 3] = lut_preview_map_pair(map, dst[x + 3]);
-        }
-
-        /* Abort stale work promptly during REC, zoom, menu or LUT changes.
-         * Never publish a frame produced for an old display generation. */
-        if ((y & 15) == 15 &&
-            (request_generation != lut_preview_request_generation ||
-             zoom_state != lv_dispsize ||
-             recording_state != RECORDING_STATE ||
-             !lut_preview_should_render()))
-        {
-            give_semaphore(lut_preview_engine_sem);
-            return 0;
+            dst[x + 0] = lut_preview_map_pair(src[x + 0]);
+            dst[x + 1] = lut_preview_map_pair(src[x + 1]);
+            dst[x + 2] = lut_preview_map_pair(src[x + 2]);
+            dst[x + 3] = lut_preview_map_pair(src[x + 3]);
         }
     }
-
-    /* Use the established display-filter cache barrier. EOS M's LUT output
-     * showed stale lower scanlines with the lighter D-cache-only handoff. */
-    sync_caches();
-    if (request_generation != lut_preview_request_generation ||
-        !lut_preview_should_render() || !display_filter_queue_lut_buffer())
-    {
-        give_semaphore(lut_preview_engine_sem);
-        return 0;
-    }
-    lut_preview_last_source = src_buf;
-    give_semaphore(lut_preview_engine_sem);
+    display_filter_swap_lut_buffers();
     return 1;
 }
 
 static void lut_preview_load_task(void *unused)
 {
     (void)unused;
-    /* Core config loads after INIT_FUNC callbacks. Wait for it, then override
-     * any saved LUT choice before scanning the card, allocating a map or
-     * taking display ownership. LUT Preview is intentionally session-only. */
+    /* Core config loads after INIT_FUNC callbacks. LUT preview is intentionally
+     * session-only: discard any saved selection before scanning or allocating
+     * LUT resources, so startup always uses Canon's normal preview path. */
     hold_your_horses();
-    if (!lut_preview_request_sem || !lut_preview_engine_sem)
-        return;
-    lut_preview_request_index(0, 0);
-
+    lut_preview = 0;
     /* Do not compete with the startup logo/front-buffer handoff. Large
      * 64/65-point LUTs may require several MB of card reads. */
     msleep(2500);
-
-    uint32_t handled_generation = 0;
-    TASK_LOOP
-    {
-        uint32_t generation;
-        int index;
-        int notify_error;
-        char path[FIO_MAX_PATH_LENGTH];
-        char name[LUT_PREVIEW_NAME_LEN];
-
-        take_semaphore(lut_preview_request_sem, 0);
-        generation = lut_preview_request_generation;
-        index = lut_preview_requested_index;
-        notify_error = lut_preview_requested_notify;
-        snprintf(path, sizeof(path), "%s", lut_preview_requested_path);
-        snprintf(name, sizeof(name), "%s", lut_preview_requested_name);
-        give_semaphore(lut_preview_request_sem);
-
-        if (generation == handled_generation)
-        {
-            if (!index && !lut_preview_active && !lut_preview_yuv_map)
-            {
-                if (lut_preview_wake_sem)
-                    take_semaphore(lut_preview_wake_sem, 0);
-                else
-                    msleep(250);
-                continue;
-            }
-            lut_preview_update_pipeline_gate();
-            msleep(20);
-            continue;
-        }
-        handled_generation = generation;
-        if (!index)
-        {
-            lut_preview_disarm_pipeline();
-            lut_preview_release_map();
-            lut_preview_release_display();
-            continue;
-        }
-
-        take_semaphore(lut_preview_engine_sem, 0);
-        int already_loaded = index == lut_preview_loaded_index &&
-                             lut_preview_yuv_map != 0;
-        if (already_loaded)
-        {
-            lut_preview_active = 1;
-            lut_preview_active_generation = generation;
-            lut_preview_last_source = 0;
-        }
-        give_semaphore(lut_preview_engine_sem);
-        if (already_loaded)
-        {
-            lut_preview_update_pipeline_gate();
-            continue;
-        }
-
-        /* A switch never keeps old and new compiled maps resident together.
-         * Return display ownership first, then release the old 256 KB map
-         * before allocating parser/cube/map working memory. */
-        lut_preview_release_display();
-        lut_preview_release_map();
-
-        /* Parsing a large text cube and compiling the runtime YUV map are
-         * CPU-heavy. On boot, do not let this work compete with Canon/Crop
-         * Rec configuration; begin only after real Canon frames have made
-         * the readiness gate pass. A newer menu request cancels the wait. */
-        int request_changed = 0;
-        while (!lut_preview_pipeline_armed)
-        {
-            lut_preview_update_pipeline_gate();
-            take_semaphore(lut_preview_request_sem, 0);
-            request_changed = ml_shutdown_requested ||
-                              generation != lut_preview_request_generation ||
-                              index != lut_preview_requested_index;
-            give_semaphore(lut_preview_request_sem);
-            if (request_changed)
-                break;
-            msleep(20);
-        }
-        if (request_changed)
-            continue;
-
-        uint32_t *new_map = 0;
-        int new_size = 0;
-        int cache_result = lut_preview_load_cache(index, generation,
-                                                  &new_map, &new_size);
-        if (cache_result == LUT_PREVIEW_LOAD_CANCELLED)
-        {
-            handled_generation = generation - 1;
-            continue;
-        }
-        int cache_hit = cache_result == LUT_PREVIEW_LOAD_OK;
-        int load_result = cache_hit ? LUT_PREVIEW_LOAD_OK :
-            lut_preview_load_file(path, generation, index,
-                                  &new_map, &new_size);
-        if (load_result == LUT_PREVIEW_LOAD_CANCELLED)
-        {
-            if (new_map) free(new_map);
-            handled_generation = generation - 1;
-            continue;
-        }
-        int loaded = load_result == LUT_PREVIEW_LOAD_OK;
-        if (loaded && !cache_hit && lut_preview_pipeline_armed &&
-            !RECORDING && !RECORDING_H264_STARTING)
-        {
-            take_semaphore(lut_preview_request_sem, 0);
-            int request_still_current =
-                generation == lut_preview_request_generation &&
-                index == lut_preview_requested_index;
-            give_semaphore(lut_preview_request_sem);
-            if (request_still_current)
-                lut_preview_save_cache(index, generation, new_map, new_size);
-        }
-        if (loaded && lut_preview_load_cancelled(generation, index))
-        {
-            free(new_map);
-            handled_generation = generation - 1;
-            continue;
-        }
-        /* A transition may have started while the map was compiling. Keep
-         * the compiled map, but prevent display redirection until a fresh
-         * set of Canon frames passes the gate again. */
-        lut_preview_update_pipeline_gate();
-
-        /* Serialize the final generation check with new GUI requests, then
-         * commit the immutable map while no renderer can retain the old one. */
-        take_semaphore(lut_preview_request_sem, 0);
-        if (generation != lut_preview_request_generation ||
-            index != lut_preview_requested_index)
-        {
-            give_semaphore(lut_preview_request_sem);
-            if (new_map) free(new_map);
-            continue;
-        }
-
-        take_semaphore(lut_preview_engine_sem, 0);
-
-        if (!loaded)
-        {
-            lut_preview_active = 0;
-            lut_preview_last_source = 0;
-            give_semaphore(lut_preview_engine_sem);
-            give_semaphore(lut_preview_request_sem);
-            if (notify_error)
-                NotifyBox(3000, "%s:\n%s", lut_preview_load_error, name);
-            continue;
-        }
-
-        /* The old map was released before compilation, so this handoff never
-         * creates a transient old-map + new-map memory peak. */
-        lut_preview_yuv_map = new_map;
-        lut_preview_size = new_size;
-        lut_preview_loaded_index = index;
-        lut_preview_last_source = 0;
-        lut_preview_active_generation = generation;
-        lut_preview_active = 1;
-        give_semaphore(lut_preview_engine_sem);
-        give_semaphore(lut_preview_request_sem);
-        lens_display_set_dirty();
-        lut_preview_update_pipeline_gate();
-    }
+    lut_preview_scan_files();
+    if (lut_preview > lut_preview_file_count ||
+        (lut_preview && !lut_preview_select_index(lut_preview, 0)))
+        lut_preview_select_index(0, 0);
 }
 
 TASK_CREATE("lut.preview.load", lut_preview_load_task, 0, 0x1f, 0x1000);
@@ -4564,9 +3905,6 @@ static void* display_filter_buffer = 0;
 static void* lut_preview_buffer_unaligned = 0;
 static void* lut_preview_back_buffer = 0;
 static void* last_canon_buffer = 0;
-static volatile int lut_preview_frame_pending = 0;
-static volatile int display_filter_release_requested = 0;
-static volatile int display_filter_release_ack = 0;
 
 static int display_filter_is_our_buffer(void *buffer)
 {
@@ -4578,10 +3916,6 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
 {
     if (!display_filter_buffer)
         return 0;
-    /* A completed back buffer is waiting for vsync. It is not writable until
-     * the presenter has installed it and released the previous front. */
-    if (lut_preview_frame_pending)
-        return 0;
     if (!lut_preview_back_buffer)
     {
         lut_preview_buffer_unaligned = malloc(720 * 480 * 2 + 32);
@@ -4592,31 +3926,20 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
     return CACHEABLE(lut_preview_back_buffer);
 }
 
-static int display_filter_queue_lut_buffer(void)
+static void display_filter_swap_lut_buffers(void)
 {
-    if (!display_filter_buffer || !lut_preview_back_buffer ||
-        lut_preview_frame_pending)
-        return 0;
-    lut_preview_frame_pending = 1;
-    return 1;
+    if (!display_filter_buffer || !lut_preview_back_buffer)
+        return;
+    void *old_front = display_filter_buffer;
+    display_filter_buffer = lut_preview_back_buffer;
+    lut_preview_back_buffer = old_front;
 }
 #else
 static uint32_t *display_filter_get_lut_back_buffer(void) { return 0; }
-static int display_filter_queue_lut_buffer(void) { return 0; }
+static void display_filter_swap_lut_buffers(void) {}
 #endif
 
 static int display_filter_valid_image = 0;
-
-static void lut_preview_release_display(void)
-{
-#ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
-    /* Stop publishing immediately; vsync performs the route handoff. This is
-     * the established display-filter release sequence on EOS M. */
-    lut_preview_frame_pending = 0;
-    display_filter_valid_image = 0;
-    display_filter_release_requested = 1;
-#endif
-}
 
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
 {
@@ -4626,12 +3949,15 @@ void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
     //~ void* dst = src_buf + buf_size;
 #if defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY)
 
-    /* EDMAC is updating current; the preceding ring member is complete. Keep
-     * this tracker local to the display worker, as in the proven ML path. */
+    // the EDMAC buffer is currently updating; use the previous one, which is complete
     static void* prev = 0;
     static void* buff = 0;
     void* current = (void*)shamem_read(REG_EDMAC_WRITE_LV_ADDR);
-    int c = (int)current;
+
+    // EDMAC may not point exactly to the LV buffer (e.g. it may skip the 16:9 bars or whatever)
+    // so we'll try to choose some buffer that's close enough to the EDMAC address
+    int c = (int) current;
+
     int b1 = (int)CACHEABLE(YUV422_LV_BUFFER_1);
     int b2 = (int)CACHEABLE(YUV422_LV_BUFFER_2);
     int b3 = (int)CACHEABLE(YUV422_LV_BUFFER_3);
@@ -4644,6 +3970,7 @@ void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf)
     #ifdef YUV422_LV_BUFFER_4
     else if (ABS(c - b4) < 200000) current = (void*)b4;
     #endif
+
     if (current != prev)
         buff = prev;
     prev = current;
@@ -4664,10 +3991,6 @@ int display_filter_enabled()
     #endif
     if (EXT_MONITOR_CONNECTED) return 0; // non-scalable code
     if (!lv) return 0;
-    /* Playback has its own YUV renderer and bitmap OSD.  Never let a LiveView
-     * filter remain enabled merely because Canon leaves lv set while the MLV
-     * player is active; doing so lets this callback consume playback VSYNC. */
-    if (PLAY_OR_QR_MODE || MENU_MODE) return 0;
 
     
     int mdf = 0;
@@ -4697,19 +4020,6 @@ int display_broken_for_mz()
 
 int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
 {
-    /* The MLV player owns both its YUV route and the ordering of its display
-     * callbacks.  Build #689's asynchronous filter presenter could reach the
-     * final CBR_RET_STOP path here during playback, which hid its control OSD.
-     * Do not restore a remembered LiveView route here: playback has already
-     * installed a different route.  Simply relinquish this callback. */
-    if (PLAY_OR_QR_MODE || MENU_MODE)
-    {
-        display_filter_valid_image = 0;
-        lut_preview_frame_pending = 0;
-        lut_preview_last_source = 0;
-        return CBR_RET_CONTINUE;
-    }
-
 #if defined(CONFIG_5D2)
     int sync = (MEM(x+0xe0) == YUV422_LV_BUFFER_1);
     int hacked = ( MEM(0x44fc+0xBC) == MEM(0x44fc+0xc4) && MEM(0x44fc+0xc4) == MEM(x+0xe0));
@@ -4783,34 +4093,16 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
         void *shown = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
         if (display_filter_is_our_buffer(shown) && last_canon_buffer)
             YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
-        lut_preview_frame_pending = 0;
         display_filter_valid_image = 0;
         lut_preview_last_source = 0;
-        display_filter_release_ack =
-            !display_filter_is_our_buffer(
-                (void *)YUV422_LV_BUFFER_DISPLAY_ADDR);
         return CBR_RET_CONTINUE;
-    }
-
-    display_filter_release_requested = 0;
-    display_filter_release_ack = 0;
-
-    /* Publish only completed LUT frames, and recycle the old front only from
-     * this vsync callback. The render task never swaps display ownership. */
-    if (lut_preview_frame_pending && lut_preview_should_render())
-    {
-        void *old_front = display_filter_buffer;
-        display_filter_buffer = lut_preview_back_buffer;
-        lut_preview_back_buffer = old_front;
-        lut_preview_frame_pending = 0;
-        display_filter_valid_image = 1;
     }
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
 
-    /* Save Canon's route so disabling the filter restores normal LiveView. */
-    void *current_route = (void*)YUV422_LV_BUFFER_DISPLAY_ADDR;
-    if (!display_filter_is_our_buffer(current_route))
-        last_canon_buffer = current_route;
+    /* save the old buffer (to restore it when turning off display filters) */
+    void* current_buffer = (void*) YUV422_LV_BUFFER_DISPLAY_ADDR;
+    if (!display_filter_is_our_buffer(current_buffer))
+        last_canon_buffer = current_buffer;
 
     /* switch the displayed buffer to our filtered image */
     YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) display_filter_buffer;
@@ -4824,24 +4116,14 @@ void display_filter_step(int k)
     if (!display_filter_enabled())
     {
         #ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
-        /* First return display ownership at vsync. Never free memory that the
-         * LCD may still be scanning from the previous frame. */
+        /* for new cameras: if there are no more display filters active, free the output buffer */
         if (display_filter_buffer)
         {
             if (display_filter_is_our_buffer(
                     (void *)YUV422_LV_BUFFER_DISPLAY_ADDR))
             {
-                display_filter_release_requested = 1;
-                display_filter_release_ack = 0;
-                return;
+                YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) last_canon_buffer;
             }
-
-            if (display_filter_release_requested &&
-                !display_filter_release_ack)
-                return;
-
-            if (lut_preview_engine_sem)
-                take_semaphore(lut_preview_engine_sem, 0);
             free(display_filter_buffer_unaligned);
             if (lut_preview_buffer_unaligned)
                 free(lut_preview_buffer_unaligned);
@@ -4850,11 +4132,6 @@ void display_filter_step(int k)
             lut_preview_back_buffer = 0;
             lut_preview_buffer_unaligned = 0;
             lut_preview_last_source = 0;
-            lut_preview_frame_pending = 0;
-            display_filter_release_requested = 0;
-            display_filter_release_ack = 0;
-            if (lut_preview_engine_sem)
-                give_semaphore(lut_preview_engine_sem);
         }
         #endif
         return;
@@ -4867,36 +4144,24 @@ void display_filter_step(int k)
         /* some routines (e.g. defishing) use 64-bit operations, so allocate a bit more and align the buffer */
         display_filter_buffer_unaligned = malloc(720*480*2 + 32);
         display_filter_buffer = ALIGN64SUP(display_filter_buffer_unaligned);
-        display_filter_valid_image = 0;
-        lut_preview_frame_pending = 0;
-        display_filter_release_requested = 0;
-        display_filter_release_ack = 0;
     }
     #endif
 
-    /* Preserve the proven display-filter cadence. Running immediately after
-     * every wake can repeatedly collide with Canon's scanout schedule. */
     msleep(20);
     
     //~ if (!HALFSHUTTER_PRESSED) return;
     
-    int filter_frame_completed = 0;
-    int lut_frame_queued = 0;
-
     #ifdef CONFIG_MODULES
     if (module_display_filter_update())
     {
-        filter_frame_completed = 1;
     }
     else
     #endif
+
     if (lut_preview_should_render())
     {
         if (k % 1 == 0)
-        {
-            lut_frame_queued = lut_preview_draw();
-            filter_frame_completed = lut_frame_queued;
-        }
+            lut_preview_draw();
     }
     else
 
@@ -4904,10 +4169,7 @@ void display_filter_step(int k)
     if (defish_preview)
     {
         if (k % 2 == 0)
-        {
             BMP_LOCK( if (lv) defish_draw_lv_color(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     
@@ -4915,10 +4177,7 @@ void display_filter_step(int k)
     if (anamorphic_preview)
     {
         if (k % 1 == 0)
-        {
             BMP_LOCK( if (lv) anamorphic_squeeze(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     
@@ -4926,22 +4185,14 @@ void display_filter_step(int k)
     if (focus_peaking_as_display_filter())
     {
         if (k % 1 == 0)
-        {
             BMP_LOCK( if (lv) peak_disp_filter(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     {
     }
     
-    /* LUT frames become valid only in the vsync presenter after the pending
-     * buffer is installed. Legacy filters still draw directly into front. */
-    if (filter_frame_completed && !lut_frame_queued)
-        display_filter_valid_image = 1;
+    display_filter_valid_image = 1;
 }
-#else
-static void lut_preview_release_display(void) {}
 #endif
 
 #ifdef CONFIG_KILL_FLICKER
@@ -5460,16 +4711,6 @@ static struct menu_entry play_menus[] = {
 
 static void tweak_init()
 {
-    /* GUI requests never wait for a frame render or LUT compilation. The
-     * short request lock and the engine ownership lock are deliberately
-     * separate and are created before the asynchronous loader is released. */
-    if (!lut_preview_request_sem)
-        lut_preview_request_sem = create_named_semaphore("lut_request", 1);
-    if (!lut_preview_engine_sem)
-        lut_preview_engine_sem = create_named_semaphore("lut_engine", 1);
-    if (!lut_preview_wake_sem)
-        lut_preview_wake_sem = create_named_semaphore("lut_wake", 0);
-
 #ifdef CONFIG_SLIM_MENUS
     #ifdef FEATURE_ANAMORPHIC_PREVIEW
     anamorphic_preview_add_slim_menu();
@@ -5497,4 +4738,3 @@ INIT_FUNC(__FILE__, tweak_init);
 #ifndef FEATURE_ARROW_SHORTCUTS
 int arrow_keys_shortcuts_active() { return 0; }
 #endif
-

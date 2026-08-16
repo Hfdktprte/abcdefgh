@@ -4791,7 +4791,8 @@ livev_hipriority_task( void* unused )
              * Draw is off. Run filter cleanup once before this task sleeps. */
             #ifdef CONFIG_DISPLAY_FILTERS
             extern void display_filter_step(int frame_number);
-            display_filter_step(k);
+            if (lv && !PLAY_OR_QR_MODE && !MENU_MODE)
+                display_filter_step(k);
             #endif
             while (clearscreen == 1 && (get_halfshutter_pressed() || dofpreview)) msleep(100);
             while (RECORDING_H264_STARTING) msleep(100);
@@ -4811,8 +4812,11 @@ livev_hipriority_task( void* unused )
                     #ifdef CONFIG_DISPLAY_FILTERS
                     /* The LCD route is released from the VSYNC callback.
                      * Revisit cleanup while the normal overlay worker sleeps
-                     * so LUT buffers are freed only after that acknowledgement. */
-                    display_filter_step(k);
+                     * so LUT buffers are freed only after that acknowledgement.
+                     * Never touch display-filter ownership in playback; the MLV
+                     * player owns that screen and its bitmap control layer. */
+                    if (lv && !PLAY_OR_QR_MODE && !MENU_MODE)
+                        display_filter_step(k);
                     #endif
                 }
                 vram_params_set_dirty();

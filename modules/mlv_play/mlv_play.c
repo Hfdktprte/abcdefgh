@@ -107,7 +107,6 @@ static uint32_t mlv_play_osd_force_redraw = 0;
 static uint32_t mlv_play_osd_idle = 1000;
 static uint32_t mlv_play_osd_item = 0;
 static uint32_t mlv_play_paused = 0;
-static int32_t mlv_play_osd_trace_state = -1;
 static uint32_t mlv_play_info = 1;
 static uint32_t mlv_play_timer_stop = 1;
 static uint32_t mlv_play_frames_skipped = 0;
@@ -647,24 +646,13 @@ static uint32_t mlv_play_osd_draw()
 {
     uint32_t redraw = 0;
     uint32_t border = 4;
-    uint32_t y_offset = 20;
-    const uint32_t osd_font = FONT_MED;
-    int screen_bottom = MIN(os.y_max, 479);
-
-    /* File Manager and ML menus draw into the idle bitmap page.  Playback
-     * video uses YUV, so a stale idle-page selection hides only this OSD and
-     * makes the failure look like missing controls.  The player owns the real
-     * bitmap page while active. */
-    bmp_draw_to_idle(0);
+    uint32_t y_offset = 28;
 
     /* undraw last drawn OSD item */
     static char osd_line[64] = "";
-    
-    /* Use the same exported font and metrics as the playback metadata.  The
-     * inline dynamic-font lookup used by fontspec_height() can resolve to a
-     * zero-height font from a module, collapsing this menu to two thin lines. */
-    uint32_t w = bmp_string_width(osd_font, osd_line);
-    uint32_t h = font_med.height;
+
+    uint32_t w = bmp_string_width(FONT_LARGE, osd_line);
+    uint32_t h = fontspec_height(FONT_LARGE);
     bmp_fill(COLOR_EMPTY, mlv_play_osd_x - w/2 - border, mlv_play_osd_y - border, w + 2 * border, h + 2 * border);
     
     /* handle animation */
@@ -679,14 +667,14 @@ static uint32_t mlv_play_osd_draw()
         case MLV_PLAY_MENU_HIDDEN:
         case MLV_PLAY_MENU_IDLE:
         {
-            mlv_play_osd_y = screen_bottom + 1;
+            mlv_play_osd_y = os.y_max + 1;
             redraw = 0;
             break;
         }
         
         case MLV_PLAY_MENU_FADEIN:
         {
-            int y_top = screen_bottom - h - y_offset;
+            int y_top = os.y_max - font_large.height - y_offset;
             mlv_play_osd_y = MAX(mlv_play_osd_y - border, y_top);
             if(mlv_play_osd_y <= y_top)
             {
@@ -698,7 +686,7 @@ static uint32_t mlv_play_osd_draw()
         
         case MLV_PLAY_MENU_FADEOUT:
         {
-            int y_bottom = screen_bottom + 1;
+            int y_bottom = os.y_max + 1;
             mlv_play_osd_y = MIN(mlv_play_osd_y + border, y_bottom);
             if(mlv_play_osd_y >= y_bottom)
             {
@@ -710,7 +698,7 @@ static uint32_t mlv_play_osd_draw()
     }
     
     /* draw a line with all OSD buttons */
-    char selected_item[64] = "";
+    char selected_item[64];
     uint32_t selected_x = 0;
     
     strcpy(osd_line, "");
@@ -723,7 +711,7 @@ static uint32_t mlv_play_osd_draw()
         if(pos == mlv_play_osd_item)
         {
             strcpy(selected_item, msg);
-            selected_x = bmp_string_width(osd_font, osd_line);
+            selected_x = bmp_string_width(FONT_LARGE, osd_line);
         }
         
         strcat(osd_line, "  ");
@@ -731,50 +719,12 @@ static uint32_t mlv_play_osd_draw()
         strcat(osd_line, "  ");
     }
     
-    w = bmp_string_width(osd_font, osd_line);
+    w = bmp_string_width(FONT_LARGE, osd_line);
     bmp_fill(COLOR_BG, mlv_play_osd_x - w/2 - border, mlv_play_osd_y - border, w + 2 * border, h + 2 * border);
-    bmp_printf(FONT(osd_font,COLOR_WHITE,COLOR_BG), mlv_play_osd_x - w/2, mlv_play_osd_y, osd_line);
-    
+    bmp_printf(FONT(FONT_LARGE,COLOR_WHITE,COLOR_BG), mlv_play_osd_x - w/2, mlv_play_osd_y, osd_line);
+
     /* draw selected item over with blue background */
-    bmp_printf(FONT(osd_font,COLOR_WHITE,COLOR_BLUE), mlv_play_osd_x - w/2 + selected_x, mlv_play_osd_y, "  %s  ", selected_item);
-
-    /* Hardware-only diagnostic for EOS M playback OSD failures.  Log only
-     * state transitions, then count the pixels that actually reached the
-     * real bitmap page.  This distinguishes missing key events, bad layout,
-     * failed text rendering and wrong-page routing without changing timing. */
-    if ((int32_t)mlv_play_osd_state != mlv_play_osd_trace_state)
-    {
-        uint8_t *real = bmp_vram_real();
-        uint8_t *idle = bmp_vram_idle();
-        uint32_t white = 0;
-        uint32_t blue = 0;
-        uint32_t occupied = 0;
-        int y0 = COERCE(mlv_play_osd_y - (int)border, 0, 479);
-        int y1 = COERCE(mlv_play_osd_y + (int)h + (int)border, 0, 480);
-
-        if (real)
-        {
-            for (int y = y0; y < y1; y++)
-            {
-                for (int x = 0; x < 720; x++)
-                {
-                    uint8_t pixel = real[x + y * BMPPITCH];
-                    white += pixel == COLOR_WHITE;
-                    blue += pixel == COLOR_BLUE;
-                    occupied += pixel != COLOR_EMPTY;
-                }
-            }
-        }
-
-        trace_write(mlv_play_trace_ctx,
-            "OSD state=%d item=%d xy=%d,%d wh=%d,%d os=%d,%d..%d,%d "
-            "pages=%08x/%08x pixels=%d/%d/%d",
-            mlv_play_osd_state, mlv_play_osd_item,
-            mlv_play_osd_x, mlv_play_osd_y, w, h,
-            os.x0, os.y0, os.x_max, os.y_max,
-            (uint32_t)real, (uint32_t)idle, white, blue, occupied);
-        mlv_play_osd_trace_state = mlv_play_osd_state;
-    }
+    bmp_printf(FONT(FONT_LARGE,COLOR_WHITE,COLOR_BLUE), mlv_play_osd_x - w/2 + selected_x, mlv_play_osd_y, "  %s  ", selected_item);
     
     return redraw;
 }
@@ -814,10 +764,6 @@ static void mlv_play_osd_task(void *priv)
         {
             /* there was a keypress */
             last_keypress_time = get_ms_clock();
-            trace_write(mlv_play_trace_ctx,
-                "OSD key=%x state=%d item=%d y=%d",
-                key, mlv_play_osd_state, mlv_play_osd_item,
-                mlv_play_osd_y);
             
             /* no matter which state - these are handled */
             switch(key)
@@ -931,21 +877,9 @@ static void mlv_play_osd_task(void *priv)
             break;
         }
         
-        uint32_t osd_animating = 0;
-        BMP_LOCK(
-            osd_animating = mlv_play_osd_draw();
-        )
-
-        if(osd_animating)
+        if(mlv_play_osd_draw())
         {
             next_render_time = get_ms_clock() + mlv_play_render_timestep;
-        }
-        else if(mlv_play_osd_state == MLV_PLAY_MENU_SHOWN)
-        {
-            /* Playback and overlay tasks share bitmap VRAM.  Refresh the
-             * completed control row often enough to repair any Canon/ML
-             * repaint without making the animation task continuously busy. */
-            next_render_time = get_ms_clock() + 100;
         }
         else
         {
@@ -2648,14 +2582,6 @@ static void mlv_play_enter_playback()
     /* prepare display */
     NotifyBoxHide();
     enter_play_mode();
-
-    /* Canon changes bitmap routing/palette state while entering playback.
-     * Force ML's bitmap colors back on before the OSD task draws its controls;
-     * a stale mute state can otherwise leave only parts of the blue selector. */
-    bmp_mute_flag_reset();
-    bmp_on();
-    bmp_draw_to_idle(0);
-    mlv_play_osd_trace_state = -1;
 
     /* render task is slave and controlled via these variables */
     mlv_play_render_abort = 0;

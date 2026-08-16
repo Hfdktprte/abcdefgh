@@ -4809,15 +4809,6 @@ livev_hipriority_task( void* unused )
                 while (!livev_hipriority_should_run())
                 {
                     msleep(100);
-                    #ifdef CONFIG_DISPLAY_FILTERS
-                    /* The LCD route is released from the VSYNC callback.
-                     * Revisit cleanup while the normal overlay worker sleeps
-                     * so LUT buffers are freed only after that acknowledgement.
-                     * Never touch display-filter ownership in playback; the MLV
-                     * player owns that screen and its bitmap control layer. */
-                    if (lv && !PLAY_OR_QR_MODE && !MENU_MODE)
-                        display_filter_step(k);
-                    #endif
                 }
                 vram_params_set_dirty();
                 zoom_overlay_triggered_by_focus_ring_countdown = 0;

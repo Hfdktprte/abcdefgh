@@ -1603,6 +1603,29 @@ static void boot_logo_mask_canon_status_tile(void)
     bmp_draw_to_idle(0);
 }
 
+/* Called after Canon's LiveView state transition for the current frame.
+ * Writing the visible page here closes the one-frame window where an
+ * already-queued Canon bitmap transfer could become visible between task
+ * wakeups.  Keep this callback small; it runs from the LV sync hook. */
+void FAST boot_logo_vsync_mask(void)
+{
+    const int x = 600;
+    const int y = 400;
+    const int w = 120;
+    const int h = 80;
+    uint8_t *vram;
+
+    if (!boot_logo_active)
+        return;
+
+    vram = bmp_vram_real();
+    if (!vram)
+        return;
+
+    for (int row = y; row < y + h; row++)
+        memset(vram + BM(x, row), COLOR_BLACK, w);
+}
+
 static void boot_logo_clear(void)
 {
     bmp_draw_to_idle(1);

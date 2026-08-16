@@ -1626,6 +1626,7 @@ static void boot_logo_task(void *unused)
     (void) unused;
 
     const int fallback_handoff_time = boot_logo_hide_time + 500;
+    const int fast_mask_end_time = get_ms_clock() + 350;
     while (boot_logo_active)
     {
         int splash_time_done = get_ms_clock() >= boot_logo_hide_time;
@@ -1636,7 +1637,7 @@ static void boot_logo_task(void *unused)
         /* Canon updates this status tile asynchronously during startup, so
          * keep just this small area covered while the splash owns the LCD. */
         BMP_LOCK( boot_logo_mask_canon_status_tile(); )
-        msleep(20);
+        msleep(get_ms_clock() < fast_mask_end_time ? 10 : 20);
     }
 
     if (boot_logo_active)
@@ -1665,5 +1666,7 @@ void boot_logo_show(void)
     canon_gui_disable_front_buffer();
     boot_logo_hide_time = get_ms_clock() + 2000;
     BMP_LOCK( boot_logo_present(); )
-    task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);
+    /* Run promptly during the first busy part of startup; a low-priority
+     * splash task can otherwise miss the first Canon status-tile update. */
+    task_create("boot_logo", 0x18, 0x1000, boot_logo_task, 0);
 }

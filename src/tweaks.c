@@ -2382,11 +2382,17 @@ CONFIG_INT("lv.lut.preview", lut_preview, 0);
 #define LUT_PREVIEW_Y_SIZE  (1 << LUT_PREVIEW_Y_BITS)
 #define LUT_PREVIEW_UV_SIZE (1 << LUT_PREVIEW_UV_BITS)
 #define LUT_PREVIEW_MAP_SIZE (LUT_PREVIEW_Y_SIZE * LUT_PREVIEW_UV_SIZE * LUT_PREVIEW_UV_SIZE)
+#define LUT_PREVIEW_MAP_BYTES (LUT_PREVIEW_MAP_SIZE * sizeof(uint32_t))
+#define LUT_PREVIEW_CACHE_MAGIC 0x4C564331 /* "LVC1" */
+#define LUT_PREVIEW_CACHE_VERSION 1
+#define LUT_PREVIEW_CACHE_IO_SIZE 8192
 
 static uint16_t *lut_preview_data = 0;
 static int lut_preview_size = 0;
 static uint32_t *lut_preview_yuv_map = 0;
 static char lut_preview_names[LUT_PREVIEW_MAX_FILES][LUT_PREVIEW_NAME_LEN];
+static uint32_t lut_preview_source_sizes[LUT_PREVIEW_MAX_FILES];
+static uint32_t lut_preview_source_timestamps[LUT_PREVIEW_MAX_FILES];
 static int lut_preview_file_count = 0;
 static int lut_preview_files_scanned = 0;
 static int lut_preview_loaded_index = 0;
@@ -2394,6 +2400,56 @@ static void *lut_preview_last_source = 0;
 static const char *lut_preview_load_error = "Invalid LUT";
 
 static int lut_preview_build_yuv_map(void);
+
+struct lut_preview_cache_header
+{
+    uint32_t magic;
+    uint32_t version;
+    uint32_t header_size;
+    uint32_t map_bytes;
+    uint32_t map_entries;
+    uint32_t y_bits;
+    uint32_t uv_bits;
+    uint32_t cube_size;
+    uint32_t source_size;
+    uint32_t source_timestamp;
+    uint32_t source_name_hash;
+    uint32_t map_hash;
+};
+
+static uint32_t lut_preview_hash_bytes(uint32_t hash, const void *data,
+                                       uint32_t size)
+{
+    const uint8_t *bytes = data;
+    for (uint32_t i = 0; i < size; i++)
+    {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static uint32_t lut_preview_name_hash(const char *name)
+{
+    uint32_t hash = 2166136261u;
+    while (*name)
+    {
+        char c = *name++;
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        hash = lut_preview_hash_bytes(hash, &c, 1);
+    }
+    return hash;
+}
+
+static void lut_preview_cache_paths(const char *name, char *cache_path,
+                                    char *temp_path)
+{
+    uint32_t hash = lut_preview_name_hash(name);
+    snprintf(cache_path, FIO_MAX_PATH_LENGTH,
+             LUT_PREVIEW_DIR "L%08X.LVC", hash);
+    snprintf(temp_path, FIO_MAX_PATH_LENGTH,
+             LUT_PREVIEW_DIR "T%08X.TMP", hash);
+}
 
 static int lut_preview_valid_filename(const char *name)
 {
@@ -2404,6 +2460,8 @@ static int lut_preview_valid_filename(const char *name)
 static void lut_preview_sort_files(void)
 {
     char tmp[LUT_PREVIEW_NAME_LEN];
+    uint32_t tmp_size;
+    uint32_t tmp_timestamp;
     for (int i = 0; i < lut_preview_file_count; i++)
     {
         for (int j = i + 1; j < lut_preview_file_count; j++)
@@ -2414,6 +2472,13 @@ static void lut_preview_sort_files(void)
                 snprintf(lut_preview_names[i], LUT_PREVIEW_NAME_LEN, "%s",
                          lut_preview_names[j]);
                 snprintf(lut_preview_names[j], LUT_PREVIEW_NAME_LEN, "%s", tmp);
+                tmp_size = lut_preview_source_sizes[i];
+                lut_preview_source_sizes[i] = lut_preview_source_sizes[j];
+                lut_preview_source_sizes[j] = tmp_size;
+                tmp_timestamp = lut_preview_source_timestamps[i];
+                lut_preview_source_timestamps[i] =
+                    lut_preview_source_timestamps[j];
+                lut_preview_source_timestamps[j] = tmp_timestamp;
             }
         }
     }
@@ -2437,6 +2502,8 @@ static void lut_preview_scan_files(void)
             continue;
         snprintf(lut_preview_names[lut_preview_file_count], LUT_PREVIEW_NAME_LEN,
                  "%s", file.name);
+        lut_preview_source_sizes[lut_preview_file_count] = file.size;
+        lut_preview_source_timestamps[lut_preview_file_count] = file.timestamp;
         lut_preview_file_count++;
     }
     while (FIO_FindNextEx(dirent, &file) == 0);
@@ -2450,6 +2517,165 @@ static const char *lut_preview_selected_name(void)
     if (lut_preview < 1 || lut_preview > lut_preview_file_count)
         return "OFF";
     return lut_preview_names[lut_preview - 1];
+}
+
+/* Load a precompiled YUV lookup map. Cache validation binds it to the source
+ * filename, size, timestamp, map geometry and a full payload checksum. */
+static int lut_preview_load_cache(int index)
+{
+    char cache_path[FIO_MAX_PATH_LENGTH];
+    char temp_path[FIO_MAX_PATH_LENGTH];
+    struct lut_preview_cache_header header;
+    uint32_t file_size = 0;
+    uint32_t hash = 2166136261u;
+    int source = index - 1;
+    int stale = 0;
+    uint32_t *map = 0;
+
+    if (source < 0 || source >= lut_preview_file_count)
+        return 0;
+
+    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
+    (void)temp_path;
+    if (FIO_GetFileSize(cache_path, &file_size) ||
+        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
+        return 0;
+
+    void *io = fio_malloc(LUT_PREVIEW_CACHE_IO_SIZE);
+    if (!io)
+        return 0;
+    FILE *file = FIO_OpenFile(cache_path, O_RDONLY | O_SYNC);
+    if (!file)
+    {
+        fio_free(io);
+        return 0;
+    }
+
+    if (FIO_ReadFile(file, io, sizeof(header)) != sizeof(header))
+    {
+        stale = 1;
+        goto cache_read_done;
+    }
+    memcpy(&header, io, sizeof(header));
+    if (header.magic != LUT_PREVIEW_CACHE_MAGIC ||
+        header.version != LUT_PREVIEW_CACHE_VERSION ||
+        header.header_size != sizeof(header) ||
+        header.map_bytes != LUT_PREVIEW_MAP_BYTES ||
+        header.map_entries != LUT_PREVIEW_MAP_SIZE ||
+        header.y_bits != LUT_PREVIEW_Y_BITS ||
+        header.uv_bits != LUT_PREVIEW_UV_BITS ||
+        header.cube_size < 2 || header.cube_size > LUT_PREVIEW_MAX_SIZE ||
+        header.source_size != lut_preview_source_sizes[source] ||
+        header.source_timestamp != lut_preview_source_timestamps[source] ||
+        header.source_name_hash !=
+            lut_preview_name_hash(lut_preview_names[source]))
+    {
+        stale = 1;
+        goto cache_read_done;
+    }
+
+    map = malloc(LUT_PREVIEW_MAP_BYTES);
+    if (!map)
+        goto cache_read_done;
+
+    uint32_t offset = 0;
+    while (offset < LUT_PREVIEW_MAP_BYTES)
+    {
+        uint32_t chunk = MIN(LUT_PREVIEW_CACHE_IO_SIZE,
+                             LUT_PREVIEW_MAP_BYTES - offset);
+        if (FIO_ReadFile(file, io, chunk) != (int)chunk)
+        {
+            stale = 1;
+            free(map);
+            map = 0;
+            break;
+        }
+        memcpy((uint8_t *)map + offset, io, chunk);
+        hash = lut_preview_hash_bytes(hash, io, chunk);
+        offset += chunk;
+    }
+
+    if (map && hash != header.map_hash)
+    {
+        stale = 1;
+        free(map);
+        map = 0;
+    }
+
+    if (map)
+    {
+        uint32_t *old_map = lut_preview_yuv_map;
+        lut_preview_yuv_map = map;
+        lut_preview_size = header.cube_size;
+        if (old_map)
+            free(old_map);
+    }
+
+cache_read_done:
+    FIO_CloseFile(file);
+    fio_free(io);
+    if (stale)
+        FIO_RemoveFile(cache_path);
+    return map != 0;
+}
+
+/* Write to a temporary file and rename only after size verification, so a
+ * shutdown during compilation cannot publish a partially written cache. */
+static int lut_preview_save_cache(int index)
+{
+    char cache_path[FIO_MAX_PATH_LENGTH];
+    char temp_path[FIO_MAX_PATH_LENGTH];
+    uint32_t file_size = 0;
+    int source = index - 1;
+
+    if (!lut_preview_yuv_map || source < 0 ||
+        source >= lut_preview_file_count || lut_preview_size < 2 ||
+        lut_preview_size > LUT_PREVIEW_MAX_SIZE)
+        return 0;
+
+    struct lut_preview_cache_header header = {
+        .magic = LUT_PREVIEW_CACHE_MAGIC,
+        .version = LUT_PREVIEW_CACHE_VERSION,
+        .header_size = sizeof(struct lut_preview_cache_header),
+        .map_bytes = LUT_PREVIEW_MAP_BYTES,
+        .map_entries = LUT_PREVIEW_MAP_SIZE,
+        .y_bits = LUT_PREVIEW_Y_BITS,
+        .uv_bits = LUT_PREVIEW_UV_BITS,
+        .cube_size = lut_preview_size,
+        .source_size = lut_preview_source_sizes[source],
+        .source_timestamp = lut_preview_source_timestamps[source],
+        .source_name_hash = lut_preview_name_hash(lut_preview_names[source]),
+        .map_hash = lut_preview_hash_bytes(2166136261u,
+                                           lut_preview_yuv_map,
+                                           LUT_PREVIEW_MAP_BYTES),
+    };
+
+    lut_preview_cache_paths(lut_preview_names[source], cache_path, temp_path);
+    FIO_RemoveFile(temp_path);
+    FILE *file = FIO_CreateFile(temp_path);
+    if (!file)
+        return 0;
+
+    int ok = FIO_WriteFile(file, &header, sizeof(header)) == sizeof(header) &&
+             FIO_WriteFile(file, lut_preview_yuv_map,
+                           LUT_PREVIEW_MAP_BYTES) ==
+                 (int)LUT_PREVIEW_MAP_BYTES;
+    FIO_CloseFile(file);
+
+    if (!ok || FIO_GetFileSize(temp_path, &file_size) ||
+        file_size != sizeof(header) + LUT_PREVIEW_MAP_BYTES)
+    {
+        FIO_RemoveFile(temp_path);
+        return 0;
+    }
+
+    FIO_RemoveFile(cache_path);
+    if (FIO_RenameFile(temp_path, cache_path))
+    {
+        FIO_RemoveFile(temp_path);
+        return 0;
+    }
+    return 1;
 }
 
 static const char * lut_skip_spaces(const char *p, const char *end)
@@ -2729,13 +2955,16 @@ static int lut_preview_select_index(int index, int notify_error)
     char path[FIO_MAX_PATH_LENGTH];
     snprintf(path, sizeof(path), LUT_PREVIEW_DIR "%s",
              lut_preview_names[index - 1]);
-    if (!lut_preview_load_file(path))
+    int cache_hit = lut_preview_load_cache(index);
+    if (!cache_hit && !lut_preview_load_file(path))
     {
         if (notify_error)
             NotifyBox(3000, "%s:\n%s", lut_preview_load_error,
                       lut_preview_names[index - 1]);
         return 0;
     }
+    if (!cache_hit)
+        lut_preview_save_cache(index);
 
     lut_preview = index;
     lut_preview_loaded_index = index;

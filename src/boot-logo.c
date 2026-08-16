@@ -1585,45 +1585,27 @@ static void boot_logo_present(void)
     bmp_draw_to_idle(0);
 }
 
-/* EOS M may draw one small Canon status tile near the lower-right corner
- * after the splash has already been presented.  Mask only that unused part
- * of the splash in both bitmap pages; refreshing the entire canvas caused
- * visible flicker and could expose other Canon GUI elements. */
-static void boot_logo_mask_canon_status_tile(void)
+/* Canon can finish a queued status-icon draw after its front buffer has been
+ * disabled.  Repainting the affected pixels races that late draw and may
+ * still expose it for one LCD frame.  The splash uses only these three
+ * colors, so make every other palette index opaque black until handoff.
+ * Canon may still write the icon pixels, but they cannot become visible. */
+static void boot_logo_isolate_palette(int isolate)
 {
-    const int x = 600;
-    const int y = 400;
-    const int w = 120;
-    const int h = 80;
+    uint32_t black = LCD_Palette[3 * COLOR_BLACK + 2];
 
-    bmp_draw_to_idle(0);
-    bmp_fill(COLOR_BLACK, x, y, w, h);
-    bmp_draw_to_idle(1);
-    bmp_fill(COLOR_BLACK, x, y, w, h);
-    bmp_draw_to_idle(0);
-}
+    for (int color = 0; color < 255; color++)
+    {
+        if (isolate &&
+            (color == COLOR_BLACK ||
+             color == COLOR_WHITE ||
+             color == COLOR_ORANGE))
+            continue;
 
-/* Called after Canon's LiveView state transition for the current frame.
- * Writing the visible page here closes the one-frame window where an
- * already-queued Canon bitmap transfer could become visible between task
- * wakeups.  Keep this callback small; it runs from the LV sync hook. */
-void FAST boot_logo_vsync_mask(void)
-{
-    const int x = 600;
-    const int y = 400;
-    const int w = 120;
-    const int h = 80;
-    uint8_t *vram;
-
-    if (!boot_logo_active)
-        return;
-
-    vram = bmp_vram_real();
-    if (!vram)
-        return;
-
-    for (int row = y; row < y + h; row++)
-        memset(vram + BM(x, row), COLOR_BLACK, w);
+        uint32_t value = isolate ? black : LCD_Palette[3 * color + 2];
+        EngDrvOut(LCD_Palette[3 * color], value);
+        EngDrvOut(LCD_Palette[3 * color + 0x300], value);
+    }
 }
 
 static void boot_logo_clear(void)
@@ -1649,18 +1631,13 @@ static void boot_logo_task(void *unused)
     (void) unused;
 
     const int fallback_handoff_time = boot_logo_hide_time + 500;
-    const int fast_mask_end_time = get_ms_clock() + 350;
     while (boot_logo_active)
     {
         int splash_time_done = get_ms_clock() >= boot_logo_hide_time;
         int ml_display_ready = ml_started &&
             (liveview_display_idle() || get_ms_clock() >= fallback_handoff_time);
         if (splash_time_done && ml_display_ready) break;
-
-        /* Canon updates this status tile asynchronously during startup, so
-         * keep just this small area covered while the splash owns the LCD. */
-        BMP_LOCK( boot_logo_mask_canon_status_tile(); )
-        msleep(get_ms_clock() < fast_mask_end_time ? 10 : 20);
+        msleep(20);
     }
 
     if (boot_logo_active)
@@ -1676,7 +1653,9 @@ static void boot_logo_task(void *unused)
             msleep(20);
         boot_logo_handoff_pending = 0;
         BMP_LOCK( boot_logo_release_canvas(); )
+        boot_logo_isolate_palette(0);
         boot_logo_active = 0;
+        lens_display_set_dirty();
     }
 }
 
@@ -1687,9 +1666,8 @@ void boot_logo_show(void)
     /* Keep Canon's dialogs from overwriting the splash while it is visible. */
     boot_logo_active = 1;
     canon_gui_disable_front_buffer();
+    boot_logo_isolate_palette(1);
     boot_logo_hide_time = get_ms_clock() + 2000;
     BMP_LOCK( boot_logo_present(); )
-    /* Run promptly during the first busy part of startup; a low-priority
-     * splash task can otherwise miss the first Canon status-tile update. */
-    task_create("boot_logo", 0x18, 0x1000, boot_logo_task, 0);
+    task_create("boot_logo", 0x1e, 0x1000, boot_logo_task, 0);
 }

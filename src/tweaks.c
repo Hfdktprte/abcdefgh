@@ -3348,7 +3348,7 @@ static inline uint32_t lut_preview_map_pair(const uint32_t *map, uint32_t in)
 static int lut_preview_should_render(void)
 {
     return lut_preview_is_ready() && lut_preview_pipeline_armed &&
-           lv && !RECORDING &&
+           lv && !PLAY_OR_QR_MODE && !MENU_MODE && !RECORDING &&
            !RECORDING_H264_STARTING && lv_dispsize <= 5 &&
            !should_draw_zoom_overlay() && !gui_menu_shown();
 }
@@ -4664,6 +4664,10 @@ int display_filter_enabled()
     #endif
     if (EXT_MONITOR_CONNECTED) return 0; // non-scalable code
     if (!lv) return 0;
+    /* Playback has its own YUV renderer and bitmap OSD.  Never let a LiveView
+     * filter remain enabled merely because Canon leaves lv set while the MLV
+     * player is active; doing so lets this callback consume playback VSYNC. */
+    if (PLAY_OR_QR_MODE || MENU_MODE) return 0;
 
     
     int mdf = 0;
@@ -4693,6 +4697,19 @@ int display_broken_for_mz()
 
 int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
 {
+    /* The MLV player owns both its YUV route and the ordering of its display
+     * callbacks.  Build #689's asynchronous filter presenter could reach the
+     * final CBR_RET_STOP path here during playback, which hid its control OSD.
+     * Do not restore a remembered LiveView route here: playback has already
+     * installed a different route.  Simply relinquish this callback. */
+    if (PLAY_OR_QR_MODE || MENU_MODE)
+    {
+        display_filter_valid_image = 0;
+        lut_preview_frame_pending = 0;
+        lut_preview_last_source = 0;
+        return CBR_RET_CONTINUE;
+    }
+
 #if defined(CONFIG_5D2)
     int sync = (MEM(x+0xe0) == YUV422_LV_BUFFER_1);
     int hacked = ( MEM(0x44fc+0xBC) == MEM(0x44fc+0xc4) && MEM(0x44fc+0xc4) == MEM(x+0xe0));

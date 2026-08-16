@@ -646,7 +646,8 @@ static uint32_t mlv_play_osd_draw()
 {
     uint32_t redraw = 0;
     uint32_t border = 4;
-    uint32_t y_offset = 28;
+    uint32_t y_offset = 20;
+    const uint32_t osd_font = FONT_MED;
     int screen_bottom = MIN(os.y_max, 479);
 
     /* File Manager and ML menus draw into the idle bitmap page.  Playback
@@ -658,8 +659,14 @@ static uint32_t mlv_play_osd_draw()
     /* undraw last drawn OSD item */
     static char osd_line[64] = "";
     
-    uint32_t w = bmp_string_width(FONT_LARGE, osd_line);
-    uint32_t h = fontspec_height(FONT_LARGE);
+    /* FONT_LARGE is not guaranteed to be resident while mlv_play owns most of
+     * the available memory.  If that RBF font is missing, its reported height
+     * collapses to zero and this menu becomes the thin horizontal strip seen
+     * on EOS M.  FONT_MED is already used by (and proven resident for) the
+     * playback metadata, so use one font and one set of metrics for the entire
+     * control row. */
+    uint32_t w = bmp_string_width(osd_font, osd_line);
+    uint32_t h = fontspec_height(osd_font);
     bmp_fill(COLOR_EMPTY, mlv_play_osd_x - w/2 - border, mlv_play_osd_y - border, w + 2 * border, h + 2 * border);
     
     /* handle animation */
@@ -681,7 +688,7 @@ static uint32_t mlv_play_osd_draw()
         
         case MLV_PLAY_MENU_FADEIN:
         {
-            int y_top = screen_bottom - font_large.height - y_offset;
+            int y_top = screen_bottom - h - y_offset;
             mlv_play_osd_y = MAX(mlv_play_osd_y - border, y_top);
             if(mlv_play_osd_y <= y_top)
             {
@@ -705,7 +712,7 @@ static uint32_t mlv_play_osd_draw()
     }
     
     /* draw a line with all OSD buttons */
-    char selected_item[64];
+    char selected_item[64] = "";
     uint32_t selected_x = 0;
     
     strcpy(osd_line, "");
@@ -718,7 +725,7 @@ static uint32_t mlv_play_osd_draw()
         if(pos == mlv_play_osd_item)
         {
             strcpy(selected_item, msg);
-            selected_x = bmp_string_width(FONT_LARGE, osd_line);
+            selected_x = bmp_string_width(osd_font, osd_line);
         }
         
         strcat(osd_line, "  ");
@@ -726,12 +733,12 @@ static uint32_t mlv_play_osd_draw()
         strcat(osd_line, "  ");
     }
     
-    w = bmp_string_width(FONT_LARGE, osd_line);
+    w = bmp_string_width(osd_font, osd_line);
     bmp_fill(COLOR_BG, mlv_play_osd_x - w/2 - border, mlv_play_osd_y - border, w + 2 * border, h + 2 * border);
-    bmp_printf(FONT(FONT_LARGE,COLOR_WHITE,COLOR_BG), mlv_play_osd_x - w/2, mlv_play_osd_y, osd_line);
+    bmp_printf(FONT(osd_font,COLOR_WHITE,COLOR_BG), mlv_play_osd_x - w/2, mlv_play_osd_y, osd_line);
     
     /* draw selected item over with blue background */
-    bmp_printf(FONT(FONT_LARGE,COLOR_WHITE,COLOR_BLUE), mlv_play_osd_x - w/2 + selected_x, mlv_play_osd_y, "  %s  ", selected_item);
+    bmp_printf(FONT(osd_font,COLOR_WHITE,COLOR_BLUE), mlv_play_osd_x - w/2 + selected_x, mlv_play_osd_y, "  %s  ", selected_item);
     
     return redraw;
 }

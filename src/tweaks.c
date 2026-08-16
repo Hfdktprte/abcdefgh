@@ -4390,13 +4390,16 @@ void display_filter_step(int k)
             if (display_filter_is_our_buffer(
                     (void *)YUV422_LV_BUFFER_DISPLAY_ADDR))
             {
-                /* Return the route now, but keep both allocations alive until
-                 * a later worker pass confirms the LCD no longer scans them. */
                 if (last_canon_buffer)
                     YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
-                lut_preview_frame_pending = 0;
-                display_filter_valid_image = 0;
-                return;
+                /* Only LUT double-buffering needs a deferred free. Legacy and
+                 * module filters retain Build #708's immediate cleanup path. */
+                if (lut_preview_back_buffer)
+                {
+                    lut_preview_frame_pending = 0;
+                    display_filter_valid_image = 0;
+                    return;
+                }
             }
             free(display_filter_buffer_unaligned);
             if (lut_preview_buffer_unaligned)
@@ -4419,8 +4422,11 @@ void display_filter_step(int k)
         /* some routines (e.g. defishing) use 64-bit operations, so allocate a bit more and align the buffer */
         display_filter_buffer_unaligned = malloc(720*480*2 + 32);
         display_filter_buffer = ALIGN64SUP(display_filter_buffer_unaligned);
-        display_filter_valid_image = 0;
-        lut_preview_frame_pending = 0;
+        if (lut_preview_should_render())
+        {
+            display_filter_valid_image = 0;
+            lut_preview_frame_pending = 0;
+        }
     }
     #endif
 
@@ -4428,24 +4434,19 @@ void display_filter_step(int k)
     
     //~ if (!HALFSHUTTER_PRESSED) return;
     
-    int filter_frame_completed = 0;
-    int lut_frame_queued = 0;
+    int lut_mode = lut_preview_should_render();
 
     #ifdef CONFIG_MODULES
     if (module_display_filter_update())
     {
-        filter_frame_completed = 1;
     }
     else
     #endif
 
-    if (lut_preview_should_render())
+    if (lut_mode)
     {
         if (k % 1 == 0)
-        {
-            lut_frame_queued = lut_preview_draw();
-            filter_frame_completed = lut_frame_queued;
-        }
+            lut_preview_draw();
     }
     else
 
@@ -4453,10 +4454,7 @@ void display_filter_step(int k)
     if (defish_preview)
     {
         if (k % 2 == 0)
-        {
             BMP_LOCK( if (lv) defish_draw_lv_color(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     
@@ -4464,10 +4462,7 @@ void display_filter_step(int k)
     if (anamorphic_preview)
     {
         if (k % 1 == 0)
-        {
             BMP_LOCK( if (lv) anamorphic_squeeze(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     
@@ -4475,18 +4470,15 @@ void display_filter_step(int k)
     if (focus_peaking_as_display_filter())
     {
         if (k % 1 == 0)
-        {
             BMP_LOCK( if (lv) peak_disp_filter(); )
-            filter_frame_completed = 1;
-        }
     } else
     #endif
     {
     }
     
-    /* LUT output becomes valid only when VSync promotes its queued frame.
-     * Legacy filters still draw directly into the current front buffer. */
-    if (filter_frame_completed && !lut_frame_queued)
+    /* Preserve Build #708 behavior for every non-LUT filter. LUT output alone
+     * becomes valid when VSync promotes its completed queued frame. */
+    if (!lut_mode)
         display_filter_valid_image = 1;
 }
 #endif

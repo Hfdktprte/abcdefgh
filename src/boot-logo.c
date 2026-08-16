@@ -1585,6 +1585,24 @@ static void boot_logo_present(void)
     bmp_draw_to_idle(0);
 }
 
+/* EOS M may draw one small Canon status tile near the lower-right corner
+ * after the splash has already been presented.  Mask only that unused part
+ * of the splash in both bitmap pages; refreshing the entire canvas caused
+ * visible flicker and could expose other Canon GUI elements. */
+static void boot_logo_mask_canon_status_tile(void)
+{
+    const int x = 600;
+    const int y = 400;
+    const int w = 120;
+    const int h = 80;
+
+    bmp_draw_to_idle(0);
+    bmp_fill(COLOR_BLACK, x, y, w, h);
+    bmp_draw_to_idle(1);
+    bmp_fill(COLOR_BLACK, x, y, w, h);
+    bmp_draw_to_idle(0);
+}
+
 static void boot_logo_clear(void)
 {
     bmp_draw_to_idle(1);
@@ -1614,6 +1632,10 @@ static void boot_logo_task(void *unused)
         int ml_display_ready = ml_started &&
             (liveview_display_idle() || get_ms_clock() >= fallback_handoff_time);
         if (splash_time_done && ml_display_ready) break;
+
+        /* Canon updates this status tile asynchronously during startup, so
+         * keep just this small area covered while the splash owns the LCD. */
+        BMP_LOCK( boot_logo_mask_canon_status_tile(); )
         msleep(20);
     }
 

@@ -659,14 +659,11 @@ static uint32_t mlv_play_osd_draw()
     /* undraw last drawn OSD item */
     static char osd_line[64] = "";
     
-    /* FONT_LARGE is not guaranteed to be resident while mlv_play owns most of
-     * the available memory.  If that RBF font is missing, its reported height
-     * collapses to zero and this menu becomes the thin horizontal strip seen
-     * on EOS M.  FONT_MED is already used by (and proven resident for) the
-     * playback metadata, so use one font and one set of metrics for the entire
-     * control row. */
+    /* Use the same exported font and metrics as the playback metadata.  The
+     * inline dynamic-font lookup used by fontspec_height() can resolve to a
+     * zero-height font from a module, collapsing this menu to two thin lines. */
     uint32_t w = bmp_string_width(osd_font, osd_line);
-    uint32_t h = fontspec_height(osd_font);
+    uint32_t h = font_med.height;
     bmp_fill(COLOR_EMPTY, mlv_play_osd_x - w/2 - border, mlv_play_osd_y - border, w + 2 * border, h + 2 * border);
     
     /* handle animation */

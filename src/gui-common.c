@@ -750,11 +750,7 @@ extern int cf_card_workaround;
 static void hacked_DebugMsg(int class, int level, char* fmt, ...)
 {
     #if defined(CONFIG_LVAPP_HACK_DEBUGMSG)
-    /* This workaround belongs to idle Live View only.  The flag may still be
-     * set briefly while Canon changes GUI modes; suppressing class 131 during
-     * that window also removes Canon's playback navigation controls. */
-    if (bottom_bar_hack && lv && !PLAY_OR_QR_MODE && !MENU_MODE &&
-        class == 131 && level == 1)
+    if (bottom_bar_hack && class == 131 && level == 1)
     {
         MEM(JUDGE_BOTTOM_INFO_DISP_TIMER_STATE) = 0;
     }
@@ -813,18 +809,6 @@ int handle_other_events(struct event * event)
     if (!ml_started) return 1;
 
 #ifdef CONFIG_LVAPP_HACK
-
-    /* A mode transition may happen without another LV refresh event.  Do not
-     * carry Live View's Canon-bottom-bar suppression into playback or menus. */
-    if (bottom_bar_hack && (!lv || PLAY_OR_QR_MODE || MENU_MODE))
-    {
-        #ifdef CONFIG_LVAPP_HACK_RELOC
-        extern void reloc_liveviewapp_uninstall();  /* liveview.c */
-        reloc_liveviewapp_uninstall();
-        #endif
-        bottom_bar_hack = 0;
-        bottom_bar_dirty = 0;
-    }
 
     unsigned short int lv_refreshing = lv && event->type == 2 && event->param == GMT_LOCAL_DIALOG_REFRESH_LV;
     unsigned short int should_hide = lv_disp_mode == 0 && get_global_draw_setting() && liveview_display_idle() && lv_dispsize == 1;

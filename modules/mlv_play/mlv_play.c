@@ -647,6 +647,13 @@ static uint32_t mlv_play_osd_draw()
     uint32_t redraw = 0;
     uint32_t border = 4;
     uint32_t y_offset = 28;
+    int screen_bottom = MIN(os.y_max, 479);
+
+    /* File Manager and ML menus draw into the idle bitmap page.  Playback
+     * video uses YUV, so a stale idle-page selection hides only this OSD and
+     * makes the failure look like missing controls.  The player owns the real
+     * bitmap page while active. */
+    bmp_draw_to_idle(0);
 
     /* undraw last drawn OSD item */
     static char osd_line[64] = "";
@@ -667,14 +674,14 @@ static uint32_t mlv_play_osd_draw()
         case MLV_PLAY_MENU_HIDDEN:
         case MLV_PLAY_MENU_IDLE:
         {
-            mlv_play_osd_y = os.y_max + 1;
+            mlv_play_osd_y = screen_bottom + 1;
             redraw = 0;
             break;
         }
         
         case MLV_PLAY_MENU_FADEIN:
         {
-            int y_top = os.y_max - font_large.height - y_offset;
+            int y_top = screen_bottom - font_large.height - y_offset;
             mlv_play_osd_y = MAX(mlv_play_osd_y - border, y_top);
             if(mlv_play_osd_y <= y_top)
             {
@@ -686,7 +693,7 @@ static uint32_t mlv_play_osd_draw()
         
         case MLV_PLAY_MENU_FADEOUT:
         {
-            int y_bottom = os.y_max + 1;
+            int y_bottom = screen_bottom + 1;
             mlv_play_osd_y = MIN(mlv_play_osd_y + border, y_bottom);
             if(mlv_play_osd_y >= y_bottom)
             {
@@ -2600,6 +2607,7 @@ static void mlv_play_enter_playback()
      * a stale mute state can otherwise leave only parts of the blue selector. */
     bmp_mute_flag_reset();
     bmp_on();
+    bmp_draw_to_idle(0);
 
     /* render task is slave and controlled via these variables */
     mlv_play_render_abort = 0;

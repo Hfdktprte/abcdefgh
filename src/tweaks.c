@@ -43,7 +43,7 @@ static void warn_step();
 extern void display_gain_toggle(void* priv, int delta);
 void display_filter_get_buffers(uint32_t** src_buf, uint32_t** dst_buf);
 static uint32_t *display_filter_get_lut_back_buffer(void);
-static void display_filter_swap_lut_buffers(void);
+static int display_filter_queue_lut_buffer(void);
 
 #ifdef FEATURE_ZOOM_TRICK_5D3 // not reliable
 void zoom_trick_step();
@@ -2881,7 +2881,8 @@ static inline uint32_t lut_preview_map_pair(uint32_t in)
 
 static int lut_preview_should_render(void)
 {
-    return lut_preview_is_ready() && lv && !RECORDING &&
+    return lut_preview_is_ready() && lv && !PLAY_OR_QR_MODE && !MENU_MODE &&
+           !RECORDING &&
            !RECORDING_H264_STARTING && lv_dispsize <= 5 &&
            !should_draw_zoom_overlay() && !gui_menu_shown();
 }
@@ -2908,36 +2909,36 @@ static int lut_preview_draw(void)
 
     uint32_t *dst_buf = display_filter_get_lut_back_buffer();
     if (!dst_buf) return 0;
-    lut_preview_last_source = src_buf;
-
     src_buf = CACHEABLE(src_buf);
     dst_buf = CACHEABLE(dst_buf);
 
-    /* Preserve Canon's top/bottom letterbox rows without wasting LUT lookups.
-     * The completed hidden frame is swapped only after every active row is done. */
-    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
-    for (int y = 0; y < y_skip; y++)
-    {
-        memcpy(&dst_buf[LV(0, y) / 4], &src_buf[LV(0, y) / 4], 720 * 2);
-        int bottom = 479 - y;
-        memcpy(&dst_buf[LV(0, bottom) / 4],
-               &src_buf[LV(0, bottom) / 4], 720 * 2);
-    }
+    /* Snapshot Canon's completed ring-buffer frame before doing the expensive
+     * LUT pass. Canon may recycle that source while we process from top to
+     * bottom; working in-place on this private copy prevents mixed frames. */
+    memcpy(dst_buf, src_buf, 720 * 480 * 2);
 
+    /* Preserve Canon's top/bottom letterbox rows from the snapshot and apply
+     * the LUT only to the active image rows. */
+    int y_skip = COERCE(get_y_skip_offset_for_histogram(), 0, 239);
     for (int y = y_skip; y < 480 - y_skip; y++)
     {
-        uint32_t *src = &src_buf[LV(0, y) / 4];
         uint32_t *dst = &dst_buf[LV(0, y) / 4];
         /* Four UYVY pairs per iteration: fewer branches and address updates. */
         for (int x = 0; x < 720 / 2; x += 4)
         {
-            dst[x + 0] = lut_preview_map_pair(src[x + 0]);
-            dst[x + 1] = lut_preview_map_pair(src[x + 1]);
-            dst[x + 2] = lut_preview_map_pair(src[x + 2]);
-            dst[x + 3] = lut_preview_map_pair(src[x + 3]);
+            dst[x + 0] = lut_preview_map_pair(dst[x + 0]);
+            dst[x + 1] = lut_preview_map_pair(dst[x + 1]);
+            dst[x + 2] = lut_preview_map_pair(dst[x + 2]);
+            dst[x + 3] = lut_preview_map_pair(dst[x + 3]);
         }
     }
-    display_filter_swap_lut_buffers();
+
+    /* Publish only after all cache lines are visible to the display engine.
+     * The actual front/back swap happens in the VSync callback. */
+    sync_caches();
+    if (!lut_preview_should_render() || !display_filter_queue_lut_buffer())
+        return 0;
+    lut_preview_last_source = src_buf;
     return 1;
 }
 
@@ -3899,6 +3900,10 @@ void defish_draw_play()
 
 #ifdef CONFIG_DISPLAY_FILTERS
 
+/* A pending LUT frame is complete and cache-clean, but remains hidden until
+ * the next VSync callback atomically promotes it to the front buffer. */
+static volatile int lut_preview_frame_pending = 0;
+
 #ifdef CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY
 static void* display_filter_buffer_unaligned = 0;
 static void* display_filter_buffer = 0;
@@ -3916,6 +3921,8 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
 {
     if (!display_filter_buffer)
         return 0;
+    if (lut_preview_frame_pending)
+        return 0;
     if (!lut_preview_back_buffer)
     {
         lut_preview_buffer_unaligned = malloc(720 * 480 * 2 + 32);
@@ -3926,17 +3933,17 @@ static uint32_t *display_filter_get_lut_back_buffer(void)
     return CACHEABLE(lut_preview_back_buffer);
 }
 
-static void display_filter_swap_lut_buffers(void)
+static int display_filter_queue_lut_buffer(void)
 {
-    if (!display_filter_buffer || !lut_preview_back_buffer)
-        return;
-    void *old_front = display_filter_buffer;
-    display_filter_buffer = lut_preview_back_buffer;
-    lut_preview_back_buffer = old_front;
+    if (!display_filter_buffer || !lut_preview_back_buffer ||
+        lut_preview_frame_pending)
+        return 0;
+    lut_preview_frame_pending = 1;
+    return 1;
 }
 #else
 static uint32_t *display_filter_get_lut_back_buffer(void) { return 0; }
-static void display_filter_swap_lut_buffers(void) {}
+static int display_filter_queue_lut_buffer(void) { return 0; }
 #endif
 
 static int display_filter_valid_image = 0;
@@ -3991,6 +3998,9 @@ int display_filter_enabled()
     #endif
     if (EXT_MONITOR_CONNECTED) return 0; // non-scalable code
     if (!lv) return 0;
+    /* Playback owns its YUV renderer and callback chain. LiveView filters must
+     * never consume playback VSync or redirect its display route. */
+    if (PLAY_OR_QR_MODE || MENU_MODE) return 0;
 
     
     int mdf = 0;
@@ -4020,6 +4030,16 @@ int display_broken_for_mz()
 
 int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
 {
+    /* Do not touch or restore any remembered LiveView route after playback has
+     * installed its own buffers. Relinquish this callback unconditionally. */
+    if (PLAY_OR_QR_MODE || MENU_MODE)
+    {
+        display_filter_valid_image = 0;
+        lut_preview_frame_pending = 0;
+        lut_preview_last_source = 0;
+        return CBR_RET_CONTINUE;
+    }
+
 #if defined(CONFIG_5D2)
     int sync = (MEM(x+0xe0) == YUV422_LV_BUFFER_1);
     int hacked = ( MEM(0x44fc+0xBC) == MEM(0x44fc+0xc4) && MEM(0x44fc+0xc4) == MEM(x+0xe0));
@@ -4093,9 +4113,28 @@ int display_filter_lv_vsync(int old_state, int x, int input, int z, int t)
         void *shown = (void *)YUV422_LV_BUFFER_DISPLAY_ADDR;
         if (display_filter_is_our_buffer(shown) && last_canon_buffer)
             YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
+        lut_preview_frame_pending = 0;
         display_filter_valid_image = 0;
         lut_preview_last_source = 0;
         return CBR_RET_CONTINUE;
+    }
+
+    /* Promote only complete LUT frames at the display boundary. The worker
+     * never changes the front-buffer pointer while the LCD is scanning. */
+    if (lut_preview_frame_pending && lut_preview_should_render())
+    {
+        void *old_front = display_filter_buffer;
+        display_filter_buffer = lut_preview_back_buffer;
+        lut_preview_back_buffer = old_front;
+        lut_preview_frame_pending = 0;
+        display_filter_valid_image = 1;
+    }
+    else if (lut_preview_frame_pending)
+    {
+        /* A completed frame became stale before presentation (for example a
+         * LUT/menu/zoom transition). Keep the allocation, discard the queue. */
+        lut_preview_frame_pending = 0;
+        lut_preview_last_source = 0;
     }
     if (!display_filter_valid_image) return CBR_RET_CONTINUE;
 
@@ -4122,7 +4161,13 @@ void display_filter_step(int k)
             if (display_filter_is_our_buffer(
                     (void *)YUV422_LV_BUFFER_DISPLAY_ADDR))
             {
-                YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t) last_canon_buffer;
+                /* Return the route now, but keep both allocations alive until
+                 * a later worker pass confirms the LCD no longer scans them. */
+                if (last_canon_buffer)
+                    YUV422_LV_BUFFER_DISPLAY_ADDR = (uint32_t)last_canon_buffer;
+                lut_preview_frame_pending = 0;
+                display_filter_valid_image = 0;
+                return;
             }
             free(display_filter_buffer_unaligned);
             if (lut_preview_buffer_unaligned)
@@ -4132,6 +4177,7 @@ void display_filter_step(int k)
             lut_preview_back_buffer = 0;
             lut_preview_buffer_unaligned = 0;
             lut_preview_last_source = 0;
+            lut_preview_frame_pending = 0;
         }
         #endif
         return;
@@ -4144,6 +4190,8 @@ void display_filter_step(int k)
         /* some routines (e.g. defishing) use 64-bit operations, so allocate a bit more and align the buffer */
         display_filter_buffer_unaligned = malloc(720*480*2 + 32);
         display_filter_buffer = ALIGN64SUP(display_filter_buffer_unaligned);
+        display_filter_valid_image = 0;
+        lut_preview_frame_pending = 0;
     }
     #endif
 
@@ -4151,9 +4199,13 @@ void display_filter_step(int k)
     
     //~ if (!HALFSHUTTER_PRESSED) return;
     
+    int filter_frame_completed = 0;
+    int lut_frame_queued = 0;
+
     #ifdef CONFIG_MODULES
     if (module_display_filter_update())
     {
+        filter_frame_completed = 1;
     }
     else
     #endif
@@ -4161,7 +4213,10 @@ void display_filter_step(int k)
     if (lut_preview_should_render())
     {
         if (k % 1 == 0)
-            lut_preview_draw();
+        {
+            lut_frame_queued = lut_preview_draw();
+            filter_frame_completed = lut_frame_queued;
+        }
     }
     else
 
@@ -4169,7 +4224,10 @@ void display_filter_step(int k)
     if (defish_preview)
     {
         if (k % 2 == 0)
+        {
             BMP_LOCK( if (lv) defish_draw_lv_color(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     
@@ -4177,7 +4235,10 @@ void display_filter_step(int k)
     if (anamorphic_preview)
     {
         if (k % 1 == 0)
+        {
             BMP_LOCK( if (lv) anamorphic_squeeze(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     
@@ -4185,13 +4246,19 @@ void display_filter_step(int k)
     if (focus_peaking_as_display_filter())
     {
         if (k % 1 == 0)
+        {
             BMP_LOCK( if (lv) peak_disp_filter(); )
+            filter_frame_completed = 1;
+        }
     } else
     #endif
     {
     }
     
-    display_filter_valid_image = 1;
+    /* LUT output becomes valid only when VSync promotes its queued frame.
+     * Legacy filters still draw directly into the current front buffer. */
+    if (filter_frame_completed && !lut_frame_queued)
+        display_filter_valid_image = 1;
 }
 #endif
 

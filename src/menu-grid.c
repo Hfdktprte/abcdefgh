@@ -801,8 +801,9 @@ void menu_grid_draw(void)
 {
     bmp_fill(COLOR_BLACK, 0, 0, 720, 480);
 
-    int fnt = FONT(FONT_CANON, COLOR_WHITE, NO_BG_ERASE);
-    int label_h = fontspec_font(FONT_CANON)->height;
+    /* Grid cards have a solid background, so the Slim font can render cleanly. */
+    int fnt = slim_ui_font_spec(COLOR_WHITE, COLOR_GRAY(20));
+    int label_h = slim_ui_font_height();
     int b = GRID_SEL_BORDER;
 
     for (int i = 0; i < GRID_COUNT; i++)
@@ -819,7 +820,7 @@ void menu_grid_draw(void)
 
         /* Shared bottom baseline for all four labels. */
         int label_y = y + h - GRID_LABEL_PAD - label_h;
-        int label_w = bmp_string_width(FONT_CANON, (char *) grid_tiles[i].label);
+        int label_w = bmp_string_width(fnt, (char *) grid_tiles[i].label);
         int label_x = x + (w - label_w) / 2;
 
         /* Icon centered in the remaining space above the label. */

@@ -4,6 +4,7 @@
 #include "font.h"
 #include "menu.h"
 #include "menu-grid.h"
+#include "slim-font.h"
 #include "gui-common.h"
 #include "config.h"
 #include "lens.h"
@@ -616,10 +617,11 @@ void menu_quick_screen_draw(void)
         enabled = quick_screen_value(
             index, value, sizeof(value), &draw_degree);
         color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
-        width = bmp_string_width(FONT_CANON, value);
+        uint32_t fnt = slim_ui_font_spec(color, COLOR_BLACK);
+        width = bmp_string_width(fnt, value);
         value_x = cx - (width + (draw_degree ? 12 : 0)) / 2;
         bmp_printf(
-            FONT(FONT_CANON, color, NO_BG_ERASE),
+            fnt,
             value_x, value_y, "%s", value);
         if (draw_degree)
         {
@@ -706,12 +708,12 @@ int menu_quick_screen_handle_touch(int x, int y)
     {
         int width;
         int text_x;
-        int text_h = fontspec_font(FONT_CANON)->height;
+        int text_h = slim_ui_font_height();
         quick_screen_geometry(
             index, &cx, &value_y, &up_tip_y, &down_tip_y);
         quick_screen_value(
             index, value, sizeof(value), &draw_degree);
-        width = bmp_string_width(FONT_CANON, value) +
+        width = bmp_string_width(slim_ui_font_spec(COLOR_WHITE, COLOR_BLACK), value) +
                 (draw_degree ? 12 : 0);
         text_x = cx - width / 2;
         if (index == 5 &&

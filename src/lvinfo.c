@@ -6,6 +6,7 @@
 #include <lens.h>
 #include <fps.h>
 #include <module.h>
+#include "slim-font.h"
 
 #ifdef CONFIG_SLIM_MENUS
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
@@ -116,7 +117,8 @@ static void lvinfo_touch_draw_value(int slot, int cx, int value_y,
                                     const char *value, int enabled)
 {
     int color = enabled ? COLOR_WHITE : COLOR_GRAY(50);
-    int width = bmp_string_width(FONT_CANON, value);
+    uint32_t fnt = slim_ui_font_spec(color, COLOR_BLACK);
+    int width = bmp_string_width(fnt, value);
     int up_color = enabled ? COLOR_ORANGE : color;
     int down_color = enabled ? COLOR_ORANGE : color;
 
@@ -126,7 +128,7 @@ static void lvinfo_touch_draw_value(int slot, int cx, int value_y,
         if (lvinfo_touch_feedback_sign < 0) down_color = COLOR_WHITE;
     }
     lvinfo_touch_draw_arrow(cx, LVINFO_TOUCH_UP_TIP_Y, 1, up_color);
-    bmp_printf(FONT(FONT_CANON, color, NO_BG_ERASE),
+    bmp_printf(fnt,
                cx - width / 2, value_y, "%s", value);
     lvinfo_touch_draw_arrow(cx, LVINFO_TOUCH_DOWN_TIP_Y, 0, down_color);
 }

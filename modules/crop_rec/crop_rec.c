@@ -331,25 +331,11 @@ static void set_zoom(int zoom)
     prop_request_change_wait(PROP_LV_DISPSIZE, &zoom, 4, 1000);
 }
 
-/* EOS M preview transactions are owned by one coordinator.  PathSelect starts
- * a generation, the configuration hooks may only modify crop-owned x5
- * generations, and the first VSync after the complete hook set commits it. */
-static void eosm_preview_expect_path(void);
-static void eosm_preview_path_begin(void);
-static int eosm_preview_hook_enter(unsigned int hook);
-static void eosm_preview_request_zoom(int zoom);
-static unsigned int eosm_preview_vsync_cbr(unsigned int unused);
-
-enum eosm_preview_hook
-{
-    EOSM_HOOK_PATH    = 1 << 0,
-    EOSM_HOOK_CMOS    = 1 << 1,
-    EOSM_HOOK_ADTG    = 1 << 2,
-    EOSM_HOOK_ENGIO   = 1 << 3,
-    EOSM_HOOK_ENGDRV  = 1 << 4,
-    EOSM_HOOK_ENGDRVS = 1 << 5,
-    EOSM_HOOK_HIV     = 1 << 6,
-};
+#ifdef CONFIG_EOSM
+/* AF changes rebuild Canon's Live View pipeline just like a zoom or menu
+ * return.  Keep that rebuild inside the same transition controller. */
+static void eosm_lv_guard_request(void);
+#endif
 int crop_rec_lv_transition_diag(char *buffer, int size);
 
 /* faster version than the one from ML core */
@@ -359,6 +345,9 @@ static void set_lv_af_mode(int lv_af_mode)
     if (RECORDING) return;
     if (lv_af_mode > 3 && lv_af_mode != 0) lv_af_mode = 1;
     prop_request_change(PROP_LIVE_VIEW_AF_SYSTEM, &lv_af_mode, 4);
+#ifdef CONFIG_EOSM
+    eosm_lv_guard_request();
+#endif
 }
 
 //Photo mode
@@ -394,8 +383,7 @@ static void slim_zoom_to_x10(void)
     if (!lv || RECORDING || lv_dispsize != base) return;
     if (lv_disp_mode != 0) return;
 
-    if (is_EOSM) eosm_preview_request_zoom(10);
-    else set_zoom(10);
+    set_zoom(10);
     /* Danne EOS M path: Canon owns x10 UI; restore its front buffer. */
     kill_canon_gui_mode = 0;
     if (canon_gui_front_buffer_disabled())
@@ -410,19 +398,13 @@ static void slim_zoom_from_x10(void)
 
     if (!lv || RECORDING || lv_dispsize != 10) return;
 
-    if (is_EOSM)
-        eosm_preview_request_zoom(is_movie_mode() ? 5 : 1);
-    else
+    set_zoom(1);
+    if (is_movie_mode())
     {
-        set_zoom(1);
-        if (is_movie_mode())
-        {
-            msleep(50);
-            set_zoom(5);
-        }
+        msleep(50);
+        set_zoom(5);
     }
-    if (!is_EOSM)
-        kill_canon_gui_mode = is_movie_mode() ? 1 : 0;
+    kill_canon_gui_mode = is_movie_mode() ? 1 : 0;
     if (canon_gui_front_buffer_disabled())
         canon_gui_enable_front_buffer(0);
     wait_lv_frames(1);
@@ -688,8 +670,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
             {
                 msleep(400);
             }
-                if (is_EOSM) eosm_preview_request_zoom(10);
-                else set_zoom(10);
+                set_zoom(10);
                 /* Enable Canon overlays in x10 mode */
                 kill_canon_gui_mode = 0;
                 if (canon_gui_front_buffer_disabled())
@@ -708,8 +689,7 @@ static unsigned int photo_keypress_cbr(unsigned int key)
                 (!is_EOSM && (key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
                 (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
             {
-                if (is_EOSM) eosm_preview_request_zoom(1);
-                else set_zoom(1);
+                set_zoom(1); // Get to x1 first, sometime we get black preview when going x10 --> x5
 
                 /* Disable Canon overlays in x5 mode */
                 kill_canon_gui_mode = 1;
@@ -880,205 +860,6 @@ const struct PathDriveMode
     uint32_t unk_40;
     uint32_t DT;            /* 100D, EOSM: ? */
 } * PathDriveMode = 0;
-
-enum eosm_preview_state
-{
-    EOSM_PREVIEW_AWAIT_PATH = 0,
-    EOSM_PREVIEW_CANON_CONFIG,
-    EOSM_PREVIEW_CROP_CONFIG,
-    EOSM_PREVIEW_WAIT_VSYNC,
-    EOSM_PREVIEW_ACTIVE,
-};
-
-struct eosm_preview_snapshot
-{
-    unsigned int generation;
-    unsigned int hook_mask;
-    enum eosm_preview_state state;
-    int crop_owned;
-    int path_zoom;
-    int path_s;
-    int path_sm;
-    int path_output;
-    enum crop_preset preset;
-    int aspect_ratio;
-    int preset_fps;
-    int preset_1x1;
-    int preset_1x3;
-    int preset_3x3;
-    int bit_depth;
-    int fps_override;
-    int fps_reduction;
-    int shutter_mode;
-    int dual_iso_flicker_fix;
-};
-
-static volatile struct eosm_preview_snapshot eosm_preview_tx = {
-    .state = EOSM_PREVIEW_ACTIVE,
-};
-static volatile int eosm_preview_busy = 0;
-static volatile int eosm_preview_config_pending = 0;
-static volatile int eosm_preview_zoom_pending = 0;
-
-/* Freeze the active (not menu) configuration for this entire Canon path
- * generation.  Menu choices may change while a menu is open, but no hook is
- * permitted to observe a mixture of old and new active values. */
-static void eosm_preview_restore_snapshot(void)
-{
-    crop_preset = eosm_preview_tx.preset;
-    crop_preset_ar = eosm_preview_tx.aspect_ratio;
-    crop_preset_fps = eosm_preview_tx.preset_fps;
-    crop_preset_1x1_res = eosm_preview_tx.preset_1x1;
-    crop_preset_1x3_res = eosm_preview_tx.preset_1x3;
-    crop_preset_3x3_res = eosm_preview_tx.preset_3x3;
-    bit_depth_analog = eosm_preview_tx.bit_depth;
-    fps_over = eosm_preview_tx.fps_override;
-    crop_preset_fps_reduce = eosm_preview_tx.fps_reduction;
-    shutter_range = eosm_preview_tx.shutter_mode;
-    fix_dual_iso_flicker = eosm_preview_tx.dual_iso_flicker_fix;
-}
-
-static void eosm_preview_path_begin(void)
-{
-    if (!is_EOSM)
-        return;
-
-    unsigned int generation = eosm_preview_tx.generation + 1;
-    int crop_owned = lv && crop_preset &&
-        PathDriveMode->zoom == 5 && PathDriveMode->S == 8 &&
-        PathDriveMode->SM == 0;
-
-    /* Publish an uncommittable state first.  VSync may run from another task
-     * while this hook snapshots PathDriveMode; it must never observe a partly
-     * initialized generation as Canon- or crop-owned. */
-    eosm_preview_busy = 1;
-    eosm_preview_tx.state = EOSM_PREVIEW_AWAIT_PATH;
-    eosm_preview_tx.crop_owned = 0;
-    eosm_preview_tx.generation = generation;
-    eosm_preview_tx.hook_mask = EOSM_HOOK_PATH;
-    eosm_preview_tx.crop_owned = crop_owned;
-    eosm_preview_tx.path_zoom = PathDriveMode->zoom;
-    eosm_preview_tx.path_s = PathDriveMode->S;
-    eosm_preview_tx.path_sm = PathDriveMode->SM;
-    eosm_preview_tx.path_output = PathDriveMode->OutputType;
-    eosm_preview_tx.preset = crop_preset;
-    eosm_preview_tx.aspect_ratio = crop_preset_ar;
-    eosm_preview_tx.preset_fps = crop_preset_fps;
-    eosm_preview_tx.preset_1x1 = crop_preset_1x1_res;
-    eosm_preview_tx.preset_1x3 = crop_preset_1x3_res;
-    eosm_preview_tx.preset_3x3 = crop_preset_3x3_res;
-    eosm_preview_tx.bit_depth = bit_depth_analog;
-    eosm_preview_tx.fps_override = fps_over;
-    eosm_preview_tx.fps_reduction = crop_preset_fps_reduce;
-    eosm_preview_tx.shutter_mode = shutter_range;
-    eosm_preview_tx.dual_iso_flicker_fix = fix_dual_iso_flicker;
-    eosm_preview_tx.state = crop_owned ? EOSM_PREVIEW_CROP_CONFIG
-                                       : EOSM_PREVIEW_CANON_CONFIG;
-}
-
-static int eosm_preview_hook_enter(unsigned int hook)
-{
-    if (!is_EOSM)
-        return 1;
-
-    if (!eosm_preview_tx.crop_owned ||
-        (eosm_preview_tx.state != EOSM_PREVIEW_CROP_CONFIG &&
-         eosm_preview_tx.state != EOSM_PREVIEW_WAIT_VSYNC &&
-         eosm_preview_tx.state != EOSM_PREVIEW_ACTIVE))
-        return 0;
-
-    /* Active selections are private to this generation. */
-    eosm_preview_restore_snapshot();
-    eosm_preview_tx.hook_mask |= hook;
-    if (eosm_preview_tx.state == EOSM_PREVIEW_CROP_CONFIG)
-        eosm_preview_tx.state = EOSM_PREVIEW_WAIT_VSYNC;
-    return 1;
-}
-
-static void eosm_preview_expect_path(void)
-{
-    if (!is_EOSM)
-        return;
-    eosm_preview_tx.state = EOSM_PREVIEW_AWAIT_PATH;
-    eosm_preview_tx.crop_owned = 0;
-    eosm_preview_tx.hook_mask = 0;
-    eosm_preview_busy = 1;
-}
-
-/* Only this function may initiate an EOS M display-size transition.  x10 to
- * crop x5 is serialized through Canon's native x1 generation; the final x5
- * request is dispatched by the polling callback after its first VSync. */
-static void eosm_preview_request_zoom(int target)
-{
-    int request = target;
-
-    if (!is_EOSM)
-    {
-        set_zoom(target);
-        return;
-    }
-    if (!lv || RECORDING)
-        return;
-
-    target = COERCE(target, 1, 10);
-    if (target > 1 && target < 10)
-        target = 5;
-
-    if (eosm_preview_busy)
-    {
-        eosm_preview_zoom_pending = target;
-        return;
-    }
-
-    if ((lv_dispsize == 10 || lv_dispsize == 5) && target == 5)
-    {
-        request = 1;
-        eosm_preview_zoom_pending = 5;
-    }
-    else
-    {
-        request = target;
-        eosm_preview_zoom_pending = 0;
-    }
-
-    eosm_preview_expect_path();
-    set_zoom(request);
-}
-
-static int eosm_preview_hooks_complete(void)
-{
-    unsigned int required = EOSM_HOOK_PATH | EOSM_HOOK_CMOS |
-                            EOSM_HOOK_ADTG | EOSM_HOOK_ENGIO;
-    unsigned int preview = EOSM_HOOK_ENGDRV | EOSM_HOOK_ENGDRVS;
-    return (eosm_preview_tx.hook_mask & required) == required &&
-           (eosm_preview_tx.hook_mask & preview) != 0;
-}
-
-static unsigned int eosm_preview_vsync_cbr(unsigned int unused)
-{
-    if (!is_EOSM || !eosm_preview_busy)
-        return CBR_RET_CONTINUE;
-
-    /* PathRamClearCompleteCBR has no verified EOS M symbol.  A VSync after
-     * PathSelect and all mandatory configuration hooks is the first safe,
-     * observable boundary after Canon's triple RAM clear. */
-    if (eosm_preview_tx.state == EOSM_PREVIEW_CANON_CONFIG)
-    {
-        eosm_preview_tx.state = EOSM_PREVIEW_ACTIVE;
-        eosm_preview_busy = 0;
-    }
-    else if ((eosm_preview_tx.state == EOSM_PREVIEW_CROP_CONFIG ||
-              eosm_preview_tx.state == EOSM_PREVIEW_WAIT_VSYNC) &&
-             eosm_preview_hooks_complete())
-    {
-        extern int kill_canon_gui_mode;
-        eosm_preview_tx.state = EOSM_PREVIEW_ACTIVE;
-        eosm_preview_busy = 0;
-        kill_canon_gui_mode = 1;
-    }
-
-    return CBR_RET_CONTINUE;
-}
 
 enum fps_mode {
     FPS_60 = 0,
@@ -1451,8 +1232,6 @@ int CMOS_7_Debug = 0;
 
 static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_CMOS))
-        return;
     /* make sure we are in 1080p/720p mode */
     if (!is_supported_mode())
     {
@@ -1923,8 +1702,6 @@ static int shutter_blanking_idle;
 
 static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_ADTG))
-        return;
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4199,9 +3976,7 @@ static void * get_engio_reg_override_func()
 
 static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_ENGIO))
-        return;
-    uint32_t (*reg_override_func)(uint32_t, uint32_t) =
+    uint32_t (*reg_override_func)(uint32_t, uint32_t) = 
         get_engio_reg_override_func();
 
     if (!reg_override_func)
@@ -4234,7 +4009,7 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                     {
                         engio_vidmode_ok = 0;
                     }
-
+                
                     else
                     {
                         engio_vidmode_ok = 1;
@@ -4277,52 +4052,42 @@ static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
         // (read about the other method for more info.)
         if ((brighten_lv_method == 0 && RECORDING) || (brighten_lv_method == 0 && RAW_HISTOGRAM_ENABLED))//When RAW histogram is used turn off the temporary 14bit stuff
         {
-            /* EOS M never emits a second register write from inside this
-             * hook.  Modify Canon's current transaction entry in place. */
-            if (is_EOSM && reg == 0xC0F42744 && which_output_format() >= 3)
+            //Workaround when small_hacks is set to More in mlv_lite.c
+            if ((!Arrows_U_D && Arrows_L_R != 3 && SET_button != 2 && SET_button != 3) || more_hacks)
             {
-                if (OUTPUT_12BIT) *(buf+1) = 0x2020202;
-                if (OUTPUT_11BIT) *(buf+1) = 0x3030303;
-                if (OUTPUT_10BIT) *(buf+1) = 0x4040404;
-            }
-            else if (!is_EOSM)
-            {
-                //Workaround when small_hacks is set to More in mlv_lite.c
-                if ((!Arrows_U_D && Arrows_L_R != 3 && SET_button != 2 && SET_button != 3) || more_hacks)
+                if (OUTPUT_12BIT)
                 {
-                    if (OUTPUT_12BIT)
-                    {
-                        EngDrvOutLV(0xC0F42744, 0x2020202);
-                    }
-                    if (OUTPUT_11BIT)
-                    {
-                        EngDrvOutLV(0xC0F42744, 0x3030303);
-                    }
-                    if (OUTPUT_10BIT)
-                    {
-                        EngDrvOutLV(0xC0F42744, 0x4040404);
-                    }
+                    EngDrvOutLV(0xC0F42744, 0x2020202);
                 }
-                else
+                if (OUTPUT_11BIT)
                 {
-                    if (reg == 0xC0F42744)
+                    EngDrvOutLV(0xC0F42744, 0x3030303);
+                }
+                if (OUTPUT_10BIT)
+                {
+                    EngDrvOutLV(0xC0F42744, 0x4040404);
+                }
+            }
+            else
+            {
+                
+                if (reg == 0xC0F42744)
+                {
+                    if (which_output_format() >= 3) // don't patch if we are using uncompressed RAW
                     {
-                        if (which_output_format() >= 3) // don't patch if we are using uncompressed RAW
+                        if (OUTPUT_12BIT && old != 0x2020202)
                         {
-                            if (OUTPUT_12BIT && old != 0x2020202)
-                            {
-                                *(buf+1) = 0x2020202;
-                            }
-
-                            if (OUTPUT_11BIT && old != 0x3030303)
-                            {
-                                *(buf+1) = 0x3030303;
-                            }
-
-                            if (OUTPUT_10BIT && old != 0x4040404)
-                            {
-                                *(buf+1) = 0x4040404;
-                            }
+                            *(buf+1) = 0x2020202;
+                        }
+                
+                        if (OUTPUT_11BIT && old != 0x3030303)
+                        {
+                            *(buf+1) = 0x3030303;
+                        }
+                
+                        if (OUTPUT_10BIT && old != 0x4040404)
+                        {
+                            *(buf+1) = 0x4040404;
                         }
                     }
                 }
@@ -4351,8 +4116,6 @@ static int change_buffer_now = 0;
 
 static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_ENGDRV))
-        return;
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4437,8 +4200,8 @@ static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
      * the values taken when setting focus box to center then pressing down button one time in x5 mode.
      * it seems these also make preview more reliable in these modes, in some focus box positions preview
      * become black without these values */
-    if ((crop_preset == CROP_PRESET_3X3 || crop_preset == CROP_PRESET_1X3) ||
-       ((crop_preset == CROP_PRESET_1X1))) // also for 1280p preset
+    if ((CROP_PRESET_MENU == CROP_PRESET_3X3 || CROP_PRESET_MENU == CROP_PRESET_1X3) ||
+       ((CROP_PRESET_MENU == CROP_PRESET_1X1))) // also for 1280p preset
     {
         if (data == 0xC0F09050) {regs[1] =   0x3002D0;}
         if (data == 0xC0F09054) {regs[1] =  0x2E006D8;}
@@ -4548,8 +4311,6 @@ static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 
 static void FAST EngDrvOuts_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_ENGDRVS))
-        return;
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4612,9 +4373,12 @@ void CheckPreviewRegsValuesAndForce()
     if (PathDriveMode->zoom != 5) return;
     if (Preview_Control_Basic) return;
 
+#ifdef CONFIG_EOSM
     /* EOS M: engio hooks already patch preview; forcing registers here fights Canon
-     * and stalls the whole UI (laggy audio meters, menu won't open). */
-    if (is_EOSM) return;
+     * and stalls the whole UI (laggy audio meters, menu won't open). Recovery uses
+     * normal x5 zoom path instead. */
+    return;
+#endif
 
     if (is_100D)                       REG_C0F38024_Val = ((RAW_V - 5) << 16)  + RAW_H - 0x1A;
     if (is_650D || is_700D || is_EOSM) REG_C0F38024_Val = ((RAW_V - 1) << 16)  + RAW_H - 0x11;
@@ -4699,10 +4463,8 @@ void CheckPreviewRegsValuesAndForce()
 // cleaner preview this way in presets which exceed default vertical RAW resolution (above 1080 vertical pixels), photo mode data should cover height up to 3528
 // 0xC0F04908 changes among two addresses in LiveView, one dedicated for RAW_H and other one for RAW_V, we want to change the address for RAW_V (our hook does that)
 // note: I am not sure what I am doing
-static void Change_HIV_V_Address(uint32_t* regs, uint32_t* stack, uint32_t pc)
+static void Change_HIV_V_Address(uint32_t* regs, uint32_t* stack, uint32_t pc)     
 {
-    if (!eosm_preview_hook_enter(EOSM_HOOK_HIV))
-        return;
     regs[1] = HIV_Vertical_Photo_Address;
 }
 
@@ -4755,7 +4517,7 @@ static uint32_t NewClearVal   = 0; // new clear value, should be same as width f
 
 int GetShiftValue()
 {
-    if (crop_preset == CROP_PRESET_1X1)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         switch (crop_preset_1x1_res)
          {
@@ -4791,7 +4553,7 @@ int GetShiftValue()
         }        
     }
 
-    if (crop_preset == CROP_PRESET_1X3 || crop_preset == CROP_PRESET_3X3)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3 || CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
         switch (crop_preset_ar)
         {
@@ -4832,7 +4594,7 @@ int GetShiftValue()
 
 void SetAspectRatioCorrectionValues()
 {
-    if (crop_preset == CROP_PRESET_1X1)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         if (is_LCD_Output())
         {
@@ -4884,7 +4646,7 @@ void SetAspectRatioCorrectionValues()
         }
     }
 
-    if (crop_preset == CROP_PRESET_1X3 || crop_preset == CROP_PRESET_3X3)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3 || CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
         if (is_LCD_Output())
         {
@@ -4949,8 +4711,8 @@ void SetAspectRatioCorrectionValues()
     }
 
     /* Set default x5 mode values for mv1080 preset, also for Anam_FLV */
-    if ((crop_preset == CROP_PRESET_3X3 && (crop_preset_3x3_res == 1 || crop_preset_3x3_res == 2)) || // mv1080
-        (crop_preset == CROP_PRESET_1X3 && crop_preset_1x3_res == 3))   // Anam_FLV
+    if ((CROP_PRESET_MENU == CROP_PRESET_3X3 && (crop_preset_3x3_res == 1 || crop_preset_3x3_res == 2)) || // mv1080
+        (CROP_PRESET_MENU == CROP_PRESET_1X3 && crop_preset_1x3_res == 3))   // Anam_FLV
     {
         if (is_LCD_Output()){        YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;}
         if (is_480p_Output()){       YUV_LV_Buf = 0x1830520; YUV_LV_S_V = 0x6100AC;}
@@ -4961,7 +4723,6 @@ void SetAspectRatioCorrectionValues()
 
 static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    eosm_preview_path_begin();
     /* we need to enable and set preview shifting and clearing artifacts values here especially for clear artifacts value */
     /* I don't know which function load shifting preview value, but it's being loaded and applied many times in LiveView, not just once. */
     /* clear artifacts value is being loaded very early before CMOS, ADTG, ENGIO, ENG_DRV_OUT, ENG_DRV_OUTS stuff */
@@ -5002,13 +4763,6 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
         Clear_Artifacts_ON = 0;
     }
 
-    /* Canon owns x1, x10, menu/playback/record transitions and every path
-     * whose incoming PathDriveMode is not the exact crop x5 path.  Removing
-     * stale ROM patches here is the only permitted cleanup; all subsequent
-     * configuration writes pass through untouched. */
-    if (!eosm_preview_hook_enter(EOSM_HOOK_PATH))
-        return;
-
     /* detect current output and update patch parameters */
     if (is_LCD_Output())
     {
@@ -5046,7 +4800,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
         ClearAddress  = Clear_Vram_x5_HDMI_1080i_Info;
     }
 
-    if (crop_preset == CROP_PRESET_1X1)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1)
     {
         if (crop_preset_1x1_res == 0)  // CROP_2_5K
         {
@@ -5098,7 +4852,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
         EDMAC_9_Vertical_Change = 0;
     }
 
-    if (crop_preset == CROP_PRESET_1X3)
+    if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
 		if (crop_preset_1x3_res == 3) // Anam_FLV
 		{
@@ -5114,7 +4868,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
         EDMAC_9_Vertical_Change = 1;
     }
 
-    if (crop_preset == CROP_PRESET_3X3)
+    if (CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
         Shift_Preview = 1;
         Clear_Artifacts = 1;
@@ -5190,13 +4944,85 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 
 static int patch_active = 0;
 
+#ifdef CONFIG_EOSM
+/* EOS M Live View is rebuilt asynchronously after boot, Canon-menu return,
+ * record-stop and zoom changes.  Keep the crop hooks quiet until the base
+ * x5 pipeline has delivered stable RAW dimensions, then apply once. */
+#define EOSM_LV_GUARD_SETTLE_MS 350
+#define EOSM_LV_GUARD_QUIET_MS 120
+#define EOSM_LV_GUARD_STABLE_FRAMES 3
+#define EOSM_LV_GUARD_MAX_RECOVERIES 2
+#define EOSM_LV_GUARD_CONTENT_SAMPLES 3
+static volatile int eosm_lv_guard_pending = 1;
+static volatile int eosm_lv_guard_busy = 0;
+static int eosm_lv_guard_started;
+static int eosm_lv_guard_state;
+static int eosm_lv_guard_stable_frames;
+static int eosm_lv_guard_width;
+static int eosm_lv_guard_height;
+static int eosm_lv_guard_pitch;
+static uintptr_t eosm_lv_guard_raw_buffer;
+static uint32_t eosm_lv_guard_display_buffer;
+static int eosm_lv_guard_quiet_since;
+static int eosm_lv_guard_retries;
+static int eosm_lv_guard_internal_zoom;
+static int eosm_lv_guard_content_dark_frames;
+static int eosm_lv_guard_content_retries;
+static int eosm_lv_guard_route_retries;
+
+enum eosm_lv_guard_state
+{
+    EOSM_LV_GUARD_WAIT = 0,
+    EOSM_LV_GUARD_APPLY_X1,
+    EOSM_LV_GUARD_APPLY_X5,
+    EOSM_LV_GUARD_VALIDATE,
+    EOSM_LV_GUARD_CONTENT,
+    EOSM_LV_GUARD_ROUTE,
+    EOSM_LV_GUARD_RECOVER_X1,
+    EOSM_LV_GUARD_RECOVER_X5,
+};
+
 /* Exported to the core touch router: do not accept a new control gesture
- * while the PathSelect transaction is uncommitted. */
+ * while Canon is rebuilding the sensor/display path. */
 __attribute__((used, noinline))
 int crop_rec_lv_transition_busy(void)
 {
-    return is_EOSM ? eosm_preview_busy : 0;
+    return eosm_lv_guard_busy;
 }
+
+static void eosm_lv_guard_request(void)
+{
+    eosm_lv_guard_pending = 1;
+    eosm_lv_guard_busy = 1;
+    eosm_lv_guard_started = 0;
+    eosm_lv_guard_state = EOSM_LV_GUARD_WAIT;
+    eosm_lv_guard_stable_frames = 0;
+    eosm_lv_guard_width = 0;
+    eosm_lv_guard_height = 0;
+    eosm_lv_guard_pitch = 0;
+    eosm_lv_guard_raw_buffer = 0;
+    eosm_lv_guard_display_buffer = 0;
+    eosm_lv_guard_quiet_since = 0;
+    eosm_lv_guard_retries = 0;
+    eosm_lv_guard_content_dark_frames = 0;
+    eosm_lv_guard_content_retries = 0;
+    eosm_lv_guard_route_retries = 0;
+}
+
+static void eosm_lv_guard_set_zoom(int zoom)
+{
+    eosm_lv_guard_internal_zoom = 1;
+    set_zoom(zoom);
+}
+#else
+int crop_rec_lv_transition_busy(void) { return 0; }
+int crop_rec_lv_transition_diag(char *buffer, int size)
+{
+    if (buffer && size > 0) buffer[0] = '\0';
+    return 0;
+}
+static void eosm_lv_guard_request(void) {}
+#endif
 
 static void install_patches()
 {
@@ -5232,21 +5058,6 @@ static void uninstall_patches()
 
 static void update_patch()
 {
-    int eosm_active_changed = is_EOSM &&
-        (crop_preset != CROP_PRESET_MENU ||
-         crop_preset_ar != crop_preset_ar_menu ||
-         crop_preset_fps != crop_preset_fps_menu ||
-         crop_preset_1x1_res != crop_preset_1x1_res_menu ||
-         crop_preset_1x3_res != crop_preset_1x3_res_menu ||
-         crop_preset_3x3_res != crop_preset_3x3_res_menu);
-    int eosm_apply_pending = eosm_preview_config_pending == 1;
-
-    if (is_EOSM && eosm_preview_busy)
-    {
-        if (eosm_active_changed)
-            eosm_preview_config_pending = 1;
-        return;
-    }
     if (CROP_PRESET_MENU)
     {
         /* update preset */
@@ -5264,9 +5075,6 @@ static void update_patch()
             install_patches();
             patch_active = 1;
         }
-        if (is_EOSM && eosm_apply_pending &&
-            lv && is_movie_mode() && lv_dispsize == 5)
-            eosm_preview_config_pending = 2;
     }
     
     /* assuming we will take a normal picture in LiveView while crop_rec is active
@@ -5314,8 +5122,6 @@ static void update_patch()
             patch_active = 0;
             crop_preset = 0;
         }
-        if (is_EOSM)
-            eosm_preview_config_pending = 0;
     }
 }
 
@@ -5324,12 +5130,19 @@ static void update_patch()
 PROP_HANDLER(PROP_LV_ACTION)
 {
     update_patch();
+    eosm_lv_guard_request();
 }
 
 /* also try when switching zoom modes */
 PROP_HANDLER(PROP_LV_DISPSIZE)
 {
     update_patch();
+#ifdef CONFIG_EOSM
+    if (eosm_lv_guard_internal_zoom)
+        eosm_lv_guard_internal_zoom = 0;
+    else
+#endif
+        eosm_lv_guard_request();
 }
 
 /* forward reference */
@@ -7562,72 +7375,381 @@ int check_if_settings_changed()
     return 0;
 }
 
+#ifdef CONFIG_EOSM
 static int crop_rec_lv_dirty = 1;
 
+static int eosm_lv_guard_pipeline_ready(void)
+{
+    uint32_t display_buffer;
 
-/* Event-only diagnostics for LVRECOV.LOG.  There are deliberately no pixel
- * probes, register repairs or zoom retries in the new coordinator. */
+    if (!liveview_display_idle() || !CROP_PRESET_MENU || !patch_active)
+        return 0;
+
+    /* All EOS M movie crop presets use x5 for their stable preview path. */
+    if (!is_movie_mode() || lv_dispsize != 5 || PathDriveMode->zoom != 5)
+        return 0;
+
+    /* Dimensions alone are not enough: early boot may still expose the
+     * previous RAW geometry while Canon is replacing the actual buffers. */
+    display_buffer = YUV422_LV_BUFFER_DISPLAY_ADDR;
+    if (raw_info.width <= 0 || raw_info.height <= 0 || raw_info.pitch <= 0 ||
+        !raw_info.buffer || !display_buffer)
+        return 0;
+
+    if (raw_info.width == eosm_lv_guard_width &&
+        raw_info.height == eosm_lv_guard_height &&
+        raw_info.pitch == eosm_lv_guard_pitch &&
+        (uintptr_t)raw_info.buffer == eosm_lv_guard_raw_buffer &&
+        display_buffer == eosm_lv_guard_display_buffer)
+        eosm_lv_guard_stable_frames++;
+    else
+    {
+        eosm_lv_guard_width = raw_info.width;
+        eosm_lv_guard_height = raw_info.height;
+        eosm_lv_guard_pitch = raw_info.pitch;
+        eosm_lv_guard_raw_buffer = (uintptr_t)raw_info.buffer;
+        eosm_lv_guard_display_buffer = display_buffer;
+        eosm_lv_guard_stable_frames = 1;
+        eosm_lv_guard_quiet_since = 0;
+    }
+
+    if (eosm_lv_guard_stable_frames < EOSM_LV_GUARD_STABLE_FRAMES)
+        return 0;
+
+    /* Canon often performs one final asynchronous write after raw geometry
+     * becomes valid. Require a quiet buffer window before Crop Rec owns x5. */
+    if (!eosm_lv_guard_quiet_since)
+        eosm_lv_guard_quiet_since = get_ms_clock();
+
+    return get_ms_clock() - eosm_lv_guard_quiet_since >= EOSM_LV_GUARD_QUIET_MS;
+}
+
+/* The buffer can be stable while Canon is still exposing the previous movie
+ * layout (for example 2520x1080 at 29.97 fps before a 1x3 preset arrives).
+ * Do not hand that transitional layout to the UI or recorder as a valid crop
+ * frame.  The EOS M RAW buffer includes a small sensor margin around the
+ * selected output, hence the deliberately narrow positive allowance. */
+static int eosm_lv_guard_selected_geometry_ready(void)
+{
+    int expected_w, expected_h;
+
+    /* Full-resolution LV is a separate 3 fps path, not a movie crop layout. */
+    if (slim_mode_ui == 3 ||
+        (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu == 5))
+        return 1;
+
+    slim_crop_expected_res(&expected_w, &expected_h);
+    if (expected_w <= 0 || expected_h <= 0)
+        return 0;
+
+    return raw_info.width  >= expected_w && raw_info.width  <= expected_w + 128 &&
+           raw_info.height >= expected_h && raw_info.height <= expected_h + 64;
+}
+
+/* A valid RAW geometry does not guarantee that Canon restored the visible
+ * YUV path. Sample a sparse center grid from the displayed UYVY buffer: this
+ * is intentionally tiny and read-only, so it cannot disturb EDMAC or RAW
+ * recording. Return false only for a uniformly video-black screen. */
+static int eosm_lv_guard_display_luma_max(void)
+{
+    const uint8_t *vram;
+    int x, y;
+    int luma_max = 0;
+    int width = vram_lv.width;
+    int height = vram_lv.height;
+    int pitch = vram_lv.pitch;
+    static const uint8_t x_pos[] = { 2, 4, 6, 8 };
+    static const uint8_t y_pos[] = { 3, 5, 7 };
+
+    if (!YUV422_LV_BUFFER_DISPLAY_ADDR || width < 64 || height < 64 ||
+        pitch < width * 2)
+        return 255; /* unavailable data is handled by the geometry guard */
+
+    vram = (const uint8_t *)UNCACHEABLE(YUV422_LV_BUFFER_DISPLAY_ADDR);
+    for (y = 0; y < COUNT(y_pos); y++)
+    {
+        int py = height * y_pos[y] / 10;
+        for (x = 0; x < COUNT(x_pos); x++)
+        {
+            int px = width * x_pos[x] / 10;
+            /* UYVY: luma is the second byte of each two-byte pixel. */
+            luma_max = MAX(luma_max, vram[py * pitch + px * 2 + 1]);
+        }
+    }
+
+    return luma_max;
+}
+
+static int eosm_lv_guard_display_has_content(void)
+{
+    return eosm_lv_guard_display_luma_max() > 20;
+}
+
+/* These are the display-route values already supplied by the Crop Rec ENGIO
+ * hook. Check only the final scaler/buffer-format registers; sensor timing,
+ * RAW geometry and EDMAC routing are deliberately outside this recovery. */
+static int eosm_lv_guard_display_route_ready(void)
+{
+    if (!Preview_Control || !YUV_LV_Buf)
+        return 1;
+
+    return shamem_read(0xC0F11B8C) == YUV_HD_S_H &&
+           shamem_read(0xC0F11BCC) == YUV_HD_S_V &&
+           shamem_read(0xC0F11BC8) == YUV_HD_S_V_E &&
+           shamem_read(0xC0F11ACC) == YUV_LV_S_V &&
+           shamem_read(0xC0F04210) == YUV_LV_Buf;
+}
+
+static void eosm_lv_guard_reapply_display_route(void)
+{
+    EngDrvOutLV(0xC0F11B8C, YUV_HD_S_H);
+    EngDrvOutLV(0xC0F11BCC, YUV_HD_S_V);
+    EngDrvOutLV(0xC0F11BC8, YUV_HD_S_V_E);
+    EngDrvOutLV(0xC0F11ACC, YUV_LV_S_V);
+    EngDrvOutLV(0xC0F04210, YUV_LV_Buf);
+}
+
+/* Exported for LVRECOV.LOG. The signature changes only when the transition
+ * controller changes state, so the recorder log stays event-only. */
 __attribute__((used, noinline))
 int crop_rec_lv_transition_diag(char *buffer, int size)
 {
-    if (!is_EOSM)
-    {
-        if (buffer && size > 0) buffer[0] = '\0';
-        return 0;
-    }
-
-    int signature = (eosm_preview_busy ? 1 : 0) |
-        (eosm_preview_tx.state << 1) |
-        ((eosm_preview_tx.hook_mask & 0x7f) << 4) |
-        ((eosm_preview_tx.generation & 0xffff) << 11);
+    int luma = eosm_lv_guard_display_luma_max();
+    int route_ok = eosm_lv_guard_display_route_ready();
+    int signature = (eosm_lv_guard_pending ? 1 : 0) |
+        (eosm_lv_guard_busy ? 2 : 0) |
+        (eosm_lv_guard_state << 2) |
+        (eosm_lv_guard_content_dark_frames << 6) |
+        (eosm_lv_guard_content_retries << 10) |
+        (eosm_lv_guard_route_retries << 12) |
+        (route_ok ? 1 << 14 : 0);
 
     if (buffer && size > 0)
         snprintf(buffer, size,
-            "tx=%d/%d gen=%u owner=%d hooks=%02x path=%d/%d/%d out=%d pending=%d/%d",
-            eosm_preview_busy, eosm_preview_tx.state,
-            eosm_preview_tx.generation, eosm_preview_tx.crop_owned,
-            eosm_preview_tx.hook_mask, eosm_preview_tx.path_zoom,
-            eosm_preview_tx.path_s, eosm_preview_tx.path_sm,
-            eosm_preview_tx.path_output, eosm_preview_zoom_pending,
-            eosm_preview_config_pending);
+            "guard=%d/%d/%d luma=%d dark=%d contentfix=%d route=%d routefix=%d",
+            eosm_lv_guard_pending, eosm_lv_guard_busy, eosm_lv_guard_state,
+            luma, eosm_lv_guard_content_dark_frames,
+            eosm_lv_guard_content_retries, route_ok, eosm_lv_guard_route_retries);
 
     return signature;
 }
 
-static int eosm_preview_coordinator_step(int menu_shown, int mlv_busy)
+static void eosm_lv_guard_clear(void)
 {
-    if (!is_EOSM)
+    eosm_lv_guard_pending = 0;
+    eosm_lv_guard_busy = 0;
+    crop_rec_lv_dirty = 0;
+    settings_changed = 0;
+}
+
+static int eosm_lv_guard_step(int menu_shown, int mlv_busy)
+{
+    int now;
+
+    if (!eosm_lv_guard_pending)
         return 0;
 
-    if (eosm_preview_busy)
-        return 1;
-
-    /* Complete a serialized x10 -> native x1 -> crop x5 transition only
-     * after the native generation reached its first VSync. */
-    if (eosm_preview_zoom_pending && lv && !menu_shown &&
-        !RECORDING && !RECORDING_RAW && !mlv_busy)
+    if (!CROP_PRESET_MENU || !is_movie_mode())
     {
-        int target = eosm_preview_zoom_pending;
-        eosm_preview_zoom_pending = 0;
-        eosm_preview_request_zoom(target);
-        return 1;
+        eosm_lv_guard_pending = 0;
+        eosm_lv_guard_busy = 0;
+        return 0;
     }
 
-    if (eosm_preview_config_pending == 1)
-        update_patch();
+    if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
+        return 1;
 
-    if (eosm_preview_config_pending == 2)
+    /* x10 is Canon's focusing view, not the custom x5 preview.  Do not hold
+     * the guard open there; exiting x10 requests a fresh normal transition. */
+    if (lv_dispsize == 10)
     {
-        eosm_preview_config_pending = 0;
-        if (lv_dispsize == 5 && CROP_PRESET_MENU)
-        {
-            eosm_preview_request_zoom(5);
+        eosm_lv_guard_pending = 0;
+        eosm_lv_guard_busy = 0;
+        return 0;
+    }
+
+    now = get_ms_clock();
+    if (!eosm_lv_guard_started)
+        eosm_lv_guard_started = now;
+
+    eosm_lv_guard_busy = 1;
+
+    switch (eosm_lv_guard_state)
+    {
+        case EOSM_LV_GUARD_WAIT:
+            /* Give Canon most of the 0.5-second window, then require three
+             * matching RAW frames before touching the custom preview regs. */
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS)
+                return 1;
+            /* Canon often returns to x1 after boot or a Canon menu.  Restore
+             * the crop module's normal x5 preview before validating frames. */
+            if (lv_dispsize == 1)
+            {
+                eosm_lv_guard_set_zoom(5);
+                eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
+                return 1;
+            }
+            if (!eosm_lv_guard_pipeline_ready())
+                return 1;
+
+            /* Always rebuild x5 in a controlled way. This makes menu exits,
+             * record-stop and boot use exactly the same known-good path,
+             * instead of trusting whatever preview state Canon left behind. */
+            eosm_lv_guard_set_zoom(1);
+            eosm_lv_guard_state = EOSM_LV_GUARD_APPLY_X1;
+            eosm_lv_guard_started = now;
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
             return 1;
-        }
+
+        case EOSM_LV_GUARD_APPLY_X1:
+            if (lv_dispsize != 1)
+                return 1;
+            if (now - eosm_lv_guard_started < 80)
+                return 1;
+            eosm_lv_guard_set_zoom(5);
+            eosm_lv_guard_state = EOSM_LV_GUARD_APPLY_X5;
+            eosm_lv_guard_started = now;
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            return 1;
+
+        case EOSM_LV_GUARD_APPLY_X5:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS ||
+                !eosm_lv_guard_pipeline_ready())
+                return 1;
+            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            eosm_lv_guard_started = now;
+            return 1;
+
+        case EOSM_LV_GUARD_VALIDATE:
+            /* Verify x5 remains quiet after Canon has had time to consume the
+             * final zoom request. A quiet buffer alone is not enough: Canon
+             * may still be serving the old preset's geometry here. */
+            if (!eosm_lv_guard_pipeline_ready() ||
+                now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
+                return 1;
+            if (eosm_lv_guard_selected_geometry_ready() &&
+                !crop_rec_needs_lv_refresh())
+            {
+                /* Geometry is correct. Confirm the LCD path has delivered a
+                 * real frame before releasing the transition controller. */
+                eosm_lv_guard_state = EOSM_LV_GUARD_CONTENT;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_content_dark_frames = 0;
+                return 1;
+            }
+
+            /* Rebuild the selected x5 path again when Canon retained a stable
+             * but wrong geometry. This is the automatic equivalent of the
+             * manual zoom-out/zoom-in recovery, without ever exposing the
+             * temporary resolution as a yellow exclamation mark. */
+            if (eosm_lv_guard_retries >= EOSM_LV_GUARD_MAX_RECOVERIES)
+            {
+                /* Keep waiting for Canon instead of declaring the wrong preset
+                 * ready. A later LV property update restarts this guard. */
+                eosm_lv_guard_state = EOSM_LV_GUARD_WAIT;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
+                eosm_lv_guard_retries = 0;
+                return 1;
+            }
+
+            /* A failed validation gets a controlled x1 -> x5 rebuild.
+             * Do not use x10: it is a focus-only Canon path. */
+            eosm_lv_guard_set_zoom(1);
+            eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;
+            eosm_lv_guard_started = now;
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            eosm_lv_guard_retries++;
+            return 1;
+
+        case EOSM_LV_GUARD_CONTENT:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
+                return 1;
+
+            if (eosm_lv_guard_display_has_content())
+            {
+                eosm_lv_guard_state = EOSM_LV_GUARD_ROUTE;
+                eosm_lv_guard_started = now;
+                return 1;
+            }
+
+            /* A genuine dark scene is possible. Require consecutive samples,
+             * then make only one extra recovery attempt and accept a persistently
+             * black scene afterward rather than trapping the user in a loop. */
+            if (++eosm_lv_guard_content_dark_frames < EOSM_LV_GUARD_CONTENT_SAMPLES)
+                return 1;
+
+            if (eosm_lv_guard_content_retries++ == 0)
+            {
+                eosm_lv_guard_set_zoom(1);
+                eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X1;
+                eosm_lv_guard_started = now;
+                eosm_lv_guard_stable_frames = 0;
+                eosm_lv_guard_quiet_since = 0;
+                eosm_lv_guard_retries++;
+                return 1;
+            }
+
+            eosm_lv_guard_clear();
+            return 0;
+
+        case EOSM_LV_GUARD_ROUTE:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_QUIET_MS)
+                return 1;
+
+            if (eosm_lv_guard_display_route_ready())
+            {
+                eosm_lv_guard_clear();
+                return 0;
+            }
+
+            /* Canon may overwrite its final display-route values after the
+             * frame itself is ready. Restore only the five existing Crop Rec
+             * route values once, then leave Canon in control if it disagrees. */
+            if (eosm_lv_guard_route_retries++ == 0)
+            {
+                eosm_lv_guard_reapply_display_route();
+                eosm_lv_guard_started = now;
+                return 1;
+            }
+
+            eosm_lv_guard_clear();
+            return 0;
+
+        case EOSM_LV_GUARD_RECOVER_X1:
+            if (lv_dispsize != 1)
+            {
+                /* Canon has not acknowledged x1 yet; keep waiting, but do
+                 * not issue more property writes into the same transition. */
+                return 1;
+            }
+            if (now - eosm_lv_guard_started < 80)
+                return 1;
+            eosm_lv_guard_set_zoom(5);
+            eosm_lv_guard_state = EOSM_LV_GUARD_RECOVER_X5;
+            eosm_lv_guard_started = now;
+            eosm_lv_guard_stable_frames = 0;
+            eosm_lv_guard_quiet_since = 0;
+            return 1;
+
+        case EOSM_LV_GUARD_RECOVER_X5:
+            if (now - eosm_lv_guard_started < EOSM_LV_GUARD_SETTLE_MS ||
+                !eosm_lv_guard_pipeline_ready())
+                return 1;
+            eosm_lv_guard_state = EOSM_LV_GUARD_VALIDATE;
+            eosm_lv_guard_started = now;
+            return 1;
     }
 
-    return eosm_preview_busy;
+    eosm_lv_guard_request();
+    return 1;
 }
+#endif
 
 /* when closing ML menu, check whether we need to refresh the LiveView */
 static unsigned int crop_rec_polling_cbr(unsigned int unused)
@@ -7645,24 +7767,48 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         submenu = 0;
     }
 #endif
+#ifdef CONFIG_EOSM
+    /* crop_rec_lv_dirty is module-level; also checked at startup */
+#else
     /* also check at startup */
     static int lv_dirty = 1;
+#endif
 
-    int mlv_busy = is_EOSM ? mlv_raw_rec_busy() : 0;
+#ifdef CONFIG_EOSM
+    int mlv_busy = mlv_raw_rec_busy();
+    static int eosm_lv_was_active = 0;
+    static int eosm_recording_was_active = 0;
+    static int eosm_display_mode = -1;
+#else
+    int mlv_busy = 0;
+#endif
 
     int menu_shown = gui_menu_shown();
+#ifdef CONFIG_EOSM
+    /* Cover every path back into Movie Live View, including Canon menus
+     * (which may not set gui_menu_shown), recording stop and boot. */
+    if ((lv && !eosm_lv_was_active) ||
+        (eosm_recording_was_active && !RECORDING) ||
+        (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode))
+        eosm_lv_guard_request();
+    eosm_lv_was_active = lv;
+    eosm_recording_was_active = RECORDING;
+    eosm_display_mode = lv_disp_mode;
+
     static int crop_rec_menu_was_shown = 0;
-    if (is_EOSM && lv && menu_shown)
+    if (lv && menu_shown)
         crop_rec_menu_was_shown = 1;
-    else if (is_EOSM && crop_rec_menu_was_shown && lv && !menu_shown)
+    else if (crop_rec_menu_was_shown && lv && !menu_shown)
     {
         crop_rec_lv_dirty = 1;
         crop_rec_menu_was_shown = 0;
     }
-    else if (!is_EOSM && lv && menu_shown)
+#else
+    if (lv && menu_shown)
     {
         lv_dirty = 1;
     }
+#endif
     
     if (!lv || menu_shown || RECORDING_RAW || mlv_busy)
     {
@@ -7672,19 +7818,28 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
         return CBR_RET_CONTINUE;
     }
 
-    if (eosm_preview_coordinator_step(menu_shown, mlv_busy))
+#ifdef CONFIG_EOSM
+    if (eosm_lv_guard_step(menu_shown, mlv_busy))
         return CBR_RET_CONTINUE;
+#endif
     
     /* check if any of our settings are changed */
     /* for 650D / 700D / EOSM/M2 / 100D */
     if (check_if_settings_changed())
     {
-        if (is_EOSM) crop_rec_lv_dirty = 1;
-        else lv_dirty = 1;
+#ifdef CONFIG_EOSM
+        crop_rec_lv_dirty = 1;
+#else
+        lv_dirty = 1;
+#endif
         settings_changed = 1;
     }
 
-    if (is_EOSM ? crop_rec_lv_dirty : lv_dirty)
+#ifdef CONFIG_EOSM
+    if (crop_rec_lv_dirty)
+#else
+    if (lv_dirty)
+#endif
     {
         int needs_refresh = crop_rec_needs_lv_refresh();
         /* do we need to refresh LiveView? */
@@ -7692,23 +7847,28 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             {
                 /* let's check this once again, just in case */
                 /* (possible race condition that would result in unnecessary refresh) */
-                if (!is_EOSM)
+#ifdef CONFIG_EOSM
+                /* CheckPreviewRegsValuesAndForce is intentionally a no-op
+                 * on EOS M, so avoid an unnecessary delayed polling wait. */
+#else
+                wait_lv_frames(2);
+                if (crop_rec_needs_lv_refresh())
                 {
-                    wait_lv_frames(2);
-                    if (crop_rec_needs_lv_refresh())
-                    {
-                        info_led_on();
-                        gui_uilock(UILOCK_EVERYTHING);
-                        int old_zoom = lv_dispsize;
-                        set_zoom(lv_dispsize == 1 ? 5 : 1);
-                        set_zoom(old_zoom);
-                        gui_uilock(UILOCK_NONE);
-                        info_led_off();
-                    }
+                    info_led_on();
+                    gui_uilock(UILOCK_EVERYTHING);
+                    int old_zoom = lv_dispsize;
+                    set_zoom(lv_dispsize == 1 ? 5 : 1);
+                    set_zoom(old_zoom);
+                    gui_uilock(UILOCK_NONE);
+                    info_led_off();
                 }
+#endif
             }
-        if (is_EOSM) crop_rec_lv_dirty = 0;
-        else lv_dirty = 0;
+#ifdef CONFIG_EOSM
+        crop_rec_lv_dirty = 0;
+#else
+        lv_dirty = 0;
+#endif
         settings_changed = 0;
     }
 
@@ -7775,11 +7935,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
                 }
                 else
                 {
-                    if (lv_dispsize == 1)
-                    {
-                        if (is_EOSM) eosm_preview_request_zoom(5);
-                        else set_zoom(5);
-                    }
+                    if (lv_dispsize == 1) set_zoom(5);
                 }
             }
 
@@ -7800,11 +7956,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
             if (!is_manual_focus() && lv_af_mode == 1)
             {
-                if (lv_dispsize == 1)
-                {
-                    if (is_EOSM) eosm_preview_request_zoom(5);
-                    else set_zoom(5);
-                }
+                if (lv_dispsize == 1) set_zoom(5);
             }
             }
         }
@@ -7840,8 +7992,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 
         /* disable Canon overlays in x5 mode for cleaner preview */
         extern int kill_canon_gui_mode;
-        if (lv && patch_active && CROP_PRESET_MENU &&
-            (!is_EOSM || !eosm_preview_busy))
+        if (lv && patch_active && CROP_PRESET_MENU)
         {
             if (PathDriveMode->zoom == 5 && kill_canon_gui_mode != 1)
             {
@@ -7902,10 +8053,11 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 {
     extern int kill_canon_gui_mode;
 
+#ifdef CONFIG_EOSM
     /* The transition controller owns Live View until its post-x5 validation
      * passes. Swallow only controls that can alter preview state; REC and
      * MENU remain available for normal camera safety and escape behavior. */
-    if (is_EOSM && eosm_preview_busy && lv && !RECORDING &&
+    if (eosm_lv_guard_busy && lv && !RECORDING &&
         (key == MODULE_KEY_TOUCH_1_FINGER ||
          key == MODULE_KEY_PRESS_SET ||
          key == MODULE_KEY_PRESS_UP || key == MODULE_KEY_PRESS_DOWN ||
@@ -7913,6 +8065,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
          key == MODULE_KEY_WHEEL_LEFT || key == MODULE_KEY_WHEEL_RIGHT ||
          key == MODULE_KEY_INFO))
         return 0;
+#endif
 
     /* Close the touch editor at the REC press itself, before the asynchronous
      * RAW/H.264 recording state flag changes.  gui-common blocks every touch
@@ -7928,6 +8081,14 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
 
     /* Recording: touch is blocked in gui-common (idle LV touch is allowed). */
 
+    //Reset zoom when stopping recording
+    
+    //Prevent black screen?
+    if (key == MODULE_KEY_REC && RECORDING)
+    {
+        set_zoom(1);
+    }
+    
     //Focus aid function
     if (Half_Shutter == 2 && RECORDING && (crop_preset == CROP_PRESET_3X3 || crop_preset == CROP_PRESET_1X1))
     {
@@ -8042,8 +8203,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                         // Use INFO key to cycle LV as normal when not in the LV with ML overlays
                         return 1;
                     }
-                    if (is_EOSM) eosm_preview_request_zoom(10);
-                    else set_zoom(10);
+                    set_zoom(10);
 
                     /* Enable Canon overlays in x10 mode */
                     kill_canon_gui_mode = 0;
@@ -8064,19 +8224,12 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
                     (!is_EOSM && (key == MODULE_KEY_UNPRESS_HALFSHUTTER ) && Half_Shutter != 3 && is_manual_focus()) ||
                     (!is_EOSM && (key == MODULE_KEY_PRESS_HALFSHUTTER ) && Half_Shutter == 3 && is_manual_focus()) )
                 {
-                    if (is_EOSM)
-                    {
-                        eosm_preview_request_zoom(5);
-                    }
-                    else
-                    {
-                        set_zoom(1);
-                        msleep(50);
-                        set_zoom(5);
-                    }
-                    /* EOS M hides Canon overlays at the committed x5 VSync. */
-                    if (!is_EOSM)
-                        kill_canon_gui_mode = 1;
+                    set_zoom(1); // Get to x1 first, sometime we get black preview when going x10 --> x5
+                    msleep(50);
+                    set_zoom(5);
+
+                    /* Disable Canon overlays in x5 mode */
+                    kill_canon_gui_mode = 1;
                     return 0;
                 }
             }
@@ -8969,7 +9122,6 @@ MODULE_CONFIGS_END()
 
 MODULE_CBRS_START()
     MODULE_CBR(CBR_SHOOT_TASK, crop_rec_polling_cbr, 0)
-    MODULE_CBR(CBR_VSYNC, eosm_preview_vsync_cbr, 0)
     MODULE_CBR(CBR_RAW_INFO_UPDATE, raw_info_update_cbr, 0)
     MODULE_CBR(CBR_KEYPRESS, crop_rec_keypress_cbr, 0)
     MODULE_CBR(CBR_KEYPRESS, photo_keypress_cbr, 0)

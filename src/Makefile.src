@@ -117,7 +117,6 @@ ML_SRC_OBJS = \
 	edmac.o \
 	menu.o \
 	menu-grid.o \
-	slim-font.o \
 	debug.o \
 	rand.o \
 	posix.o \

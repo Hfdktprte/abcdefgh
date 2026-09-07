@@ -475,6 +475,11 @@ static void my_big_init_task()
     _mem_init();
     _find_ml_card();
 
+    /* A pending multi-build selection must be applied before opening any
+     * configuration, font or module below ML/. */
+    extern void build_selector_early_apply(void);
+    build_selector_early_apply();
+
     /* should we require SET for loading ML, or not? */
     extern int _set_at_startup;
     _set_at_startup = config_flag_file_setting_load("ML/SETTINGS/REQUIRE.SET");

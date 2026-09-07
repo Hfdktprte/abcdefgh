@@ -42,6 +42,7 @@
 #include "powersave.h"
 #include "gui-common.h"
 #include "module.h"
+#include "build-selector.h"
 
 #define CONFIG_MENU_ICONS
 //~ #define CONFIG_MENU_DIM_HACKS
@@ -7616,8 +7617,13 @@ int handle_ml_menu_erase(struct event * event)
 #if defined(CONFIG_EOSM) && defined(CONFIG_SLIM_MENUS)
     if (event->param == MLEV_CUSTOM_MENU_LONG)
     {
-        if (!gui_menu_shown() && lv && is_movie_mode() && !RECORDING)
-            gui_open_custom_menu();
+        if (!gui_menu_shown() && !RECORDING)
+        {
+            if (build_selector_boot_window_active())
+                gui_open_build_selector();
+            else if (lv && is_movie_mode())
+                gui_open_custom_menu();
+        }
         return 0;
     }
 #endif

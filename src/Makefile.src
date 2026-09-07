@@ -111,6 +111,7 @@ ML_SRC_OBJS = \
 	backtrace.o \
 	$(ML_BOOT_HACK_OBJ) \
 	boot-logo.o \
+	build-selector.o \
 	fio-ml.o \
 	mem.o \
 	ico.o \

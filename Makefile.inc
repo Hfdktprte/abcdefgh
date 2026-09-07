@@ -38,6 +38,7 @@ install_extra_data: prepare_install_dir
 	$(CP) $(FONT_DIR)/*.rbf $(INSTALL_FONTS_DIR)/
 	$(CP) $(VRAM_DIR)/*.lut $(INSTALL_DATA_DIR)/
 	$(CP) $(CROP_DIR)/*.bmp $(INSTALL_CROPMARKS_DIR)/
+	$(CP) $(TOP_DIR)/data/BUILDSEL.OK $(INSTALL_ML_DIR)/
 	$(INSTALL_ALL_SCRIPTS)
 
 copy-autoexec: autoexec.bin

@@ -14,6 +14,7 @@
 #include <menu.h>
 #include <menu-grid.h>
 #include <module.h>
+#include <build-selector.h>
 
 #if defined(FEATURE_AF_PATTERNS)
 #include <af_patterns.h>
@@ -876,6 +877,11 @@ int handle_common_events_startup(struct event * event)
 
     extern int ml_started;
     if (!ml_started)    {
+#if defined(CONFIG_EOSM) && defined(CONFIG_SLIM_MENUS)
+        /* Holding UP from power-on is reserved for the build selector. Keep
+         * the early physical press away from Canon's exposure controls. */
+        if (build_selector_note_boot_up(event->param)) return 0;
+#endif
 #if defined(BGMT_Q_SET) // combined Q/SET button?
         if (event->param == BGMT_Q_SET) { _disable_ml_startup(); return 0;} // don't load ML
 #else
